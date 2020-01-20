@@ -1,0 +1,9 @@
+[workspace]
+
+members = [
+    "daemon",
+    "crfs",
+    "fuse",
+    "storage",
+    "vhost_user",
+]
