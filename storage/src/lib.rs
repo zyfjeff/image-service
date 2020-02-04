@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-extern crate libc;
+use libc;
 
-use bytes::*;
+use std::collections::VecDeque;
 use std::io;
+use vm_memory::VolatileSlice;
 
 pub struct Auth {
     pub id: String,
@@ -24,14 +25,14 @@ pub struct RafsBio<'a> {
     pub bi_start: u64,
     pub bi_size: usize,
     pub bi_blksize: usize,
-    pub bi_vec: Vec<RafsBioVec>,
+    pub bi_vec: Vec<RafsBioVec<'a>>,
 }
 
 pub struct RafsBioVec<'a> {
     pub blkinfo: RafsBlkInfo,
     pub offset: u32,
     pub len: usize,
-    pub buf: &'a mut bytes::Bytes,
+    pub buffer: VecDeque<VolatileSlice<'a>>,
 }
 
 pub struct RafsBlkInfo {}
@@ -49,7 +50,7 @@ pub trait Storage {
     }
 
     // Submit IO to the open device
-    fn submit_io(&self, bio: rafs_bio) -> io::Result<usize> {
+    fn submit_io(&self, bio: RafsBio) -> io::Result<usize> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 }
