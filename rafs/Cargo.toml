@@ -1,5 +1,5 @@
 [package]
-name = "storage"
+name = "crfs"
 version = "0.1.0"
 authors = ["The Ant Financial Nydus Developers"]
 edition = "2018"
@@ -8,7 +8,6 @@ edition = "2018"
 
 [dependencies]
 libc = "0.2"
-bytes = "0.5"
 
 [dependencies.vm-memory]
 git = "https://github.com/rust-vmm/vm-memory"

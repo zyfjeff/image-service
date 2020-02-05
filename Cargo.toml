@@ -2,8 +2,7 @@
 
 members = [
     "daemon",
-    "crfs",
+    "rafs",
     "fuse",
-    "storage",
     "vhost_user",
 ]
