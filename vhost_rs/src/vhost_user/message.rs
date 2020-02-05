@@ -11,7 +11,7 @@
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
-use VringConfigData;
+use crate::backend::VringConfigData;
 
 /// The vhost-user specification uses a field of u32 to store message length.
 /// On the other hand, preallocated buffers are needed to receive messages from the Unix domain

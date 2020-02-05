@@ -4,5 +4,5 @@ members = [
     "daemon",
     "rafs",
     "fuse",
-    "vhost_user",
+    "vhost_rs",
 ]

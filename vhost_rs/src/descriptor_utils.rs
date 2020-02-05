@@ -15,9 +15,9 @@ use vm_memory::{
     Address, ByteValued, Bytes, GuestAddress, GuestMemory, GuestMemoryError, GuestMemoryMmap,
     GuestMemoryRegion, Le16, Le32, Le64, VolatileMemory, VolatileMemoryError, VolatileSlice,
 };
-use vm_virtio::DescriptorChain;
 
 use crate::file_traits::{FileReadWriteAtVolatile, FileReadWriteVolatile};
+use crate::queue::DescriptorChain;
 
 #[derive(Debug)]
 pub enum Error {
@@ -533,8 +533,7 @@ pub fn create_descriptor_chain(
         );
     }
 
-    DescriptorChain::checked_new(memory, descriptor_array_addr, 0x100, 0, None)
-        .ok_or(Error::InvalidChain)
+    DescriptorChain::checked_new(memory, descriptor_array_addr, 0x100, 0).ok_or(Error::InvalidChain)
 }
 
 #[cfg(test)]

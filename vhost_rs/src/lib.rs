@@ -32,8 +32,6 @@
 //! that shares its virtqueues. Slave is the consumer of the virtqueues. Master and slave can be
 //! either a client (i.e. connecting) or server (listening) in the socket communication.
 
-#![deny(missing_docs)]
-
 #[cfg_attr(
     any(feature = "vhost-user-master", feature = "vhost-user-slave"),
     macro_use
@@ -48,12 +46,13 @@ extern crate vmm_sys_util;
 mod backend;
 pub use backend::*;
 
-#[cfg(feature = "vhost-kern")]
-pub mod vhost_kern;
+pub mod descriptor_utils;
+mod file_traits;
+#[allow(dead_code)]
+mod queue;
+
 #[cfg(any(feature = "vhost-user-master", feature = "vhost-user-slave"))]
 pub mod vhost_user;
-#[cfg(feature = "vhost-vsock")]
-pub mod vsock;
 
 /// Error codes for vhost operations
 #[derive(Debug)]
