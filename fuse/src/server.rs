@@ -11,16 +11,15 @@ use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem::size_of;
 
-use libc;
 use vm_memory::ByteValued;
 
-use crate::descriptor_utils::{Reader, Writer};
 use crate::filesystem::{
     Context, DirEntry, Entry, FileSystem, GetxattrReply, ListxattrReply, ZeroCopyReader,
     ZeroCopyWriter,
 };
 use crate::fuse::*;
 use crate::{Error, Result};
+use vhost_rs::descriptor_utils::{Reader, Writer};
 
 const MAX_BUFFER_SIZE: u32 = (1 << 20);
 const DIRENT_PADDING: [u8; 8] = [0; 8];

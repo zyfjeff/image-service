@@ -9,8 +9,6 @@ use std::io;
 use std::mem;
 use std::time::Duration;
 
-use libc;
-
 use crate::fuse;
 
 pub use fuse::FsOptions;
