@@ -801,21 +801,11 @@ impl<F: FileSystem + Sync> Server<F> {
             );
         }
 
-        // These fuse features are supported by this server by default.
-        let supported = FsOptions::ASYNC_READ
-            | FsOptions::PARALLEL_DIROPS
-            | FsOptions::BIG_WRITES
-            | FsOptions::AUTO_INVAL_DATA
-            | FsOptions::HANDLE_KILLPRIV
-            | FsOptions::ASYNC_DIO
-            | FsOptions::HAS_IOCTL_DIR
-            | FsOptions::ATOMIC_O_TRUNC;
-
         let capable = FsOptions::from_bits_truncate(flags);
 
         match self.fs.init(capable) {
-            Ok(want) => {
-                let enabled = capable & (want | supported);
+            Ok(supported) => {
+                let enabled = capable & supported;
 
                 let out = InitOut {
                     major: KERNEL_VERSION,

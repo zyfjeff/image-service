@@ -352,7 +352,19 @@ pub trait FileSystem {
     /// implementation should return the options that it supports. Any options set in the returned
     /// `FsOptions` that are not also set in `capable` are silently dropped.
     fn init(&self, capable: FsOptions) -> io::Result<FsOptions> {
-        Ok(FsOptions::empty())
+        Ok(
+            // These fuse features are supported by this server by default.
+            FsOptions::ASYNC_READ
+                | FsOptions::PARALLEL_DIROPS
+                | FsOptions::BIG_WRITES
+                | FsOptions::AUTO_INVAL_DATA
+                | FsOptions::HANDLE_KILLPRIV
+                | FsOptions::ASYNC_DIO
+                | FsOptions::HAS_IOCTL_DIR
+                | FsOptions::WRITEBACK_CACHE
+                | FsOptions::ZERO_MESSAGE_OPEN
+                | FsOptions::ATOMIC_O_TRUNC,
+        )
     }
 
     /// Clean up the file system.
