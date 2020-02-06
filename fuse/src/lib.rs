@@ -8,11 +8,11 @@
 extern crate log;
 
 #[allow(dead_code)]
-mod filesystem;
+pub mod filesystem;
 #[allow(dead_code)]
-mod fuse;
+mod protocol;
 #[allow(dead_code)]
-mod server;
+pub mod server;
 
 use std::ffi::FromBytesWithNulError;
 use std::{error, fmt, io};

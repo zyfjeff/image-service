@@ -9,12 +9,12 @@ use std::io;
 use std::mem;
 use std::time::Duration;
 
-use crate::fuse;
+use crate::protocol;
 
-pub use fuse::FsOptions;
-pub use fuse::OpenOptions;
-pub use fuse::SetattrValid;
-pub use fuse::ROOT_ID;
+pub use protocol::FsOptions;
+pub use protocol::OpenOptions;
+pub use protocol::SetattrValid;
+pub use protocol::ROOT_ID;
 
 /// Information about a path in the filesystem.
 pub struct Entry {
@@ -46,9 +46,9 @@ pub struct Entry {
     pub entry_timeout: Duration,
 }
 
-impl From<Entry> for fuse::EntryOut {
-    fn from(entry: Entry) -> fuse::EntryOut {
-        fuse::EntryOut {
+impl From<Entry> for protocol::EntryOut {
+    fn from(entry: Entry) -> protocol::EntryOut {
+        protocol::EntryOut {
             nodeid: entry.inode,
             generation: entry.generation,
             entry_valid: entry.entry_timeout.as_secs(),
@@ -305,8 +305,8 @@ pub struct Context {
     pub pid: libc::pid_t,
 }
 
-impl From<fuse::InHeader> for Context {
-    fn from(source: fuse::InHeader) -> Self {
+impl From<protocol::InHeader> for Context {
+    fn from(source: protocol::InHeader) -> Self {
         Context {
             uid: source.uid,
             gid: source.gid,

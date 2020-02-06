@@ -4,6 +4,6 @@
 
 #[allow(dead_code)]
 mod dag;
-#[allow(dead_code)]
+#[allow(dead_code, unused_variables)]
 mod fs;
 mod storage;

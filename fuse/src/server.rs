@@ -17,7 +17,7 @@ use crate::filesystem::{
     Context, DirEntry, Entry, FileSystem, GetxattrReply, ListxattrReply, ZeroCopyReader,
     ZeroCopyWriter,
 };
-use crate::fuse::*;
+use crate::protocol::*;
 use crate::{Error, Result};
 use vhost_rs::descriptor_utils::{Reader, Writer};
 
