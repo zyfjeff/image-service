@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use std::collections::VecDeque;
 use std::io;
 use vm_memory::VolatileSlice;
 
@@ -20,7 +19,6 @@ pub struct Config {
 
 pub struct RafsBio<'a> {
     pub bi_flags: u32,
-    pub bi_start: u64,
     pub bi_size: usize,
     pub bi_blksize: usize,
     pub bi_vec: Vec<RafsBioVec<'a>>,
@@ -29,8 +27,7 @@ pub struct RafsBio<'a> {
 pub struct RafsBioVec<'a> {
     pub blkinfo: RafsBlkInfo,
     pub offset: u32,
-    pub len: usize,
-    pub buffer: VecDeque<VolatileSlice<'a>>,
+    pub buffer: VolatileSlice<'a>,
 }
 
 pub struct RafsBlkInfo {}
