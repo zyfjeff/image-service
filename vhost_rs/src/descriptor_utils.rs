@@ -16,7 +16,7 @@ use vm_memory::{
     GuestMemoryRegion, Le16, Le32, Le64, VolatileMemory, VolatileMemoryError, VolatileSlice,
 };
 
-use crate::file_traits::{FileReadWriteAtVolatile, FileReadWriteVolatile};
+pub use crate::file_traits::FileReadWriteVolatile;
 use crate::queue::DescriptorChain;
 
 #[derive(Debug)]
@@ -255,7 +255,7 @@ impl<'a> Reader<'a> {
     /// Returns the number of bytes read from the descriptor chain buffer.
     /// The number of bytes read can be less than `count` if there isn't
     /// enough data in the descriptor chain buffer.
-    pub fn read_to_at<F: FileReadWriteAtVolatile>(
+    pub fn read_to_at<F: FileReadWriteVolatile>(
         &mut self,
         mut dst: F,
         count: usize,
@@ -402,7 +402,7 @@ impl<'a> Writer<'a> {
     /// Returns the number of bytes written to the descriptor chain buffer.
     /// The number of bytes written can be less than `count` if
     /// there isn't enough data in the descriptor chain buffer.
-    pub fn write_from_at<F: FileReadWriteAtVolatile>(
+    pub fn write_from_at<F: FileReadWriteVolatile>(
         &mut self,
         mut src: F,
         count: usize,

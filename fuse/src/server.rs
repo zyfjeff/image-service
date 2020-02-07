@@ -7,7 +7,6 @@
 // A fuse server implementation.
 
 use std::ffi::CStr;
-use std::fs::File;
 use std::io::{self, Read, Write};
 use std::mem::size_of;
 
@@ -19,7 +18,7 @@ use crate::filesystem::{
 };
 use crate::protocol::*;
 use crate::{Error, Result};
-use vhost_rs::descriptor_utils::{Reader, Writer};
+use vhost_rs::descriptor_utils::{FileReadWriteVolatile, Reader, Writer};
 
 const MAX_BUFFER_SIZE: u32 = (1 << 20);
 const DIRENT_PADDING: [u8; 8] = [0; 8];
@@ -27,7 +26,12 @@ const DIRENT_PADDING: [u8; 8] = [0; 8];
 struct ZCReader<'a>(Reader<'a>);
 
 impl<'a> ZeroCopyReader for ZCReader<'a> {
-    fn read_to(&mut self, f: &mut File, count: usize, off: u64) -> io::Result<usize> {
+    fn read_to<F: FileReadWriteVolatile>(
+        &mut self,
+        f: &mut F,
+        count: usize,
+        off: u64,
+    ) -> io::Result<usize> {
         self.0.read_to_at(f, count, off)
     }
 }
@@ -41,7 +45,12 @@ impl<'a> io::Read for ZCReader<'a> {
 struct ZCWriter<'a>(Writer<'a>);
 
 impl<'a> ZeroCopyWriter for ZCWriter<'a> {
-    fn write_from(&mut self, f: &mut File, count: usize, off: u64) -> io::Result<usize> {
+    fn write_from<F: FileReadWriteVolatile>(
+        &mut self,
+        f: &mut F,
+        count: usize,
+        off: u64,
+    ) -> io::Result<usize> {
         self.0.write_from_at(f, count, off)
     }
 }

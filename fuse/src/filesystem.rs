@@ -4,17 +4,17 @@
 
 use std::convert::TryInto;
 use std::ffi::CStr;
-use std::fs::File;
 use std::io;
 use std::mem;
 use std::time::Duration;
 
 use crate::protocol;
-
 pub use protocol::FsOptions;
 pub use protocol::OpenOptions;
 pub use protocol::SetattrValid;
 pub use protocol::ROOT_ID;
+
+use vhost_rs::descriptor_utils::FileReadWriteVolatile;
 
 /// Information about a path in the filesystem.
 pub struct Entry {
@@ -125,7 +125,12 @@ pub trait ZeroCopyReader {
     /// If any error is returned then the implementation must guarantee that no bytes were copied
     /// from `self`. If the underlying write to `f` returns `0` then the implementation must return
     /// an error of the kind `io::ErrorKind::WriteZero`.
-    fn read_to(&mut self, f: &mut File, count: usize, off: u64) -> io::Result<usize>;
+    fn read_to<F: FileReadWriteVolatile>(
+        &mut self,
+        f: &mut F,
+        count: usize,
+        off: u64,
+    ) -> io::Result<usize>;
 
     /// Copies exactly `count` bytes of data from `self` into `f` at offset `off`. `off + count`
     /// must be less than `u64::MAX`.
@@ -134,7 +139,12 @@ pub trait ZeroCopyReader {
     ///
     /// If an error is returned then the number of bytes copied from `self` is unspecified but it
     /// will never be more than `count`.
-    fn read_exact_to(&mut self, f: &mut File, mut count: usize, mut off: u64) -> io::Result<()> {
+    fn read_exact_to<F: FileReadWriteVolatile>(
+        &mut self,
+        f: &mut F,
+        mut count: usize,
+        mut off: u64,
+    ) -> io::Result<()> {
         let c = count
             .try_into()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
@@ -171,7 +181,11 @@ pub trait ZeroCopyReader {
     /// # Errors
     ///
     /// If an error is returned then the number of bytes copied from `self` is unspecified.
-    fn copy_to_end(&mut self, f: &mut File, mut off: u64) -> io::Result<usize> {
+    fn copy_to_end<F: FileReadWriteVolatile>(
+        &mut self,
+        f: &mut F,
+        mut off: u64,
+    ) -> io::Result<usize> {
         let mut out = 0;
         loop {
             match self.read_to(f, ::std::usize::MAX, off) {
@@ -188,13 +202,23 @@ pub trait ZeroCopyReader {
 }
 
 impl<'a, R: ZeroCopyReader> ZeroCopyReader for &'a mut R {
-    fn read_to(&mut self, f: &mut File, count: usize, off: u64) -> io::Result<usize> {
+    fn read_to<F: FileReadWriteVolatile>(
+        &mut self,
+        f: &mut F,
+        count: usize,
+        off: u64,
+    ) -> io::Result<usize> {
         (**self).read_to(f, count, off)
     }
-    fn read_exact_to(&mut self, f: &mut File, count: usize, off: u64) -> io::Result<()> {
+    fn read_exact_to<F: FileReadWriteVolatile>(
+        &mut self,
+        f: &mut F,
+        count: usize,
+        off: u64,
+    ) -> io::Result<()> {
         (**self).read_exact_to(f, count, off)
     }
-    fn copy_to_end(&mut self, f: &mut File, off: u64) -> io::Result<usize> {
+    fn copy_to_end<F: FileReadWriteVolatile>(&mut self, f: &mut F, off: u64) -> io::Result<usize> {
         (**self).copy_to_end(f, off)
     }
 }
@@ -215,7 +239,12 @@ pub trait ZeroCopyWriter {
     /// If any error is returned then the implementation must guarantee that no bytes were copied
     /// from `f`. If the underlying read from `f` returns `0` then the implementation must return an
     /// error of the kind `io::ErrorKind::UnexpectedEof`.
-    fn write_from(&mut self, f: &mut File, count: usize, off: u64) -> io::Result<usize>;
+    fn write_from<F: FileReadWriteVolatile>(
+        &mut self,
+        f: &mut F,
+        count: usize,
+        off: u64,
+    ) -> io::Result<usize>;
 
     /// Copies exactly `count` bytes of data from `f` at offset `off` into `self`. `off + count`
     /// must be less than `u64::MAX`.
@@ -224,7 +253,12 @@ pub trait ZeroCopyWriter {
     ///
     /// If an error is returned then the number of bytes copied from `self` is unspecified but it
     /// well never be more than `count`.
-    fn write_all_from(&mut self, f: &mut File, mut count: usize, mut off: u64) -> io::Result<()> {
+    fn write_all_from<F: FileReadWriteVolatile>(
+        &mut self,
+        f: &mut F,
+        mut count: usize,
+        mut off: u64,
+    ) -> io::Result<()> {
         let c = count
             .try_into()
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
@@ -264,7 +298,11 @@ pub trait ZeroCopyWriter {
     /// # Errors
     ///
     /// If an error is returned then the number of bytes copied from `f` is unspecified.
-    fn copy_to_end(&mut self, f: &mut File, mut off: u64) -> io::Result<usize> {
+    fn copy_to_end<F: FileReadWriteVolatile>(
+        &mut self,
+        f: &mut F,
+        mut off: u64,
+    ) -> io::Result<usize> {
         let mut out = 0;
         loop {
             match self.write_from(f, ::std::usize::MAX, off) {
@@ -281,13 +319,23 @@ pub trait ZeroCopyWriter {
 }
 
 impl<'a, W: ZeroCopyWriter> ZeroCopyWriter for &'a mut W {
-    fn write_from(&mut self, f: &mut File, count: usize, off: u64) -> io::Result<usize> {
+    fn write_from<F: FileReadWriteVolatile>(
+        &mut self,
+        f: &mut F,
+        count: usize,
+        off: u64,
+    ) -> io::Result<usize> {
         (**self).write_from(f, count, off)
     }
-    fn write_all_from(&mut self, f: &mut File, count: usize, off: u64) -> io::Result<()> {
+    fn write_all_from<F: FileReadWriteVolatile>(
+        &mut self,
+        f: &mut F,
+        count: usize,
+        off: u64,
+    ) -> io::Result<()> {
         (**self).write_all_from(f, count, off)
     }
-    fn copy_to_end(&mut self, f: &mut File, off: u64) -> io::Result<usize> {
+    fn copy_to_end<F: FileReadWriteVolatile>(&mut self, f: &mut F, off: u64) -> io::Result<usize> {
         (**self).copy_to_end(f, off)
     }
 }

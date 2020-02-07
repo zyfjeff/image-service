@@ -92,36 +92,7 @@ pub trait FileReadWriteVolatile {
         }
         Ok(())
     }
-}
 
-impl<'a, T: FileReadWriteVolatile + ?Sized> FileReadWriteVolatile for &'a mut T {
-    fn read_volatile(&mut self, slice: VolatileSlice) -> Result<usize> {
-        (**self).read_volatile(slice)
-    }
-
-    fn read_vectored_volatile(&mut self, bufs: &[VolatileSlice]) -> Result<usize> {
-        (**self).read_vectored_volatile(bufs)
-    }
-
-    fn read_exact_volatile(&mut self, slice: VolatileSlice) -> Result<()> {
-        (**self).read_exact_volatile(slice)
-    }
-
-    fn write_volatile(&mut self, slice: VolatileSlice) -> Result<usize> {
-        (**self).write_volatile(slice)
-    }
-
-    fn write_vectored_volatile(&mut self, bufs: &[VolatileSlice]) -> Result<usize> {
-        (**self).write_vectored_volatile(bufs)
-    }
-
-    fn write_all_volatile(&mut self, slice: VolatileSlice) -> Result<()> {
-        (**self).write_all_volatile(slice)
-    }
-}
-
-/// A trait similar to the unix `ReadExt` and `WriteExt` traits, but for volatile memory.
-pub trait FileReadWriteAtVolatile {
     /// Reads bytes from this file at `offset` into the given slice, returning the number of bytes
     /// read on success.
     fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize>;
@@ -191,7 +162,31 @@ pub trait FileReadWriteAtVolatile {
     }
 }
 
-impl<'a, T: FileReadWriteAtVolatile + ?Sized> FileReadWriteAtVolatile for &'a mut T {
+impl<'a, T: FileReadWriteVolatile + ?Sized> FileReadWriteVolatile for &'a mut T {
+    fn read_volatile(&mut self, slice: VolatileSlice) -> Result<usize> {
+        (**self).read_volatile(slice)
+    }
+
+    fn read_vectored_volatile(&mut self, bufs: &[VolatileSlice]) -> Result<usize> {
+        (**self).read_vectored_volatile(bufs)
+    }
+
+    fn read_exact_volatile(&mut self, slice: VolatileSlice) -> Result<()> {
+        (**self).read_exact_volatile(slice)
+    }
+
+    fn write_volatile(&mut self, slice: VolatileSlice) -> Result<usize> {
+        (**self).write_volatile(slice)
+    }
+
+    fn write_vectored_volatile(&mut self, bufs: &[VolatileSlice]) -> Result<usize> {
+        (**self).write_vectored_volatile(bufs)
+    }
+
+    fn write_all_volatile(&mut self, slice: VolatileSlice) -> Result<()> {
+        (**self).write_all_volatile(slice)
+    }
+
     fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize> {
         (**self).read_at_volatile(slice, offset)
     }
@@ -294,9 +289,7 @@ macro_rules! volatile_impl {
                     Err(Error::last_os_error())
                 }
             }
-        }
 
-        impl FileReadWriteAtVolatile for $ty {
             fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize> {
                 // Safe because only bytes inside the slice are accessed and the kernel is expected
                 // to handle arbitrary memory for I/O.
@@ -406,4 +399,5 @@ macro_rules! volatile_impl {
     };
 }
 
+// unused. Kept just as a reference.
 volatile_impl!(File);
