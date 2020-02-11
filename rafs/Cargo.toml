@@ -10,7 +10,4 @@ edition = "2018"
 libc = "0.2"
 fuse = { path = "../fuse" }
 vhost_rs = { path = "../vhost_rs" }
-
-[dependencies.vm-memory]
-git = "https://github.com/rust-vmm/vm-memory"
-features = ["backend-mmap"]
+vm-memory = {git = "https://github.com/rust-vmm/vm-memory", features = ["backend-mmap"]}
