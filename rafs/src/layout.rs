@@ -4,10 +4,20 @@
 //
 // Rafs ondisk layout structures.
 
+use std::io::{Read, Result, Write};
+
 const MAX_RAFS_NAME: usize = 255;
 const RAFS_SHA256_LENGTH: usize = 32;
 const RAFS_BLOB_ID_MAX_LENGTH: usize = 72;
 const RAFS_SUPERBLOCK_SIZE: usize = 8192;
+
+trait RafsLayoutLoadStore {
+    // load rafs ondisk metadata in packed format
+    fn load<R: Read>(&self, r: R) -> Result<usize>;
+
+    // store rafs ondisk metadata in a packed format
+    fn store<W: Write>(&self, w: W) -> Result<usize>;
+}
 
 // Ondisk rafs inode, 512 bytes
 struct RafsInodeInfo {
@@ -30,6 +40,16 @@ struct RafsInodeInfo {
     i_reserved: [char; 120],
 }
 
+impl RafsLayoutLoadStore for RafsInodeInfo {
+    fn load<R: Read>(&self, _r: R) -> Result<usize> {
+        Ok(0)
+    }
+
+    fn store<W: Write>(&self, _w: W) -> Result<usize> {
+        Ok(0)
+    }
+}
+
 // Ondisk rafs superblock, 8192 bytes
 #[derive(Copy, Clone)]
 struct RafsSuperBlockInfo {
@@ -44,6 +64,16 @@ struct RafsSuperBlockInfo {
     s_reserved: [char; 8259],
 }
 
+impl RafsLayoutLoadStore for RafsSuperBlockInfo {
+    fn load<R: Read>(&self, _r: R) -> Result<usize> {
+        Ok(0)
+    }
+
+    fn store<W: Write>(&self, _w: W) -> Result<usize> {
+        Ok(0)
+    }
+}
+
 // Ondis rafs chunk
 #[derive(Copy, Clone)]
 struct RafsChunkInfo {
@@ -54,4 +84,14 @@ struct RafsChunkInfo {
     offset: u64,
     size: u32,
     reserved: u64,
+}
+
+impl RafsLayoutLoadStore for RafsChunkInfo {
+    fn load<R: Read>(&self, _r: R) -> Result<usize> {
+        Ok(0)
+    }
+
+    fn store<W: Write>(&self, _w: W) -> Result<usize> {
+        Ok(0)
+    }
 }
