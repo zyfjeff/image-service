@@ -95,7 +95,24 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
         Ok(512)
     }
 
-    fn store<W: Write>(&self, _w: W) -> Result<usize> {
+    fn store<W: Write>(&self, mut w: W) -> Result<usize> {
+        w.write(self.name.as_bytes())?;
+        w.write(self.digest.as_bytes())?;
+        w.write(&u64::to_le_bytes(self.i_parent))?;
+        w.write(&u64::to_le_bytes(self.i_ino))?;
+        w.write(&u32::to_le_bytes(self.i_mode))?;
+        w.write(&u32::to_le_bytes(self.i_uid))?;
+        w.write(&u32::to_le_bytes(self.i_gid))?;
+        w.write(&u32::to_le_bytes(self.i_flags))?;
+        w.write(&u64::to_le_bytes(self.i_rdev))?;
+        w.write(&u64::to_le_bytes(self.i_size))?;
+        w.write(&u64::to_le_bytes(self.i_nlink))?;
+        w.write(&u64::to_le_bytes(self.i_blocks))?;
+        w.write(&u64::to_le_bytes(self.i_atime))?;
+        w.write(&u64::to_le_bytes(self.i_mtime))?;
+        w.write(&u64::to_le_bytes(self.i_ctime))?;
+        w.write(&u64::to_le_bytes(self.i_chunk_cnt))?;
+        w.write(&vec![0; 120])?;
         Ok(0)
     }
 }
@@ -130,7 +147,16 @@ impl RafsLayoutLoadStore for RafsSuperBlockInfo {
         Ok(8192)
     }
 
-    fn store<W: Write>(&self, _w: W) -> Result<usize> {
+    fn store<W: Write>(&self, mut w: W) -> Result<usize> {
+        w.write(&u64::to_le_bytes(self.s_inodes_count))?;
+        w.write(&u64::to_le_bytes(self.s_blocks_count))?;
+        w.write(&u16::to_le_bytes(self.s_inode_size))?;
+        w.write(&u16::to_le_bytes(0))?;
+        w.write(&u32::to_le_bytes(self.s_block_size))?;
+        w.write(&u16::to_le_bytes(self.s_fs_version))?;
+        w.write(&u16::to_le_bytes(0))?;
+        w.write(&u32::to_le_bytes(self.s_magic))?;
+        w.write(&vec![0; 8259])?;
         Ok(0)
     }
 }
@@ -162,7 +188,14 @@ impl RafsLayoutLoadStore for RafsChunkInfo {
         Ok(136)
     }
 
-    fn store<W: Write>(&self, _w: W) -> Result<usize> {
+    fn store<W: Write>(&self, mut w: W) -> Result<usize> {
+        w.write(self.blockid.as_bytes())?;
+        w.write(self.blobid.as_bytes())?;
+        w.write(&u64::to_le_bytes(self.pos))?;
+        w.write(&u32::to_le_bytes(self.len))?;
+        w.write(&u64::to_le_bytes(self.offset))?;
+        w.write(&u32::to_le_bytes(self.size))?;
+        w.write(&u64::to_le_bytes(0))?;
         Ok(0)
     }
 }
