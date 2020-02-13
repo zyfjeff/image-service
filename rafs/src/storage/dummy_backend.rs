@@ -44,15 +44,13 @@ impl FileReadWriteVolatile for DummyTarget {
     }
 }
 
-struct Dummy {
+pub struct Dummy {
     targets: RwLock<HashMap<String, Arc<Mutex<DummyTarget>>>>,
 }
 
-impl Dummy {
-    fn new() -> Dummy {
-        Dummy {
-            targets: RwLock::new(HashMap::new()),
-        }
+pub fn new() -> Dummy {
+    Dummy {
+        targets: RwLock::new(HashMap::new()),
     }
 }
 

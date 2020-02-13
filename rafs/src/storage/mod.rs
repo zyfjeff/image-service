@@ -9,4 +9,4 @@ mod bio;
 pub mod backend;
 
 #[allow(dead_code)]
-mod dummy_backend;
+pub mod dummy_backend;

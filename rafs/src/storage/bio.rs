@@ -2,26 +2,79 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use std::io;
+use std::collections::HashMap;
+use std::io::Result;
 use vm_memory::VolatileSlice;
 
-pub struct Auth {
+use crate::storage::backend::*;
+use crate::storage::dummy_backend;
+
+// A rafs storage device config
+#[derive(Default)]
+pub struct Config {
+    // backend type
+    pub backend_type: BackendType,
+    // Storage path, can be a directory or a URL to some remote storage
+    pub path: String,
+    // optional auth info used to access the storage
     pub id: String,
     pub secret: String,
 }
 
-pub struct Config {
-    // Storage path, can be a directory or a URL to some remote storage
-    pub path: String,
-    // auth info used to access the storage
-    pub auth: Auth,
+impl Config {
+    pub fn new() -> Config {
+        Config {
+            ..Default::default()
+        }
+    }
+
+    pub fn hashmap(&self) -> HashMap<&str, &str> {
+        let mut hmap: HashMap<&str, &str> = HashMap::new();
+        hmap.insert("path", &self.path);
+        hmap.insert("id", &self.id);
+        hmap.insert("secret", &self.secret);
+        hmap
+    }
+}
+
+// A rafs storage device
+pub struct RafsDevice<B: BlobBackend> {
+    c: Config,
+    b: B,
+}
+
+impl<B: BlobBackend> RafsDevice<B> {
+    pub fn new(c: Config) -> impl RafsStorageDevice {
+        match c.backend_type {
+            _ => RafsDevice {
+                c: c,
+                b: dummy_backend::new(),
+            },
+        }
+    }
+}
+
+impl<B: BlobBackend> RafsStorageDevice for RafsDevice<B> {
+    fn init(&mut self) -> Result<()> {
+        self.b.init(self.c.hashmap())
+    }
+
+    fn close(&mut self) -> Result<()> {
+        self.b.close();
+        Ok(())
+    }
+}
+
+pub trait RafsStorageDevice {
+    fn init(&mut self) -> Result<()>;
+    fn close(&mut self) -> Result<()>;
 }
 
 pub struct RafsBio<'a> {
-    pub bi_flags: u32,
-    pub bi_size: usize,
-    pub bi_blksize: usize,
-    pub bi_vec: Vec<RafsBioVec<'a>>,
+    bi_flags: u32,
+    bi_size: usize,
+    bi_blksize: usize,
+    bi_vec: Vec<RafsBioVec<'a>>,
 }
 
 pub struct RafsBioVec<'a> {
@@ -31,21 +84,3 @@ pub struct RafsBioVec<'a> {
 }
 
 pub struct RafsBlkInfo {}
-
-#[allow(unused_variables)]
-pub trait Storage {
-    // Open a device
-    fn init(&self, conf: Config) -> io::Result<usize> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
-    }
-
-    // Close a device
-    fn close(&self) -> io::Result<usize> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
-    }
-
-    // Submit IO to the open device
-    fn submit_io(&self, bio: RafsBio) -> io::Result<usize> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
-    }
-}

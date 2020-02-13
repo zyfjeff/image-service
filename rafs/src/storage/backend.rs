@@ -7,6 +7,16 @@ use std::io::{Read, Result, Write};
 
 use fuse::filesystem::{ZeroCopyReader, ZeroCopyWriter};
 
+pub enum BackendType {
+    DummyBackendType,
+}
+
+impl Default for BackendType {
+    fn default() -> Self {
+        BackendType::DummyBackendType
+    }
+}
+
 // Rafs blob backend API. To be specific, each backend
 // must properly implement read_at_volatile and write_at_volatile
 // methods of FileReadWriteVolatile trait.
