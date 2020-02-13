@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 use std::collections::HashMap;
-use std::io::{Read, Result, Write};
+use std::io::{Error, ErrorKind, Read, Result, Write};
+use std::ops::DerefMut;
+use std::sync::{Arc, Mutex, RwLock};
 
 use vm_memory::VolatileSlice;
 
@@ -11,29 +13,46 @@ use crate::storage::backend::BlobBackend;
 use fuse::filesystem::{ZeroCopyReader, ZeroCopyWriter};
 use vhost_rs::descriptor_utils::FileReadWriteVolatile;
 
-struct Dummy {}
+#[derive(Default, Clone)]
+struct DummyTarget {
+    path: String,
+}
 
-impl FileReadWriteVolatile for Dummy {
-    fn read_volatile(&mut self, _slice: VolatileSlice) -> Result<usize> {
-        Ok(0)
+impl DummyTarget {
+    fn new(blobid: &str) -> DummyTarget {
+        DummyTarget {
+            path: blobid.to_owned(),
+        }
+    }
+}
+
+impl FileReadWriteVolatile for DummyTarget {
+    fn read_volatile(&mut self, slice: VolatileSlice) -> Result<usize> {
+        Ok(slice.len())
     }
 
-    fn write_volatile(&mut self, _slice: VolatileSlice) -> Result<usize> {
-        Ok(0)
+    fn write_volatile(&mut self, slice: VolatileSlice) -> Result<usize> {
+        Ok(slice.len())
     }
 
-    fn read_at_volatile(&mut self, _slice: VolatileSlice, _offset: u64) -> Result<usize> {
-        Ok(0)
+    fn read_at_volatile(&mut self, slice: VolatileSlice, _offset: u64) -> Result<usize> {
+        Ok(slice.len())
     }
 
-    fn write_at_volatile(&mut self, _slice: VolatileSlice, _offset: u64) -> Result<usize> {
-        Ok(0)
+    fn write_at_volatile(&mut self, slice: VolatileSlice, _offset: u64) -> Result<usize> {
+        Ok(slice.len())
     }
+}
+
+struct Dummy {
+    targets: RwLock<HashMap<String, Arc<Mutex<DummyTarget>>>>,
 }
 
 impl Dummy {
     fn new() -> Dummy {
-        Dummy {}
+        Dummy {
+            targets: RwLock::new(HashMap::new()),
+        }
     }
 }
 
@@ -42,27 +61,63 @@ impl BlobBackend for Dummy {
         Ok(())
     }
 
+    fn add(&mut self, blobid: &str) -> Result<()> {
+        match self.targets.read().unwrap().get(blobid) {
+            Some(_) => Ok(()),
+            _ => {
+                self.targets.write().unwrap().insert(
+                    blobid.to_owned(),
+                    Arc::new(Mutex::new(DummyTarget::new(blobid))),
+                );
+                Ok(())
+            }
+        }
+    }
+
     fn read_to<W: Write + ZeroCopyWriter>(
         &self,
-        _w: W,
-        _blobid: &str,
-        _count: usize,
-        _offset: u64,
+        mut w: W,
+        blobid: &str,
+        count: usize,
+        offset: u64,
     ) -> Result<usize> {
-        Ok(0)
+        let target = self
+            .targets
+            .read()
+            .unwrap()
+            .get(blobid)
+            .map(Arc::clone)
+            .ok_or(Error::from(ErrorKind::NotFound))?;
+
+        let mut blob = target.lock().unwrap();
+        w.write_from(&mut blob.deref_mut(), count, offset)
     }
 
     fn write_from<R: Read + ZeroCopyReader>(
         &self,
-        _r: R,
-        _blobid: &str,
-        _count: usize,
-        _offset: u64,
+        mut r: R,
+        blobid: &str,
+        count: usize,
+        offset: u64,
     ) -> Result<usize> {
-        Ok(0)
+        let target = self
+            .targets
+            .read()
+            .unwrap()
+            .get(blobid)
+            .map(Arc::clone)
+            .ok_or(Error::from(ErrorKind::NotFound))?;
+
+        let mut blob = target.lock().unwrap();
+        r.read_to(&mut blob.deref_mut(), count, offset)
     }
 
-    fn delete(&self, _blobid: &str) -> Result<()> {
+    fn delete(&mut self, blobid: &str) -> Result<()> {
+        self.targets.write().unwrap().remove(blobid);
         Ok(())
+    }
+
+    fn close(&mut self) {
+        self.targets.write().unwrap().clear()
     }
 }
