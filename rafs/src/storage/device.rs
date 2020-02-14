@@ -3,8 +3,9 @@
 // found in the LICENSE file.
 
 use std::collections::HashMap;
-use std::io::Result;
-use vm_memory::VolatileSlice;
+use std::io::{Read, Result, Write};
+
+use fuse::filesystem::{ZeroCopyReader, ZeroCopyWriter};
 
 use crate::storage::backend::*;
 
@@ -50,7 +51,7 @@ impl<B: BlobBackend> RafsDevice<B> {
     }
 }
 
-impl<B: BlobBackend> RafsStorageDevice for RafsDevice<B> {
+impl<B: BlobBackend> RafsDevice<B> {
     fn init(&mut self) -> Result<()> {
         self.b.init(self.c.hashmap())
     }
@@ -59,24 +60,53 @@ impl<B: BlobBackend> RafsStorageDevice for RafsDevice<B> {
         self.b.close();
         Ok(())
     }
+
+    // Read a range of data from blob into the provided writer
+    fn read_to<W: Write + ZeroCopyWriter>(&self, _w: W, _bio: RafsBioDesc) -> Result<usize> {
+        Ok(0)
+    }
+
+    // Write a range of data to blob from the provided reader
+    fn write_from<R: Read + ZeroCopyReader>(&self, _r: R, _bio: RafsBioDesc) -> Result<usize> {
+        Ok(0)
+    }
 }
 
-pub trait RafsStorageDevice {
-    fn init(&mut self) -> Result<()>;
-    fn close(&mut self) -> Result<()>;
-}
-
-pub struct RafsBio<'a> {
+// Rafs device blob IO descriptor
+pub struct RafsBioDesc<'a> {
+    // Blob IO flags
     bi_flags: u32,
+    // Totol IO size to be performed
     bi_size: usize,
-    bi_blksize: usize,
-    bi_vec: Vec<RafsBioVec<'a>>,
+    // Array of blob IO info. Corresponding data should
+    // be read from (written to) IO stream sequencially
+    bi_vec: Vec<RafsBio<'a>>,
 }
 
-pub struct RafsBioVec<'a> {
-    pub blkinfo: RafsBlkInfo,
+// Rafs blob IO info
+pub struct RafsBio<'a> {
+    pub blkinfo: RafsBlk<'a>,
+    // offset within the block
     pub offset: u32,
-    pub buffer: VolatileSlice<'a>,
+    // size of data to transfer
+    pub size: usize,
 }
 
-pub struct RafsBlkInfo {}
+// Rafs block
+pub struct RafsBlk<'a> {
+    // block hash
+    pub block_id: &'a str,
+    // blob containing the block
+    pub blob_id: &'a str,
+    // position of the block within the file
+    pub file_pos: u64,
+    // size of the block, uncompressed
+    pub uncompr_bsize: usize,
+    // valid data length of the block, uncompressed
+    // zero means hole block
+    pub len: usize,
+    // offset of the block within the blob
+    pub blob_offset: u64,
+    // size of the block, compressed
+    pub compr_size: usize,
+}
