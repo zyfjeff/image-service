@@ -12,6 +12,8 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use crate::dag::Dag;
+use crate::storage::backend;
+use crate::storage::device;
 
 use fuse::filesystem::*;
 
@@ -29,18 +31,38 @@ struct RafsSuper {
     s_inodes: RwLock<BTreeMap<Inode, Arc<RafsInode>>>,
 }
 
+#[derive(Clone, Default)]
 pub struct RafsConfig {
     source: String,
+    device_config: device::Config,
 }
 
-pub struct Rafs {
+impl RafsConfig {
+    pub fn new() -> RafsConfig {
+        RafsConfig {
+            ..Default::default()
+        }
+    }
+
+    fn dev_config(&self) -> device::Config {
+        let mut c = device::Config::new();
+        c.backend_type = self.device_config.backend_type;
+        c.id = String::from(&self.device_config.id);
+        c.path = String::from(&self.device_config.path);
+        c.secret = String::from(&self.device_config.secret);
+        c
+    }
+}
+
+pub struct Rafs<B: backend::BlobBackend + 'static> {
     conf: RafsConfig,
 
     sb: RafsSuper,
+    device: device::RafsDevice<B>,
 }
 
-impl Rafs {
-    pub fn new(conf: RafsConfig) -> Rafs {
+impl<B: backend::BlobBackend + 'static> Rafs<B> {
+    pub fn new(conf: RafsConfig, b: B) -> Self {
         Rafs {
             sb: RafsSuper {
                 s_magic: 100,
@@ -48,6 +70,7 @@ impl Rafs {
                 s_root: Dag::new(),
                 s_inodes: RwLock::new(BTreeMap::new()),
             },
+            device: device::RafsDevice::new(conf.dev_config(), b),
             conf: conf,
         }
     }
@@ -61,7 +84,7 @@ impl Rafs {
     }
 }
 
-impl FileSystem for Rafs {
+impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     type Inode = Inode;
     type Handle = Handle;
 

@@ -7,10 +7,9 @@ use std::io::Result;
 use vm_memory::VolatileSlice;
 
 use crate::storage::backend::*;
-use crate::storage::dummy_backend;
 
 // A rafs storage device config
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Config {
     // backend type
     pub backend_type: BackendType,
@@ -44,12 +43,9 @@ pub struct RafsDevice<B: BlobBackend> {
 }
 
 impl<B: BlobBackend> RafsDevice<B> {
-    pub fn new(c: Config) -> impl RafsStorageDevice {
+    pub fn new(c: Config, b: B) -> Self {
         match c.backend_type {
-            _ => RafsDevice {
-                c: c,
-                b: dummy_backend::new(),
-            },
+            _ => RafsDevice { c: c, b: b },
         }
     }
 }

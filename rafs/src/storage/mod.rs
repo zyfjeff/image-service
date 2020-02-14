@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #[allow(dead_code)]
-mod bio;
+pub mod device;
 
 #[allow(dead_code)]
 pub mod backend;

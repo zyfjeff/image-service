@@ -17,6 +17,14 @@ impl Default for BackendType {
     }
 }
 
+impl Copy for BackendType {}
+
+impl Clone for BackendType {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
 // Rafs blob backend API. To be specific, each backend
 // must properly implement read_at_volatile and write_at_volatile
 // methods of FileReadWriteVolatile trait.
