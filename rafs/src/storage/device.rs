@@ -83,10 +83,16 @@ impl<B: BlobBackend> RafsDevice<B> {
     // Write a range of data to blob from the provided reader
     pub fn write_from<R: Read + ZeroCopyReader>(
         &self,
-        _r: R,
-        _bio: RafsBioDesc,
+        mut r: R,
+        desc: RafsBioDesc,
     ) -> io::Result<usize> {
-        Ok(0)
+        let mut count: usize = 0;
+        for bio in desc.bi_vec.iter() {
+            let mut f = RafsBioDevice::new(bio, &self)?;
+            let offset = bio.blkinfo.blob_offset + bio.offset as u64;
+            count += r.read_to(&mut f, bio.size, offset)?;
+        }
+        Ok(count)
     }
 }
 
@@ -117,10 +123,11 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
     }
 
     fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
-        let mut buf = vec![0; self.bio.blkinfo.compr_size];
+        let mut buf = vec![0u8; self.bio.blkinfo.compr_size];
         self.dev
             .b
             .read(self.bio.blkinfo.blob_id, &mut buf, offset)?;
+        // TODO: add decompression
         slice.copy_from(&buf[self.bio.offset as usize..self.bio.offset as usize + self.bio.size]);
         let mut count = self.bio.offset as usize + self.bio.size - self.bio.offset as usize;
         if slice.len() < count {
@@ -129,8 +136,17 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
         Ok(count)
     }
 
-    fn write_at_volatile(&mut self, slice: VolatileSlice, _offset: u64) -> Result<usize, Error> {
-        Ok(slice.len())
+    fn write_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
+        let mut buf = vec![0u8; slice.len()];
+        // TODO: add compression
+        slice.copy_to(&mut buf);
+        self.dev.b.write(self.bio.blkinfo.blob_id, &buf, offset)?;
+        slice.copy_from(&buf[self.bio.offset as usize..self.bio.offset as usize + self.bio.size]);
+        let mut count = self.bio.offset as usize + self.bio.size - self.bio.offset as usize;
+        if slice.len() < count {
+            count = slice.len()
+        }
+        Ok(count)
     }
 }
 

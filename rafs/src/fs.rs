@@ -173,6 +173,30 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         self.device.read_to(w, desc)
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn write<R: io::Read + ZeroCopyReader>(
+        &self,
+        ctx: Context,
+        inode: Self::Inode,
+        handle: Self::Handle,
+        r: R,
+        size: u32,
+        offset: u64,
+        lock_owner: Option<u64>,
+        delayed_write: bool,
+        flags: u32,
+    ) -> io::Result<usize> {
+        //TODO: fill in properly
+        let bio = RafsBio {
+            ..Default::default()
+        };
+        let mut desc = RafsBioDesc {
+            ..Default::default()
+        };
+        desc.bi_vec.push(bio);
+        self.device.write_from(r, desc)
+    }
+
     fn release(
         &self,
         ctx: Context,
