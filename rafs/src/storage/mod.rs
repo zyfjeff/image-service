@@ -10,4 +10,6 @@ pub mod backend;
 
 #[allow(dead_code)]
 pub mod dummy_backend;
-//pub mod oss_backend;
+
+#[allow(dead_code)]
+pub mod oss_backend;

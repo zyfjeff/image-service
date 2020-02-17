@@ -5,10 +5,10 @@ use crypto::{hmac::Hmac, mac::Mac, sha1::Sha1};
 use httpdate;
 use reqwest::{self, header::HeaderMap, StatusCode};
 use std::collections::HashMap;
-use std::io::{Read, Write};
-use url::Url;
 use std::io::Result as IOResult;
 use std::io::{Error, ErrorKind};
+use std::io::{Read, Write};
+use url::Url;
 
 use crate::storage::backend::BlobBackend;
 use fuse::filesystem::{ZeroCopyReader, ZeroCopyWriter};
@@ -96,22 +96,20 @@ impl OSS {
         let url = format!("{}{}", url.as_str(), query_str);
         println!("{} {}", method, url);
         let ret = client
-        .request(method, url.as_str())
-        .headers(new_headers)
-        .body(data)
-        .send();
+            .request(method, url.as_str())
+            .headers(new_headers)
+            .body(data)
+            .send();
         match ret {
-          Ok(mut resp) => {
-            let status = resp.status();
-            if status >= StatusCode::OK && status < StatusCode::MULTIPLE_CHOICES {
-                return Ok(resp);
+            Ok(mut resp) => {
+                let status = resp.status();
+                if status >= StatusCode::OK && status < StatusCode::MULTIPLE_CHOICES {
+                    return Ok(resp);
+                }
+                let message = resp.text().unwrap();
+                Err(Error::new(ErrorKind::Other, message))
             }
-            let message = resp.text().unwrap();
-            Err(Error::new(ErrorKind::Other, message))
-          }
-          Err(err) => {
-            Err(Error::new(ErrorKind::Other, format!("{}", err)))
-          }
+            Err(err) => Err(Error::new(ErrorKind::Other, format!("{}", err))),
         }
     }
     fn create_bucket(&self, bucket_name: &str) -> IOResult<()> {
@@ -134,16 +132,23 @@ impl OSS {
 //   }
 // }
 
-impl BlobBackend for OSS {
+impl OSS {
     fn init(&self, _config: HashMap<&str, &str>) -> IOResult<()> {
         return self.create_bucket(self.bucket_name.as_str());
     }
     fn add(&mut self, _blob_id: &str) -> IOResult<()> {
-      Ok(())
+        Ok(())
     }
     fn delete(&mut self, object_key: &str) -> IOResult<()> {
         let headers = HeaderMap::new();
-        self.request("DELETE", "", self.bucket_name.as_str(), object_key, headers, &[])?;
+        self.request(
+            "DELETE",
+            "",
+            self.bucket_name.as_str(),
+            object_key,
+            headers,
+            &[],
+        )?;
         Ok(())
     }
     fn read_to<W: Write + ZeroCopyWriter>(
@@ -160,12 +165,8 @@ impl BlobBackend for OSS {
         let mut resp = self.request("GET", "", self.bucket_name.as_str(), blob_id, headers, &[])?;
         let ret = resp.copy_to(&mut writer);
         match ret {
-          Ok(size) => {
-            Ok(size as usize)
-          }
-          Err(err) => {
-            Err(Error::new(ErrorKind::Other, format!("{}", err)))
-          }
+            Ok(size) => Ok(size as usize),
+            Err(err) => Err(Error::new(ErrorKind::Other, format!("{}", err))),
         }
     }
     fn write_from<R: Read + ZeroCopyReader>(
@@ -189,6 +190,23 @@ impl BlobBackend for OSS {
         )?;
         Ok(count)
     }
-    fn close(&mut self) {
+    fn close(&mut self) {}
+}
+
+impl BlobBackend for OSS {
+    fn init(&mut self, _config: HashMap<&str, &str>) -> IOResult<()> {
+        Ok(())
     }
+
+    // Read a range of data from blob into the provided destination
+    fn read(&self, _blobid: &str, buf: &mut Vec<u8>, _offset: u64) -> IOResult<usize> {
+        Ok(buf.len())
+    }
+
+    // Write a range of data to blob from the provided source
+    fn write(&self, _blobid: &str, buf: &Vec<u8>, _offset: u64) -> IOResult<usize> {
+        Ok(buf.len())
+    }
+
+    fn close(&mut self) {}
 }
