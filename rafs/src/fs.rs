@@ -14,6 +14,7 @@ use std::time::Duration;
 use crate::dag::Dag;
 use crate::storage::backend;
 use crate::storage::device;
+use crate::storage::device::*;
 
 use fuse::filesystem::*;
 
@@ -161,7 +162,15 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         lock_owner: Option<u64>,
         flags: u32,
     ) -> io::Result<usize> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        //TODO: fill in properly
+        let bio = RafsBio {
+            ..Default::default()
+        };
+        let mut desc = RafsBioDesc {
+            ..Default::default()
+        };
+        desc.bi_vec.push(bio);
+        self.device.read_to(w, desc)
     }
 
     fn release(

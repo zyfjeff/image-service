@@ -3,9 +3,13 @@
 // found in the LICENSE file.
 
 use std::collections::HashMap;
-use std::io::{Read, Result, Write};
+use std::io;
+use std::io::{Error, Read, Write};
+
+use vm_memory::VolatileSlice;
 
 use fuse::filesystem::{ZeroCopyReader, ZeroCopyWriter};
+use vhost_rs::descriptor_utils::FileReadWriteVolatile;
 
 use crate::storage::backend::*;
 
@@ -52,38 +56,98 @@ impl<B: BlobBackend> RafsDevice<B> {
 }
 
 impl<B: BlobBackend> RafsDevice<B> {
-    fn init(&mut self) -> Result<()> {
+    pub fn init(&mut self) -> io::Result<()> {
         self.b.init(self.c.hashmap())
     }
 
-    fn close(&mut self) -> Result<()> {
+    pub fn close(&mut self) -> io::Result<()> {
         self.b.close();
         Ok(())
     }
 
     // Read a range of data from blob into the provided writer
-    fn read_to<W: Write + ZeroCopyWriter>(&self, _w: W, _bio: RafsBioDesc) -> Result<usize> {
-        Ok(0)
+    pub fn read_to<W: Write + ZeroCopyWriter>(
+        &self,
+        mut w: W,
+        desc: RafsBioDesc,
+    ) -> io::Result<usize> {
+        let mut count: usize = 0;
+        for bio in desc.bi_vec.iter() {
+            let mut f = RafsBioDevice::new(bio, &self)?;
+            let offset = bio.blkinfo.blob_offset + bio.offset as u64;
+            count += w.write_from(&mut f, bio.size, offset)?;
+        }
+        Ok(count)
     }
 
     // Write a range of data to blob from the provided reader
-    fn write_from<R: Read + ZeroCopyReader>(&self, _r: R, _bio: RafsBioDesc) -> Result<usize> {
+    pub fn write_from<R: Read + ZeroCopyReader>(
+        &self,
+        _r: R,
+        _bio: RafsBioDesc,
+    ) -> io::Result<usize> {
         Ok(0)
+    }
+}
+
+struct RafsBioDevice<'a, B: BlobBackend> {
+    bio: &'a RafsBio<'a>,
+    dev: &'a RafsDevice<B>,
+}
+
+impl<'a, B: BlobBackend> RafsBioDevice<'a, B> {
+    fn new(bio: &'a RafsBio<'a>, b: &'a RafsDevice<B>) -> io::Result<Self> {
+        // FIXME: make sure bio is valid
+        Ok(RafsBioDevice { bio: bio, dev: b })
+    }
+
+    fn blob_offset(&self) -> u64 {
+        let blkinfo = &self.bio.blkinfo;
+        blkinfo.blob_offset + self.bio.offset as u64
+    }
+}
+
+impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
+    fn read_volatile(&mut self, slice: VolatileSlice) -> Result<usize, Error> {
+        Ok(slice.len())
+    }
+
+    fn write_volatile(&mut self, slice: VolatileSlice) -> Result<usize, Error> {
+        Ok(slice.len())
+    }
+
+    fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
+        let mut buf = vec![0; self.bio.blkinfo.compr_size];
+        self.dev
+            .b
+            .read(self.bio.blkinfo.blob_id, &mut buf, offset)?;
+        slice.copy_from(&buf[self.bio.offset as usize..self.bio.offset as usize + self.bio.size]);
+        let mut count = self.bio.offset as usize + self.bio.size - self.bio.offset as usize;
+        if slice.len() < count {
+            count = slice.len()
+        }
+        Ok(count)
+    }
+
+    fn write_at_volatile(&mut self, slice: VolatileSlice, _offset: u64) -> Result<usize, Error> {
+        Ok(slice.len())
     }
 }
 
 // Rafs device blob IO descriptor
+#[derive(Default, Debug)]
 pub struct RafsBioDesc<'a> {
     // Blob IO flags
-    bi_flags: u32,
+    pub bi_flags: u32,
     // Totol IO size to be performed
-    bi_size: usize,
+    pub bi_size: usize,
     // Array of blob IO info. Corresponding data should
     // be read from (written to) IO stream sequencially
-    bi_vec: Vec<RafsBio<'a>>,
+    pub bi_vec: Vec<RafsBio<'a>>,
 }
 
 // Rafs blob IO info
+#[derive(Copy, Clone, Default, Debug)]
 pub struct RafsBio<'a> {
     pub blkinfo: RafsBlk<'a>,
     // offset within the block
@@ -93,6 +157,7 @@ pub struct RafsBio<'a> {
 }
 
 // Rafs block
+#[derive(Copy, Clone, Default, Debug)]
 pub struct RafsBlk<'a> {
     // block hash
     pub block_id: &'a str,
