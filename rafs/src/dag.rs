@@ -14,3 +14,9 @@ impl Dag {
         Dag {}
     }
 }
+
+impl Default for Dag {
+    fn default() -> Self {
+        Dag {}
+    }
+}

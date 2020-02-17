@@ -6,17 +6,22 @@
 
 use std::collections::BTreeMap;
 use std::ffi::CStr;
-use std::io;
+use std::io::{Error, ErrorKind, Read, Result, Write};
 use std::mem;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use crate::dag::Dag;
-use crate::storage::backend;
-use crate::storage::device;
-use crate::storage::device::*;
-
 use fuse::filesystem::*;
+
+use crate::dag::Dag;
+use crate::layout::*;
+use crate::storage::device::*;
+use crate::storage::*;
+
+// rafs superblock magic number
+const RAFS_SUPER_MAGIC: u32 = 0x52414653;
+// rafs version number
+const RAFS_CURR_VERSION: u16 = 1;
 
 type Inode = u64;
 type Handle = u64;
@@ -25,17 +30,40 @@ struct RafsInode {
     i_no: Inode,
 }
 
+#[derive(Default)]
 struct RafsSuper {
     s_magic: u32,
-    s_version: u32,
+    s_version: u16,
+    s_inodes_count: u64,
+    s_blocks_count: u64,
+    s_inode_size: u16,
+    s_block_size: u32,
     s_root: Dag,
     s_inodes: RwLock<BTreeMap<Inode, Arc<RafsInode>>>,
 }
 
+impl RafsSuper {
+    fn init(&mut self, info: RafsSuperBlockInfo) -> Result<()> {
+        if info.s_magic != RAFS_SUPER_MAGIC || info.s_fs_version != RAFS_CURR_VERSION {
+            Err(Error::new(ErrorKind::InvalidData, "Invalid super block"))
+        } else {
+            self.s_magic = info.s_magic;
+            self.s_version = info.s_fs_version;
+            self.s_block_size = info.s_block_size;
+            self.s_blocks_count = info.s_blocks_count;
+            self.s_inode_size = info.s_inode_size;
+            self.s_inodes_count = info.s_inodes_count;
+            Ok(())
+        }
+    }
+
+    fn destroy(&mut self) {}
+}
+
 #[derive(Clone, Default)]
 pub struct RafsConfig {
-    source: String,
-    device_config: device::Config,
+    pub source: String,
+    pub device_config: device::Config,
 }
 
 impl RafsConfig {
@@ -60,27 +88,41 @@ pub struct Rafs<B: backend::BlobBackend + 'static> {
 
     sb: RafsSuper,
     device: device::RafsDevice<B>,
+    initialized: bool,
 }
 
 impl<B: backend::BlobBackend + 'static> Rafs<B> {
     pub fn new(conf: RafsConfig, b: B) -> Self {
         Rafs {
             sb: RafsSuper {
-                s_magic: 100,
-                s_version: 1,
                 s_root: Dag::new(),
                 s_inodes: RwLock::new(BTreeMap::new()),
+                ..Default::default()
             },
             device: device::RafsDevice::new(conf.dev_config(), b),
             conf: conf,
+            initialized: false,
         }
     }
 
-    fn mount(&self) -> io::Result<()> {
+    // mount an rafs metadata provided by Read, to the specified virtual path
+    // E.g., mount / would create a virtual path the same as the container rootfs
+    fn mount<R: Read>(&mut self, r: R, path: &str) -> Result<()> {
+        // FIXME: Only support single root mount for now.
+        if self.initialized {
+            return Err(Error::new(ErrorKind::AlreadyExists, "Already mounted"));
+        }
+        let mut info = RafsSuperBlockInfo::new();
+        info.load(r)?;
+        self.sb.init(info)?;
+        self.initialized = true;
         Ok(())
     }
 
-    fn umount(&self) -> io::Result<()> {
+    // umount a prviously mounted rafs virtual path
+    fn umount(&mut self, path: &str) -> Result<()> {
+        self.sb.destroy();
+        self.initialized = false;
         Ok(())
     }
 }
@@ -89,7 +131,7 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     type Inode = Inode;
     type Handle = Handle;
 
-    fn init(&self, _: FsOptions) -> io::Result<FsOptions> {
+    fn init(&self, _: FsOptions) -> Result<FsOptions> {
         let data = RafsInode { i_no: ROOT_ID };
         self.sb
             .s_inodes
@@ -115,8 +157,8 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         self.sb.s_inodes.write().unwrap().clear();
     }
 
-    fn lookup(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> io::Result<Entry> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+    fn lookup(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> Result<Entry> {
+        Err(Error::from_raw_os_error(libc::ENOSYS))
     }
 
     fn forget(&self, ctx: Context, inode: Self::Inode, count: u64) {}
@@ -132,12 +174,12 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         ctx: Context,
         inode: Self::Inode,
         handle: Option<Self::Handle>,
-    ) -> io::Result<(libc::stat64, Duration)> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+    ) -> Result<(libc::stat64, Duration)> {
+        Err(Error::from_raw_os_error(libc::ENOSYS))
     }
 
-    fn readlink(&self, ctx: Context, inode: Self::Inode) -> io::Result<Vec<u8>> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+    fn readlink(&self, ctx: Context, inode: Self::Inode) -> Result<Vec<u8>> {
+        Err(Error::from_raw_os_error(libc::ENOSYS))
     }
 
     fn open(
@@ -145,13 +187,13 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         ctx: Context,
         inode: Self::Inode,
         flags: u32,
-    ) -> io::Result<(Option<Self::Handle>, OpenOptions)> {
+    ) -> Result<(Option<Self::Handle>, OpenOptions)> {
         // Matches the behavior of libfuse.
         Ok((None, OpenOptions::empty()))
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn read<W: io::Write + ZeroCopyWriter>(
+    fn read<W: Write + ZeroCopyWriter>(
         &self,
         ctx: Context,
         inode: Self::Inode,
@@ -161,7 +203,7 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         offset: u64,
         lock_owner: Option<u64>,
         flags: u32,
-    ) -> io::Result<usize> {
+    ) -> Result<usize> {
         //TODO: fill in properly
         let bio = RafsBio {
             ..Default::default()
@@ -174,7 +216,7 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn write<R: io::Read + ZeroCopyReader>(
+    fn write<R: Read + ZeroCopyReader>(
         &self,
         ctx: Context,
         inode: Self::Inode,
@@ -185,7 +227,7 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         lock_owner: Option<u64>,
         delayed_write: bool,
         flags: u32,
-    ) -> io::Result<usize> {
+    ) -> Result<usize> {
         //TODO: fill in properly
         let bio = RafsBio {
             ..Default::default()
@@ -206,11 +248,11 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         flush: bool,
         flock_release: bool,
         lock_owner: Option<u64>,
-    ) -> io::Result<()> {
+    ) -> Result<()> {
         Ok(())
     }
 
-    fn statfs(&self, ctx: Context, inode: Self::Inode) -> io::Result<libc::statvfs64> {
+    fn statfs(&self, ctx: Context, inode: Self::Inode) -> Result<libc::statvfs64> {
         // Safe because we are zero-initializing a struct with only POD fields.
         let mut st: libc::statvfs64 = unsafe { mem::zeroed() };
 
@@ -228,12 +270,12 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         inode: Self::Inode,
         name: &CStr,
         size: u32,
-    ) -> io::Result<GetxattrReply> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+    ) -> Result<GetxattrReply> {
+        Err(Error::from_raw_os_error(libc::ENOSYS))
     }
 
-    fn listxattr(&self, ctx: Context, inode: Self::Inode, size: u32) -> io::Result<ListxattrReply> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+    fn listxattr(&self, ctx: Context, inode: Self::Inode, size: u32) -> Result<ListxattrReply> {
+        Err(Error::from_raw_os_error(libc::ENOSYS))
     }
 
     fn opendir(
@@ -241,8 +283,8 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         ctx: Context,
         inode: Self::Inode,
         flags: u32,
-    ) -> io::Result<(Option<Self::Handle>, OpenOptions)> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+    ) -> Result<(Option<Self::Handle>, OpenOptions)> {
+        Err(Error::from_raw_os_error(libc::ENOSYS))
     }
 
     fn readdir<F>(
@@ -253,11 +295,11 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         size: u32,
         offset: u64,
         add_entry: F,
-    ) -> io::Result<()>
+    ) -> Result<()>
     where
-        F: FnMut(DirEntry) -> io::Result<usize>,
+        F: FnMut(DirEntry) -> Result<usize>,
     {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(Error::from_raw_os_error(libc::ENOSYS))
     }
 
     fn readdirplus<F>(
@@ -268,11 +310,11 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         size: u32,
         offset: u64,
         add_entry: F,
-    ) -> io::Result<()>
+    ) -> Result<()>
     where
-        F: FnMut(DirEntry, Entry) -> io::Result<usize>,
+        F: FnMut(DirEntry, Entry) -> Result<usize>,
     {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+        Err(Error::from_raw_os_error(libc::ENOSYS))
     }
 
     fn releasedir(
@@ -281,11 +323,11 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         inode: Self::Inode,
         flags: u32,
         handle: Self::Handle,
-    ) -> io::Result<()> {
+    ) -> Result<()> {
         Ok(())
     }
 
-    fn access(&self, ctx: Context, inode: Self::Inode, mask: u32) -> io::Result<()> {
-        Err(io::Error::from_raw_os_error(libc::ENOSYS))
+    fn access(&self, ctx: Context, inode: Self::Inode, mask: u32) -> Result<()> {
+        Err(Error::from_raw_os_error(libc::ENOSYS))
     }
 }

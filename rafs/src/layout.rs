@@ -13,7 +13,7 @@ const RAFS_SHA256_LENGTH: usize = 32;
 const RAFS_BLOB_ID_MAX_LENGTH: usize = 72;
 const RAFS_SUPERBLOCK_SIZE: usize = 8192;
 
-trait RafsLayoutLoadStore {
+pub trait RafsLayoutLoadStore {
     // load rafs ondisk metadata in packed format
     fn load<R: Read>(&mut self, r: R) -> Result<usize>;
 
@@ -39,7 +39,7 @@ struct RafsInodeInfo {
     i_mtime: u64,
     i_ctime: u64,
     i_chunk_cnt: u64,
-    i_reserved: [char; 120],
+    i_reserved: [u8; 120],
 }
 
 fn read_le_u64(input: &mut &[u8]) -> u64 {
@@ -118,16 +118,32 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
 }
 
 // Ondisk rafs superblock, 8192 bytes
-struct RafsSuperBlockInfo {
-    s_inodes_count: u64,
-    s_blocks_count: u64,
-    s_inode_size: u16,
-    s_padding1: u16,
-    s_block_size: u32,
-    s_fs_version: u16,
-    s_pandding2: u16,
-    s_magic: u32,
-    s_reserved: [char; 8259],
+pub struct RafsSuperBlockInfo {
+    pub s_inodes_count: u64,
+    pub s_blocks_count: u64,
+    pub s_inode_size: u16,
+    pub s_padding1: u16,
+    pub s_block_size: u32,
+    pub s_fs_version: u16,
+    pub s_pandding2: u16,
+    pub s_magic: u32,
+    pub s_reserved: [u8; 8259],
+}
+
+impl RafsSuperBlockInfo {
+    pub fn new() -> Self {
+        RafsSuperBlockInfo {
+            s_inodes_count: 0,
+            s_blocks_count: 0,
+            s_inode_size: 0,
+            s_padding1: 0,
+            s_block_size: 0,
+            s_fs_version: 0,
+            s_pandding2: 0,
+            s_magic: 0,
+            s_reserved: [0u8; 8259],
+        }
+    }
 }
 
 impl RafsLayoutLoadStore for RafsSuperBlockInfo {
