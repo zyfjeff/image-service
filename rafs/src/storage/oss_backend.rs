@@ -9,7 +9,6 @@ use reqwest::{self, header::HeaderMap, StatusCode};
 use std::collections::HashMap;
 use std::io::Result as IOResult;
 use std::io::{Error, ErrorKind};
-use std::sync::RwLock;
 use std::time::SystemTime;
 use url::Url;
 
@@ -23,7 +22,6 @@ pub struct OSS {
     access_key_secret: String,
     endpoint: String,
     bucket_name: String,
-    targets: RwLock<HashMap<String, RwLock<bool>>>,
 }
 
 impl OSS {
@@ -121,28 +119,6 @@ impl OSS {
         self.request("PUT", "", bucket_name, "", headers, &[])?;
         Ok(())
     }
-    fn get_blob_id_for_read(&self, blob_id: &String) -> String {
-        let hash = self.targets.read().unwrap();
-        if let None = hash.get(blob_id) {
-            self.targets
-                .write()
-                .unwrap()
-                .insert(blob_id.to_string(), RwLock::new(true));
-        }
-        let _lock = hash.get(blob_id).unwrap().read();
-        return blob_id.to_string();
-    }
-    fn get_blob_id_for_write(&self, blob_id: &String) -> String {
-        let hash = self.targets.read().unwrap();
-        if let None = hash.get(blob_id) {
-            self.targets
-                .write()
-                .unwrap()
-                .insert(blob_id.to_string(), RwLock::new(true));
-        }
-        let _lock = hash.get(blob_id).unwrap().write();
-        return blob_id.to_string();
-    }
 }
 
 pub fn new(config: HashMap<&str, &str>) -> OSS {
@@ -151,7 +127,6 @@ pub fn new(config: HashMap<&str, &str>) -> OSS {
     let access_key_secret = config.get("access_key_secret").unwrap();
     let bucket_name = config.get("bucket_name").unwrap();
     OSS {
-        targets: RwLock::new(HashMap::new()),
         endpoint: (*endpoint).to_owned(),
         access_key_id: (*access_key_id).to_owned(),
         access_key_secret: (*access_key_secret).to_owned(),
@@ -164,21 +139,12 @@ impl BlobBackend for OSS {
         self.create_bucket(self.bucket_name.as_str())
     }
 
-    // Read a range of data from blob into the provided destination
     fn read(&self, blob_id: &str, buf: &mut Vec<u8>, offset: u64) -> IOResult<usize> {
-        let blob = self.get_blob_id_for_read(&blob_id.to_string());
         let mut headers = HeaderMap::new();
         let end_at = buf.len() - 1;
         let range = format!("bytes={}-{}", offset, end_at);
         headers.insert("Range", range.as_str().parse().unwrap());
-        let mut resp = self.request(
-            "GET",
-            "",
-            self.bucket_name.as_str(),
-            blob.as_str(),
-            headers,
-            &[],
-        )?;
+        let mut resp = self.request("GET", "", self.bucket_name.as_str(), blob_id, headers, &[])?;
         let ret = resp.copy_to(buf);
         match ret {
             Ok(size) => Ok(size as usize),
@@ -186,23 +152,19 @@ impl BlobBackend for OSS {
         }
     }
 
-    // Write a range of data to blob from the provided source
     fn write(&self, blob_id: &str, buf: &Vec<u8>, offset: u64) -> IOResult<usize> {
-        let blob = self.get_blob_id_for_write(&blob_id.to_string());
         let headers = HeaderMap::new();
         let position = format!("position={}", offset);
         self.request(
             "POST",
             buf.to_owned(),
             self.bucket_name.as_str(),
-            blob.as_str(),
+            blob_id,
             headers,
             &["append", position.as_str()],
         )?;
         Ok(buf.len())
     }
 
-    fn close(&mut self) {
-        self.targets.write().unwrap().clear();
-    }
+    fn close(&mut self) {}
 }
