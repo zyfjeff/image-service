@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use fuse::filesystem::*;
 
-use crate::dag::Dag;
 use crate::layout::*;
 use crate::storage::device::*;
 use crate::storage::*;
@@ -27,22 +26,38 @@ type Inode = u64;
 type Handle = u64;
 
 struct RafsInode {
-    i_no: Inode,
+    i_ino: Inode,
 }
 
-#[derive(Default)]
+impl RafsInode {
+    fn new(ino: Inode) -> Self {
+        RafsInode { i_ino: ino }
+    }
+}
+
 struct RafsSuper {
     s_magic: u32,
     s_version: u16,
-    s_inodes_count: u64,
-    s_blocks_count: u64,
     s_inode_size: u16,
+    s_inodes_count: u64,
     s_block_size: u32,
-    s_root: Dag,
+    s_blocks_count: u64,
     s_inodes: RwLock<BTreeMap<Inode, Arc<RafsInode>>>,
 }
 
 impl RafsSuper {
+    fn new() -> Self {
+        RafsSuper {
+            s_magic: 0,
+            s_version: 0,
+            s_inode_size: 0,
+            s_inodes_count: 0,
+            s_block_size: 0,
+            s_blocks_count: 0,
+            s_inodes: RwLock::new(BTreeMap::new()),
+        }
+    }
+
     fn init(&mut self, info: RafsSuperBlockInfo) -> Result<()> {
         if info.s_magic != RAFS_SUPER_MAGIC || info.s_fs_version != RAFS_CURR_VERSION {
             Err(Error::new(ErrorKind::InvalidData, "Invalid super block"))
@@ -57,7 +72,14 @@ impl RafsSuper {
         }
     }
 
-    fn destroy(&mut self) {}
+    fn alloc_inode(&self, ino: Inode) {
+        let inode = RafsInode::new(ino);
+        self.s_inodes.write().unwrap().insert(ino, Arc::new(inode));
+    }
+
+    fn destroy(&mut self) {
+        self.s_inodes.write().unwrap().clear();
+    }
 }
 
 #[derive(Clone, Default)]
@@ -87,6 +109,8 @@ pub struct Rafs<B: backend::BlobBackend + 'static> {
     conf: RafsConfig,
 
     sb: RafsSuper,
+    // TODO: add vfs inode map, in order to support multiple
+    // rafs super per instance, we need another indirection layer
     device: device::RafsDevice<B>,
     initialized: bool,
 }
@@ -94,11 +118,7 @@ pub struct Rafs<B: backend::BlobBackend + 'static> {
 impl<B: backend::BlobBackend + 'static> Rafs<B> {
     pub fn new(conf: RafsConfig, b: B) -> Self {
         Rafs {
-            sb: RafsSuper {
-                s_root: Dag::new(),
-                s_inodes: RwLock::new(BTreeMap::new()),
-                ..Default::default()
-            },
+            sb: RafsSuper::new(),
             device: device::RafsDevice::new(conf.dev_config(), b),
             conf: conf,
             initialized: false,
@@ -127,17 +147,20 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
     }
 }
 
+fn ebadf() -> Error {
+    Error::from_raw_os_error(libc::EBADF)
+}
+
+fn enosys() -> Error {
+    Error::from_raw_os_error(libc::ENOSYS)
+}
+
 impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     type Inode = Inode;
     type Handle = Handle;
 
     fn init(&self, _: FsOptions) -> Result<FsOptions> {
-        let data = RafsInode { i_no: ROOT_ID };
-        self.sb
-            .s_inodes
-            .write()
-            .unwrap()
-            .insert(ROOT_ID, Arc::new(data));
+        self.sb.alloc_inode(ROOT_ID);
 
         Ok(
             // These fuse features are supported by rafs by default.
@@ -158,7 +181,14 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     }
 
     fn lookup(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> Result<Entry> {
-        Err(Error::from_raw_os_error(libc::ENOSYS))
+        let p = self
+            .sb
+            .s_inodes
+            .read()
+            .unwrap()
+            .get(&parent)
+            .ok_or(ebadf())?;
+        Err(enosys())
     }
 
     fn forget(&self, ctx: Context, inode: Self::Inode, count: u64) {}
@@ -175,11 +205,11 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         inode: Self::Inode,
         handle: Option<Self::Handle>,
     ) -> Result<(libc::stat64, Duration)> {
-        Err(Error::from_raw_os_error(libc::ENOSYS))
+        Err(enosys())
     }
 
     fn readlink(&self, ctx: Context, inode: Self::Inode) -> Result<Vec<u8>> {
-        Err(Error::from_raw_os_error(libc::ENOSYS))
+        Err(enosys())
     }
 
     fn open(
@@ -271,11 +301,11 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         name: &CStr,
         size: u32,
     ) -> Result<GetxattrReply> {
-        Err(Error::from_raw_os_error(libc::ENOSYS))
+        Err(enosys())
     }
 
     fn listxattr(&self, ctx: Context, inode: Self::Inode, size: u32) -> Result<ListxattrReply> {
-        Err(Error::from_raw_os_error(libc::ENOSYS))
+        Err(enosys())
     }
 
     fn opendir(
@@ -284,7 +314,7 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         inode: Self::Inode,
         flags: u32,
     ) -> Result<(Option<Self::Handle>, OpenOptions)> {
-        Err(Error::from_raw_os_error(libc::ENOSYS))
+        Err(enosys())
     }
 
     fn readdir<F>(
@@ -299,7 +329,7 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     where
         F: FnMut(DirEntry) -> Result<usize>,
     {
-        Err(Error::from_raw_os_error(libc::ENOSYS))
+        Err(enosys())
     }
 
     fn readdirplus<F>(
@@ -314,7 +344,7 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     where
         F: FnMut(DirEntry, Entry) -> Result<usize>,
     {
-        Err(Error::from_raw_os_error(libc::ENOSYS))
+        Err(enosys())
     }
 
     fn releasedir(
@@ -328,6 +358,6 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     }
 
     fn access(&self, ctx: Context, inode: Self::Inode, mask: u32) -> Result<()> {
-        Err(Error::from_raw_os_error(libc::ENOSYS))
+        Err(enosys())
     }
 }
