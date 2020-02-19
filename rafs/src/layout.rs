@@ -15,31 +15,55 @@ const RAFS_SUPERBLOCK_SIZE: usize = 8192;
 
 pub trait RafsLayoutLoadStore {
     // load rafs ondisk metadata in packed format
-    fn load<R: Read>(&mut self, r: R) -> Result<usize>;
+    fn load<R: Read>(&mut self, r: &mut R) -> Result<usize>;
 
     // store rafs ondisk metadata in a packed format
     fn store<W: Write>(&self, w: W) -> Result<usize>;
 }
 
 // Ondisk rafs inode, 512 bytes
-struct RafsInodeInfo {
-    name: String,   //[char; MAX_RAFS_NAME + 1],
-    digest: String, //[char; RAFS_SHA256_LENGTH],
-    i_parent: u64,
-    i_ino: u64,
-    i_mode: u32,
-    i_uid: u32,
-    i_gid: u32,
-    i_flags: u32,
-    i_rdev: u64,
-    i_size: u64,
-    i_nlink: u64,
-    i_blocks: u64,
-    i_atime: u64,
-    i_mtime: u64,
-    i_ctime: u64,
-    i_chunk_cnt: u64,
+pub struct RafsInodeInfo {
+    pub name: String,   //[char; MAX_RAFS_NAME + 1],
+    pub digest: String, //[char; RAFS_SHA256_LENGTH],
+    pub i_parent: u64,
+    pub i_ino: u64,
+    pub i_mode: u32,
+    pub i_uid: u32,
+    pub i_gid: u32,
+    pub i_flags: u32,
+    pub i_rdev: u64,
+    pub i_size: u64,
+    pub i_nlink: u64,
+    pub i_blocks: u64,
+    pub i_atime: u64,
+    pub i_mtime: u64,
+    pub i_ctime: u64,
+    pub i_chunk_cnt: u64,
     i_reserved: [u8; 120],
+}
+
+impl RafsInodeInfo {
+    pub fn new() -> Self {
+        RafsInodeInfo {
+            name: String::from(""),
+            digest: String::from(""),
+            i_parent: 0,
+            i_ino: 0,
+            i_mode: 0,
+            i_uid: 0,
+            i_gid: 0,
+            i_flags: 0,
+            i_rdev: 0,
+            i_size: 0,
+            i_nlink: 0,
+            i_blocks: 0,
+            i_atime: 0,
+            i_mtime: 0,
+            i_ctime: 0,
+            i_chunk_cnt: 0,
+            i_reserved: [0; 120],
+        }
+    }
 }
 
 fn read_le_u64(input: &mut &[u8]) -> u64 {
@@ -70,7 +94,7 @@ fn read_string(input: &mut &[u8], count: usize) -> Result<String> {
 }
 
 impl RafsLayoutLoadStore for RafsInodeInfo {
-    fn load<R: Read>(&mut self, mut r: R) -> Result<usize> {
+    fn load<R: Read>(&mut self, r: &mut R) -> Result<usize> {
         let mut input = [0; 512];
         r.read_exact(&mut input)?;
 
@@ -127,7 +151,7 @@ pub struct RafsSuperBlockInfo {
     pub s_fs_version: u16,
     pub s_pandding2: u16,
     pub s_magic: u32,
-    pub s_reserved: [u8; 8259],
+    s_reserved: [u8; 8259],
 }
 
 impl RafsSuperBlockInfo {
@@ -147,7 +171,7 @@ impl RafsSuperBlockInfo {
 }
 
 impl RafsLayoutLoadStore for RafsSuperBlockInfo {
-    fn load<R: Read>(&mut self, mut r: R) -> Result<usize> {
+    fn load<R: Read>(&mut self, r: &mut R) -> Result<usize> {
         let mut input = [0; 8192];
         r.read_exact(&mut input)?;
 
@@ -178,18 +202,27 @@ impl RafsLayoutLoadStore for RafsSuperBlockInfo {
 }
 
 // Ondis rafs chunk, 136 bytes
-struct RafsChunkInfo {
-    blockid: String, // [char; RAFS_SHA256_LENGTH],
-    blobid: String,  // [char; RAFS_BLOB_ID_MAX_LENGTH],
-    pos: u64,
-    len: u32,
-    offset: u64,
-    size: u32,
+#[derive(Default)]
+pub struct RafsChunkInfo {
+    pub blockid: String, // [char; RAFS_SHA256_LENGTH],
+    pub blobid: String,  // [char; RAFS_BLOB_ID_MAX_LENGTH],
+    pub pos: u64,
+    pub len: u32,
+    pub offset: u64,
+    pub size: u32,
     reserved: u64,
 }
 
+impl RafsChunkInfo {
+    pub fn new() -> Self {
+        RafsChunkInfo {
+            ..Default::default()
+        }
+    }
+}
+
 impl RafsLayoutLoadStore for RafsChunkInfo {
-    fn load<R: Read>(&mut self, mut r: R) -> Result<usize> {
+    fn load<R: Read>(&mut self, r: &mut R) -> Result<usize> {
         let mut input = [0; 136];
         r.read_exact(&mut input)?;
 

@@ -11,6 +11,8 @@ use std::mem;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use log::{info, trace, warn};
+
 use fuse::filesystem::*;
 
 use crate::layout::*;
@@ -25,13 +27,61 @@ const RAFS_CURR_VERSION: u16 = 1;
 type Inode = u64;
 type Handle = u64;
 
+#[derive(Default, Clone)]
 struct RafsInode {
     i_ino: Inode,
+    i_name: String,
+    // sha256
+    i_data_digest: String,
+    i_parent: u64,
+    i_mode: u32,
+    i_uid: u32,
+    i_gid: u32,
+    i_flags: u32,
+    i_rdev: u64,
+    i_size: u64,
+    i_nlink: u64,
+    i_blocks: u64,
+    i_atime: u64,
+    i_mtime: u64,
+    i_ctime: u64,
+    i_chunk_cnt: u64,
+    // FIXME: hardlinks
+    i_child: Vec<Inode>,
 }
 
 impl RafsInode {
-    fn new(ino: Inode) -> Self {
-        RafsInode { i_ino: ino }
+    fn new() -> Self {
+        RafsInode {
+            ..Default::default()
+        }
+    }
+
+    fn init(&mut self, parent: Inode, info: &RafsInodeInfo) {
+        self.i_ino = info.i_ino;
+        self.i_name = String::from(&info.name);
+        self.i_data_digest = String::from(&info.digest);
+        self.i_parent = parent;
+        self.i_mode = info.i_mode;
+        self.i_uid = info.i_uid;
+        self.i_gid = info.i_gid;
+        self.i_flags = info.i_flags;
+        self.i_rdev = info.i_rdev;
+        self.i_size = info.i_size;
+        self.i_nlink = info.i_nlink;
+        self.i_blocks = info.i_blocks;
+        self.i_atime = info.i_atime;
+        self.i_mtime = info.i_mtime;
+        self.i_ctime = info.i_ctime;
+        self.i_chunk_cnt = info.i_chunk_cnt;
+    }
+
+    fn is_dir(&self) -> bool {
+        self.i_mode & libc::S_IFDIR == libc::S_IFDIR
+    }
+
+    fn add_child(&mut self, ino: Inode) {
+        self.i_child.push(ino);
     }
 }
 
@@ -72,13 +122,17 @@ impl RafsSuper {
         }
     }
 
-    fn alloc_inode(&self, ino: Inode) {
-        let inode = RafsInode::new(ino);
-        self.s_inodes.write().unwrap().insert(ino, Arc::new(inode));
+    fn hash_inode(&self, ino: RafsInode) -> Result<()> {
+        self.s_inodes
+            .write()
+            .unwrap()
+            .insert(ino.i_ino, Arc::new(ino));
+        Ok(())
     }
 
-    fn destroy(&mut self) {
+    fn destroy(&mut self) -> Result<()> {
         self.s_inodes.write().unwrap().clear();
+        Ok(())
     }
 }
 
@@ -127,22 +181,68 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
 
     // mount an rafs metadata provided by Read, to the specified virtual path
     // E.g., mount / would create a virtual path the same as the container rootfs
-    fn mount<R: Read>(&mut self, r: R, path: &str) -> Result<()> {
+    pub fn mount<R: Read>(&mut self, r: &mut R, path: &str) -> Result<()> {
+        info! {"Mounting rafs at {}", &path};
         // FIXME: Only support single root mount for now.
         if self.initialized {
+            warn! {"Rafs already initialized"}
             return Err(Error::new(ErrorKind::AlreadyExists, "Already mounted"));
         }
-        let mut info = RafsSuperBlockInfo::new();
-        info.load(r)?;
-        self.sb.init(info)?;
+        self.import(r).or_else(|_| self.sb.destroy())?;
         self.initialized = true;
+        info! {"Mounted rafs at {}", &path};
         Ok(())
     }
 
     // umount a prviously mounted rafs virtual path
-    fn umount(&mut self, path: &str) -> Result<()> {
-        self.sb.destroy();
+    pub fn umount(&mut self, path: &str) -> Result<()> {
+        info! {"Umounting rafs"}
+        self.sb.destroy()?;
         self.initialized = false;
+        Ok(())
+    }
+
+    fn import<R: Read>(&mut self, mut r: &mut R) -> Result<()> {
+        // import superblock
+        let mut info = RafsSuperBlockInfo::new();
+        info.load(&mut r)?;
+        self.sb.init(info)?;
+
+        // import root inode
+        let mut root_info = RafsInodeInfo::new();
+        root_info.load(&mut r)?;
+        let mut root_inode = RafsInode::new();
+        root_inode.init(root_info.i_ino, &root_info);
+        self.unpack_dir(&mut root_inode, &mut r)?;
+        self.sb.hash_inode(root_inode)
+    }
+
+    fn unpack_dir<R: Read>(&self, dir: &mut RafsInode, mut r: &mut R) -> Result<()> {
+        loop {
+            let mut info = RafsInodeInfo::new();
+            match info.load(&mut r) {
+                Ok(0) => break,
+                Ok(n) => {
+                    trace!("unpacked {}", info.name);
+                }
+                Err(ref e) if e.kind() == ErrorKind::Interrupted => break,
+                Err(e) => return Err(e),
+            }
+
+            let mut inode = RafsInode::new();
+            inode.init(dir.i_ino, &info);
+            dir.add_child(info.i_ino);
+            if inode.is_dir() {
+                self.unpack_dir(&mut inode, &mut r)?;
+            } else {
+                self.unpack_node(&mut r)?;
+            }
+        }
+        // Must hash at last because we need to clone
+        self.sb.hash_inode(dir.clone())
+    }
+
+    fn unpack_node<R: Read>(&self, mut _r: &mut R) -> Result<()> {
         Ok(())
     }
 }
@@ -155,12 +255,17 @@ fn enosys() -> Error {
     Error::from_raw_os_error(libc::ENOSYS)
 }
 
+fn einval() -> Error {
+    Error::from_raw_os_error(libc::EINVAL)
+}
+
 impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     type Inode = Inode;
     type Handle = Handle;
 
     fn init(&self, _: FsOptions) -> Result<FsOptions> {
-        self.sb.alloc_inode(ROOT_ID);
+        // TODO: add fuse ROOT_ID inode mapping
+        // self.sb.alloc_inode(ROOT_ID)?;
 
         Ok(
             // These fuse features are supported by rafs by default.
