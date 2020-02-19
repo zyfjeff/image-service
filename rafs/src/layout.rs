@@ -11,7 +11,10 @@ use std::str;
 const MAX_RAFS_NAME: usize = 255;
 const RAFS_SHA256_LENGTH: usize = 32;
 const RAFS_BLOB_ID_MAX_LENGTH: usize = 72;
+
 const RAFS_SUPERBLOCK_SIZE: usize = 8192;
+const RAFS_INODE_INFO_SIZE: usize = 512;
+const RAFS_CHUNK_INFO_SIZE: usize = 136;
 
 pub trait RafsLayoutLoadStore {
     // load rafs ondisk metadata in packed format
@@ -30,7 +33,6 @@ pub struct RafsInodeInfo {
     pub i_mode: u32,
     pub i_uid: u32,
     pub i_gid: u32,
-    pub i_flags: u32,
     pub i_rdev: u64,
     pub i_size: u64,
     pub i_nlink: u64,
@@ -39,7 +41,7 @@ pub struct RafsInodeInfo {
     pub i_mtime: u64,
     pub i_ctime: u64,
     pub i_chunk_cnt: u64,
-    i_reserved: [u8; 120],
+    pub i_flags: u64,
 }
 
 impl RafsInodeInfo {
@@ -61,7 +63,6 @@ impl RafsInodeInfo {
             i_mtime: 0,
             i_ctime: 0,
             i_chunk_cnt: 0,
-            i_reserved: [0; 120],
         }
     }
 }
@@ -95,7 +96,7 @@ fn read_string(input: &mut &[u8], count: usize) -> Result<String> {
 
 impl RafsLayoutLoadStore for RafsInodeInfo {
     fn load<R: Read>(&mut self, r: &mut R) -> Result<usize> {
-        let mut input = [0; 512];
+        let mut input = [0; RAFS_INODE_INFO_SIZE];
         r.read_exact(&mut input)?;
 
         // Now we know input has enough bytes to fill in RafsInodeInfo
@@ -106,7 +107,6 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
         self.i_mode = read_le_u32(&mut &input[..]);
         self.i_uid = read_le_u32(&mut &input[..]);
         self.i_gid = read_le_u32(&mut &input[..]);
-        self.i_flags = read_le_u32(&mut &input[..]);
         self.i_rdev = read_le_u64(&mut &input[..]);
         self.i_size = read_le_u64(&mut &input[..]);
         self.i_nlink = read_le_u64(&mut &input[..]);
@@ -115,29 +115,30 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
         self.i_mtime = read_le_u64(&mut &input[..]);
         self.i_ctime = read_le_u64(&mut &input[..]);
         self.i_chunk_cnt = read_le_u64(&mut &input[..]);
+        self.i_flags = read_le_u64(&mut &input[..]);
 
-        Ok(512)
+        Ok(RAFS_INODE_INFO_SIZE)
     }
 
     fn store<W: Write>(&self, mut w: W) -> Result<usize> {
-        w.write(self.name.as_bytes())?;
-        w.write(self.digest.as_bytes())?;
-        w.write(&u64::to_le_bytes(self.i_parent))?;
-        w.write(&u64::to_le_bytes(self.i_ino))?;
-        w.write(&u32::to_le_bytes(self.i_mode))?;
-        w.write(&u32::to_le_bytes(self.i_uid))?;
-        w.write(&u32::to_le_bytes(self.i_gid))?;
-        w.write(&u32::to_le_bytes(self.i_flags))?;
-        w.write(&u64::to_le_bytes(self.i_rdev))?;
-        w.write(&u64::to_le_bytes(self.i_size))?;
-        w.write(&u64::to_le_bytes(self.i_nlink))?;
-        w.write(&u64::to_le_bytes(self.i_blocks))?;
-        w.write(&u64::to_le_bytes(self.i_atime))?;
-        w.write(&u64::to_le_bytes(self.i_mtime))?;
-        w.write(&u64::to_le_bytes(self.i_ctime))?;
-        w.write(&u64::to_le_bytes(self.i_chunk_cnt))?;
-        w.write(&vec![0; 120])?;
-        Ok(0)
+        let mut count = w.write(self.name.as_bytes())?;
+        count += w.write(self.digest.as_bytes())?;
+        count += w.write(&u64::to_le_bytes(self.i_parent))?;
+        count += w.write(&u64::to_le_bytes(self.i_ino))?;
+        count += w.write(&u32::to_le_bytes(self.i_mode))?;
+        count += w.write(&u32::to_le_bytes(self.i_uid))?;
+        count += w.write(&u32::to_le_bytes(self.i_gid))?;
+        count += w.write(&u64::to_le_bytes(self.i_rdev))?;
+        count += w.write(&u64::to_le_bytes(self.i_size))?;
+        count += w.write(&u64::to_le_bytes(self.i_nlink))?;
+        count += w.write(&u64::to_le_bytes(self.i_blocks))?;
+        count += w.write(&u64::to_le_bytes(self.i_atime))?;
+        count += w.write(&u64::to_le_bytes(self.i_mtime))?;
+        count += w.write(&u64::to_le_bytes(self.i_ctime))?;
+        count += w.write(&u64::to_le_bytes(self.i_chunk_cnt))?;
+        count += w.write(&u64::to_le_bytes(self.i_flags))?;
+        w.write(&vec![0; RAFS_INODE_INFO_SIZE - count])?;
+        Ok(RAFS_INODE_INFO_SIZE)
     }
 }
 
@@ -151,7 +152,6 @@ pub struct RafsSuperBlockInfo {
     pub s_fs_version: u16,
     pub s_pandding2: u16,
     pub s_magic: u32,
-    s_reserved: [u8; 8259],
 }
 
 impl RafsSuperBlockInfo {
@@ -165,14 +165,13 @@ impl RafsSuperBlockInfo {
             s_fs_version: 0,
             s_pandding2: 0,
             s_magic: 0,
-            s_reserved: [0u8; 8259],
         }
     }
 }
 
 impl RafsLayoutLoadStore for RafsSuperBlockInfo {
     fn load<R: Read>(&mut self, r: &mut R) -> Result<usize> {
-        let mut input = [0; 8192];
+        let mut input = [0; RAFS_SUPERBLOCK_SIZE];
         r.read_exact(&mut input)?;
 
         // Now we know input has enough bytes to load RafsSuperBlockInfo
@@ -184,20 +183,20 @@ impl RafsLayoutLoadStore for RafsSuperBlockInfo {
         self.s_fs_version = read_le_u16(&mut &input[..]);
         read_le_u16(&mut &input[..]);
         self.s_magic = read_le_u32(&mut &input[..]);
-        Ok(8192)
+        Ok(RAFS_SUPERBLOCK_SIZE)
     }
 
     fn store<W: Write>(&self, mut w: W) -> Result<usize> {
-        w.write(&u64::to_le_bytes(self.s_inodes_count))?;
-        w.write(&u64::to_le_bytes(self.s_blocks_count))?;
-        w.write(&u16::to_le_bytes(self.s_inode_size))?;
-        w.write(&u16::to_le_bytes(0))?;
-        w.write(&u32::to_le_bytes(self.s_block_size))?;
-        w.write(&u16::to_le_bytes(self.s_fs_version))?;
-        w.write(&u16::to_le_bytes(0))?;
-        w.write(&u32::to_le_bytes(self.s_magic))?;
-        w.write(&vec![0; 8259])?;
-        Ok(0)
+        let mut count = w.write(&u64::to_le_bytes(self.s_inodes_count))?;
+        count += w.write(&u64::to_le_bytes(self.s_blocks_count))?;
+        count += w.write(&u16::to_le_bytes(self.s_inode_size))?;
+        count += w.write(&u16::to_le_bytes(0))?;
+        count += w.write(&u32::to_le_bytes(self.s_block_size))?;
+        count += w.write(&u16::to_le_bytes(self.s_fs_version))?;
+        count += w.write(&u16::to_le_bytes(0))?;
+        count += w.write(&u32::to_le_bytes(self.s_magic))?;
+        w.write(&vec![0; RAFS_SUPERBLOCK_SIZE - count])?;
+        Ok(RAFS_SUPERBLOCK_SIZE)
     }
 }
 
@@ -223,7 +222,7 @@ impl RafsChunkInfo {
 
 impl RafsLayoutLoadStore for RafsChunkInfo {
     fn load<R: Read>(&mut self, r: &mut R) -> Result<usize> {
-        let mut input = [0; 136];
+        let mut input = [0; RAFS_CHUNK_INFO_SIZE];
         r.read_exact(&mut input)?;
 
         // Now we know there is enough bytes to fill RafsChunkInfo
@@ -234,7 +233,7 @@ impl RafsLayoutLoadStore for RafsChunkInfo {
         self.offset = read_le_u64(&mut &input[..]);
         self.size = read_le_u32(&mut &input[..]);
 
-        Ok(136)
+        Ok(RAFS_CHUNK_INFO_SIZE)
     }
 
     fn store<W: Write>(&self, mut w: W) -> Result<usize> {
@@ -245,6 +244,6 @@ impl RafsLayoutLoadStore for RafsChunkInfo {
         w.write(&u64::to_le_bytes(self.offset))?;
         w.write(&u32::to_le_bytes(self.size))?;
         w.write(&u64::to_le_bytes(0))?;
-        Ok(0)
+        Ok(RAFS_CHUNK_INFO_SIZE)
     }
 }

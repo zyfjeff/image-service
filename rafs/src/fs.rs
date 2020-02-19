@@ -37,7 +37,7 @@ struct RafsInode {
     i_mode: u32,
     i_uid: u32,
     i_gid: u32,
-    i_flags: u32,
+    i_flags: u64,
     i_rdev: u64,
     i_size: u64,
     i_nlink: u64,
