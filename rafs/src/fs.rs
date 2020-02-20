@@ -4,7 +4,7 @@
 //
 // A container image Registry Accerlation File System.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ffi::CStr;
 use std::io::{Error, ErrorKind, Read, Result, Write};
 use std::mem;
@@ -26,6 +26,7 @@ const RAFS_CURR_VERSION: u16 = 1;
 
 type Inode = u64;
 type Handle = u64;
+type SuperIndex = u64;
 
 #[derive(Default, Clone)]
 struct RafsInode {
@@ -103,8 +104,10 @@ struct RafsSuper {
     s_version: u16,
     s_inode_size: u16,
     s_inodes_count: u64,
+    s_root_inode: Inode,
     s_block_size: u32,
     s_blocks_count: u64,
+    s_index: SuperIndex,
     s_inodes: RwLock<BTreeMap<Inode, Arc<RafsInode>>>,
 }
 
@@ -115,8 +118,10 @@ impl RafsSuper {
             s_version: 0,
             s_inode_size: 0,
             s_inodes_count: 0,
+            s_root_inode: 0,
             s_block_size: 0,
             s_blocks_count: 0,
+            s_index: 0,
             s_inodes: RwLock::new(BTreeMap::new()),
         }
     }
@@ -176,6 +181,7 @@ pub struct Rafs<B: backend::BlobBackend + 'static> {
     conf: RafsConfig,
 
     sb: RafsSuper,
+    fuse_inodes: RwLock<HashMap<Inode, (SuperIndex, Inode)>>,
     // TODO: add vfs inode map, in order to support multiple
     // rafs super per instance, we need another indirection layer
     device: device::RafsDevice<B>,
@@ -187,6 +193,7 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
         Rafs {
             sb: RafsSuper::new(),
             device: device::RafsDevice::new(conf.dev_config(), b),
+            fuse_inodes: RwLock::new(HashMap::new()),
             conf: conf,
             initialized: false,
         }
@@ -227,6 +234,9 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
         let mut root_inode = RafsInode::new();
         root_inode.init(root_info.i_ino, &root_info);
         self.unpack_dir(&mut root_inode, &mut r)?;
+        self.sb.s_root_inode = root_inode.i_ino;
+        // TODO: add multiple super block support
+        self.sb.s_index = 100;
         self.sb.hash_inode(root_inode)
     }
 
@@ -279,13 +289,19 @@ fn einval() -> Error {
     Error::from_raw_os_error(libc::EINVAL)
 }
 
-impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
+fn enoent() -> Error {
+    Error::from_raw_os_error(libc::ENOENT)
+}
+
+impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     type Inode = Inode;
     type Handle = Handle;
 
     fn init(&self, _: FsOptions) -> Result<FsOptions> {
-        // TODO: add fuse ROOT_ID inode mapping
-        // self.sb.alloc_inode(ROOT_ID)?;
+        self.fuse_inodes
+            .write()
+            .unwrap()
+            .insert(ROOT_ID, (self.sb.s_index, self.sb.s_root_inode));
 
         Ok(
             // These fuse features are supported by rafs by default.
