@@ -46,6 +46,11 @@ struct RafsInode {
     i_mtime: u64,
     i_ctime: u64,
     i_chunk_cnt: u64,
+    // symlink target
+    i_target: String,
+    // data chunks
+    i_data: Vec<RafsBlk>,
+    // dir
     // FIXME: hardlinks
     i_child: Vec<Inode>,
 }
@@ -77,7 +82,15 @@ impl RafsInode {
     }
 
     fn is_dir(&self) -> bool {
-        self.i_mode & libc::S_IFDIR == libc::S_IFDIR
+        self.i_mode & libc::S_IFMT == libc::S_IFDIR
+    }
+
+    fn is_symlink(&self) -> bool {
+        self.i_mode & libc::S_IFMT == libc::S_IFLNK
+    }
+
+    fn is_reg(&self) -> bool {
+        self.i_mode & libc::S_IFMT == libc::S_IFREG
     }
 
     fn add_child(&mut self, ino: Inode) {
@@ -235,14 +248,21 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
             if inode.is_dir() {
                 self.unpack_dir(&mut inode, &mut r)?;
             } else {
-                self.unpack_node(&mut r)?;
+                self.unpack_node(&mut inode, &mut r)?;
             }
         }
         // Must hash at last because we need to clone
         self.sb.hash_inode(dir.clone())
     }
 
-    fn unpack_node<R: Read>(&self, mut _r: &mut R) -> Result<()> {
+    fn unpack_node<R: Read>(&self, inode: &mut RafsInode, r: &mut R) -> Result<()> {
+        if inode.is_symlink() {
+            let mut info = RafsLinkDataInfo::new(inode.i_chunk_cnt as usize);
+            info.load(r)?;
+        } else if inode.is_reg() {
+            let mut info = RafsChunkInfo::new();
+            info.load(r)?;
+        }
         Ok(())
     }
 }
@@ -340,12 +360,9 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         flags: u32,
     ) -> Result<usize> {
         //TODO: fill in properly
-        let bio = RafsBio {
-            ..Default::default()
-        };
-        let mut desc = RafsBioDesc {
-            ..Default::default()
-        };
+        let blk = RafsBlk::new();
+        let bio = RafsBio::new(&blk);
+        let mut desc = RafsBioDesc::new();
         desc.bi_vec.push(bio);
         self.device.read_to(w, desc)
     }
@@ -364,12 +381,9 @@ impl<B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         flags: u32,
     ) -> Result<usize> {
         //TODO: fill in properly
-        let bio = RafsBio {
-            ..Default::default()
-        };
-        let mut desc = RafsBioDesc {
-            ..Default::default()
-        };
+        let blk = RafsBlk::new();
+        let bio = RafsBio::new(&blk);
+        let mut desc = RafsBioDesc::new();
         desc.bi_vec.push(bio);
         self.device.write_from(r, desc)
     }

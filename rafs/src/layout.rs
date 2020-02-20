@@ -25,6 +25,7 @@ pub trait RafsLayoutLoadStore {
 }
 
 // Ondisk rafs inode, 512 bytes
+#[derive(Clone, Default, Debug)]
 pub struct RafsInodeInfo {
     pub name: String,   //[char; MAX_RAFS_NAME + 1],
     pub digest: String, //[char; RAFS_SHA256_LENGTH],
@@ -33,6 +34,7 @@ pub struct RafsInodeInfo {
     pub i_mode: u32,
     pub i_uid: u32,
     pub i_gid: u32,
+    pub i_padding: u32,
     pub i_rdev: u64,
     pub i_size: u64,
     pub i_nlink: u64,
@@ -47,22 +49,7 @@ pub struct RafsInodeInfo {
 impl RafsInodeInfo {
     pub fn new() -> Self {
         RafsInodeInfo {
-            name: String::from(""),
-            digest: String::from(""),
-            i_parent: 0,
-            i_ino: 0,
-            i_mode: 0,
-            i_uid: 0,
-            i_gid: 0,
-            i_flags: 0,
-            i_rdev: 0,
-            i_size: 0,
-            i_nlink: 0,
-            i_blocks: 0,
-            i_atime: 0,
-            i_mtime: 0,
-            i_ctime: 0,
-            i_chunk_cnt: 0,
+            ..Default::default()
         }
     }
 }
@@ -107,6 +94,7 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
         self.i_mode = read_le_u32(&mut &input[..]);
         self.i_uid = read_le_u32(&mut &input[..]);
         self.i_gid = read_le_u32(&mut &input[..]);
+        self.i_padding = read_le_u32(&mut &input[..]);
         self.i_rdev = read_le_u64(&mut &input[..]);
         self.i_size = read_le_u64(&mut &input[..]);
         self.i_nlink = read_le_u64(&mut &input[..]);
@@ -128,6 +116,7 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
         count += w.write(&u32::to_le_bytes(self.i_mode))?;
         count += w.write(&u32::to_le_bytes(self.i_uid))?;
         count += w.write(&u32::to_le_bytes(self.i_gid))?;
+        count += w.write(&u32::to_le_bytes(self.i_padding))?;
         count += w.write(&u64::to_le_bytes(self.i_rdev))?;
         count += w.write(&u64::to_le_bytes(self.i_size))?;
         count += w.write(&u64::to_le_bytes(self.i_nlink))?;
@@ -143,6 +132,7 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
 }
 
 // Ondisk rafs superblock, 8192 bytes
+#[derive(Copy, Clone, Default, Debug)]
 pub struct RafsSuperBlockInfo {
     pub s_inodes_count: u64,
     pub s_blocks_count: u64,
@@ -157,14 +147,7 @@ pub struct RafsSuperBlockInfo {
 impl RafsSuperBlockInfo {
     pub fn new() -> Self {
         RafsSuperBlockInfo {
-            s_inodes_count: 0,
-            s_blocks_count: 0,
-            s_inode_size: 0,
-            s_padding1: 0,
-            s_block_size: 0,
-            s_fs_version: 0,
-            s_pandding2: 0,
-            s_magic: 0,
+            ..Default::default()
         }
     }
 }
@@ -200,8 +183,8 @@ impl RafsLayoutLoadStore for RafsSuperBlockInfo {
     }
 }
 
-// Ondis rafs chunk, 136 bytes
-#[derive(Default)]
+// Ondisk rafs chunk, 136 bytes
+#[derive(Clone, Default, Debug)]
 pub struct RafsChunkInfo {
     pub blockid: String, // [char; RAFS_SHA256_LENGTH],
     pub blobid: String,  // [char; RAFS_BLOB_ID_MAX_LENGTH],
@@ -245,5 +228,37 @@ impl RafsLayoutLoadStore for RafsChunkInfo {
         w.write(&u32::to_le_bytes(self.size))?;
         w.write(&u64::to_le_bytes(0))?;
         Ok(RAFS_CHUNK_INFO_SIZE)
+    }
+}
+
+// symlink data, aligned with size of RafsChunkInfo
+#[derive(Clone, Default, Debug)]
+pub struct RafsLinkDataInfo {
+    pub target: String,
+    pub ondisk_size: usize,
+}
+
+impl RafsLinkDataInfo {
+    pub fn new(cnt: usize) -> Self {
+        RafsLinkDataInfo {
+            target: String::from(""),
+            ondisk_size: cnt * RAFS_CHUNK_INFO_SIZE,
+        }
+    }
+}
+
+impl RafsLayoutLoadStore for RafsLinkDataInfo {
+    fn load<R: Read>(&mut self, r: &mut R) -> Result<usize> {
+        let mut input = vec![0; libc::PATH_MAX as usize];
+        r.read_exact(&mut input[..self.ondisk_size])?;
+
+        self.target = read_string(&mut &input[..], self.ondisk_size + 1)?;
+        Ok(self.ondisk_size)
+    }
+
+    fn store<W: Write>(&self, mut w: W) -> Result<usize> {
+        let count = w.write(self.target.as_bytes())?;
+        w.write(&vec![0; self.ondisk_size - count])?;
+        Ok(self.ondisk_size)
     }
 }

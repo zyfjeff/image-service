@@ -126,7 +126,7 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
         let mut buf = vec![0u8; self.bio.blkinfo.compr_size];
         self.dev
             .b
-            .read(self.bio.blkinfo.blob_id, &mut buf, offset)?;
+            .read(&self.bio.blkinfo.blob_id, &mut buf, offset)?;
         // TODO: add decompression
         slice.copy_from(&buf[self.bio.offset as usize..self.bio.offset as usize + self.bio.size]);
         let mut count = self.bio.offset as usize + self.bio.size - self.bio.offset as usize;
@@ -140,7 +140,7 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
         let mut buf = vec![0u8; slice.len()];
         // TODO: add compression
         slice.copy_to(&mut buf);
-        self.dev.b.write(self.bio.blkinfo.blob_id, &buf, offset)?;
+        self.dev.b.write(&self.bio.blkinfo.blob_id, &buf, offset)?;
         slice.copy_from(&buf[self.bio.offset as usize..self.bio.offset as usize + self.bio.size]);
         let mut count = self.bio.offset as usize + self.bio.size - self.bio.offset as usize;
         if slice.len() < count {
@@ -162,23 +162,41 @@ pub struct RafsBioDesc<'a> {
     pub bi_vec: Vec<RafsBio<'a>>,
 }
 
+impl RafsBioDesc<'_> {
+    pub fn new() -> Self {
+        RafsBioDesc {
+            ..Default::default()
+        }
+    }
+}
+
 // Rafs blob IO info
-#[derive(Copy, Clone, Default, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct RafsBio<'a> {
-    pub blkinfo: RafsBlk<'a>,
+    pub blkinfo: &'a RafsBlk,
     // offset within the block
     pub offset: u32,
     // size of data to transfer
     pub size: usize,
 }
 
+impl<'a> RafsBio<'a> {
+    pub fn new(b: &'a RafsBlk) -> Self {
+        RafsBio {
+            blkinfo: b,
+            offset: 0,
+            size: 0,
+        }
+    }
+}
+
 // Rafs block
-#[derive(Copy, Clone, Default, Debug)]
-pub struct RafsBlk<'a> {
+#[derive(Clone, Default, Debug)]
+pub struct RafsBlk {
     // block hash
-    pub block_id: &'a str,
+    pub block_id: String,
     // blob containing the block
-    pub blob_id: &'a str,
+    pub blob_id: String,
     // position of the block within the file
     pub file_pos: u64,
     // size of the block, uncompressed
@@ -190,4 +208,12 @@ pub struct RafsBlk<'a> {
     pub blob_offset: u64,
     // size of the block, compressed
     pub compr_size: usize,
+}
+
+impl RafsBlk {
+    pub fn new() -> Self {
+        RafsBlk {
+            ..Default::default()
+        }
+    }
 }
