@@ -388,7 +388,9 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         Err(enoent())
     }
 
-    fn forget(&self, ctx: Context, inode: Self::Inode, count: u64) {}
+    fn forget(&self, ctx: Context, inode: Self::Inode, count: u64) {
+        self.fuse_inodes.write().unwrap().remove(&inode);
+    }
 
     fn batch_forget(&self, ctx: Context, requests: Vec<(Self::Inode, u64)>) {
         for (inode, count) in requests {
