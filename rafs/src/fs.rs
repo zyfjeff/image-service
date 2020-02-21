@@ -441,6 +441,9 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         lock_owner: Option<u64>,
         flags: u32,
     ) -> Result<usize> {
+        let inodes = self.sb.s_inodes.read().unwrap();
+        let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
+
         //TODO: fill in properly
         let blk = RafsBlk::new();
         let bio = RafsBio::new(&blk);
@@ -491,6 +494,9 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         // filesystem doesn't implement this method.
         st.f_namemax = 255;
         st.f_bsize = 512;
+        st.f_blocks = self.sb.s_blocks_count;
+        st.f_fsid = self.sb.s_magic as u64 + self.sb.s_index;
+        st.f_files = self.sb.s_inodes_count;
 
         Ok(st)
     }
