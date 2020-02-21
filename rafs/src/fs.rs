@@ -410,7 +410,13 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     }
 
     fn readlink(&self, ctx: Context, inode: Self::Inode) -> Result<Vec<u8>> {
-        Err(enosys())
+        let inodes = self.sb.s_inodes.read().unwrap();
+        let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
+        if !rafs_inode.is_symlink() {
+            return Err(einval());
+        }
+        // clone because we don't want to consume Arc rafs inode
+        Ok(rafs_inode.i_target.clone().into_bytes())
     }
 
     fn open(
