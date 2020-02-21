@@ -404,7 +404,9 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         inode: Self::Inode,
         handle: Option<Self::Handle>,
     ) -> Result<(libc::stat64, Duration)> {
-        Err(enosys())
+        let inodes = self.sb.s_inodes.read().unwrap();
+        let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
+        Ok((rafs_inode.get_attr().into(), self.sb.s_attr_timeout))
     }
 
     fn readlink(&self, ctx: Context, inode: Self::Inode) -> Result<Vec<u8>> {
