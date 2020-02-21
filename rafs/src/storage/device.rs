@@ -181,11 +181,11 @@ pub struct RafsBio<'a> {
 }
 
 impl<'a> RafsBio<'a> {
-    pub fn new(b: &'a RafsBlk) -> Self {
+    pub fn new(b: &'a RafsBlk, offset: u32, size: usize) -> Self {
         RafsBio {
             blkinfo: b,
-            offset: 0,
-            size: 0,
+            offset: offset,
+            size: size,
         }
     }
 }

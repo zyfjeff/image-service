@@ -7,9 +7,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::CStr;
 use std::io::{Error, ErrorKind, Read, Result, Write};
-use std::mem;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
+use std::{cmp, mem};
 
 use log::{info, trace, warn};
 
@@ -122,6 +122,24 @@ impl RafsInode {
             blksize: RAFS_INODE_BLOCKSIZE,
             ..Default::default()
         }
+    }
+
+    fn alloc_bio_desc(&self, size: usize, offset: u64) -> Result<RafsBioDesc> {
+        let mut desc = RafsBioDesc::new();
+        let end = offset + size as u64;
+        for blk in self.i_data.iter() {
+            if blk.file_pos < offset {
+                continue;
+            } else if blk.file_pos > end {
+                break;
+            }
+            let blk_start = cmp::max(blk.file_pos, offset) - blk.file_pos;
+            let blk_end = cmp::min(blk.file_pos + blk.len as u64, end);
+            let bio = RafsBio::new(&blk, blk_start as u32, (blk_end - blk_start) as usize);
+
+            desc.bi_vec.push(bio);
+        }
+        Ok(desc)
     }
 }
 
@@ -481,11 +499,8 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         let inodes = self.sb.s_inodes.read().unwrap();
         let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
 
-        //TODO: fill in properly
-        let blk = RafsBlk::new();
-        let bio = RafsBio::new(&blk);
-        let mut desc = RafsBioDesc::new();
-        desc.bi_vec.push(bio);
+        let desc = rafs_inode.alloc_bio_desc(size as usize, offset)?;
+
         self.device.read_to(w, desc)
     }
 
@@ -502,11 +517,10 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         delayed_write: bool,
         flags: u32,
     ) -> Result<usize> {
-        //TODO: fill in properly
-        let blk = RafsBlk::new();
-        let bio = RafsBio::new(&blk);
-        let mut desc = RafsBioDesc::new();
-        desc.bi_vec.push(bio);
+        let inodes = self.sb.s_inodes.read().unwrap();
+        let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
+
+        let desc = rafs_inode.alloc_bio_desc(size as usize, offset)?;
         self.device.write_from(r, desc)
     }
 
