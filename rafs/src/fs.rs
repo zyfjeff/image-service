@@ -602,6 +602,44 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     }
 
     fn access(&self, ctx: Context, inode: Self::Inode, mask: u32) -> Result<()> {
-        Err(enosys())
+        let inodes = self.sb.s_inodes.read().unwrap();
+        let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
+        let st = rafs_inode.get_attr();
+        let mode = mask as i32 & (libc::R_OK | libc::W_OK | libc::X_OK);
+
+        if mode == libc::F_OK {
+            return Ok(());
+        }
+
+        if (mode & libc::R_OK) != 0
+            && ctx.uid != 0
+            && (st.uid != ctx.uid || st.mode & 0o400 == 0)
+            && (st.gid != ctx.gid || st.mode & 0o040 == 0)
+            && st.mode & 0o004 == 0
+        {
+            return Err(Error::from_raw_os_error(libc::EACCES));
+        }
+
+        if (mode & libc::W_OK) != 0
+            && ctx.uid != 0
+            && (st.uid != ctx.uid || st.mode & 0o200 == 0)
+            && (st.gid != ctx.gid || st.mode & 0o020 == 0)
+            && st.mode & 0o002 == 0
+        {
+            return Err(Error::from_raw_os_error(libc::EACCES));
+        }
+
+        // root can only execute something if it is executable by one of the owner, the group, or
+        // everyone.
+        if (mode & libc::X_OK) != 0
+            && (ctx.uid != 0 || st.mode & 0o111 == 0)
+            && (st.uid != ctx.uid || st.mode & 0o100 == 0)
+            && (st.gid != ctx.gid || st.mode & 0o010 == 0)
+            && st.mode & 0o001 == 0
+        {
+            return Err(Error::from_raw_os_error(libc::EACCES));
+        }
+
+        Ok(())
     }
 }
