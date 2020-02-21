@@ -10,7 +10,7 @@ extern crate log;
 #[allow(dead_code)]
 pub mod filesystem;
 #[allow(dead_code)]
-mod protocol;
+pub mod protocol;
 #[allow(dead_code)]
 pub mod server;
 

@@ -14,6 +14,7 @@ use std::time::Duration;
 use log::{info, trace, warn};
 
 use fuse::filesystem::*;
+use fuse::protocol::*;
 
 use crate::layout::*;
 use crate::storage::device::*;
@@ -23,6 +24,10 @@ use crate::storage::*;
 const RAFS_SUPER_MAGIC: u32 = 0x52414653;
 // rafs version number
 const RAFS_CURR_VERSION: u16 = 1;
+
+const RAFS_INODE_BLOCKSIZE: u32 = 4096;
+const RAFS_DEFAULT_ATTR_TIMEOUT: u64 = 1 << 32;
+const RAFS_DEFAULT_ENTRY_TIMEOUT: u64 = RAFS_DEFAULT_ATTR_TIMEOUT;
 
 type Inode = u64;
 type Handle = u64;
@@ -39,13 +44,16 @@ struct RafsInode {
     i_uid: u32,
     i_gid: u32,
     i_flags: u64,
-    i_rdev: u64,
+    i_rdev: u32,
     i_size: u64,
-    i_nlink: u64,
+    i_nlink: u32,
     i_blocks: u64,
     i_atime: u64,
     i_mtime: u64,
     i_ctime: u64,
+    i_atimensec: u64,
+    i_mtimensec: u64,
+    i_ctimensec: u64,
     i_chunk_cnt: u64,
     // symlink target
     i_target: String,
@@ -72,9 +80,9 @@ impl RafsInode {
         self.i_uid = info.i_uid;
         self.i_gid = info.i_gid;
         self.i_flags = info.i_flags;
-        self.i_rdev = info.i_rdev;
+        self.i_rdev = info.i_rdev as u32;
         self.i_size = info.i_size;
-        self.i_nlink = info.i_nlink;
+        self.i_nlink = info.i_nlink as u32;
         self.i_blocks = info.i_blocks;
         self.i_atime = info.i_atime;
         self.i_mtime = info.i_mtime;
@@ -97,6 +105,24 @@ impl RafsInode {
     fn add_child(&mut self, ino: Inode) {
         self.i_child.push(ino);
     }
+
+    fn get_attr(&self) -> Attr {
+        Attr {
+            ino: self.i_ino,
+            size: self.i_size,
+            blocks: self.i_blocks,
+            atime: self.i_atime,
+            ctime: self.i_ctime,
+            mtime: self.i_mtime,
+            mode: self.i_mode,
+            nlink: self.i_nlink,
+            uid: self.i_uid,
+            gid: self.i_gid,
+            rdev: self.i_rdev,
+            blksize: RAFS_INODE_BLOCKSIZE,
+            ..Default::default()
+        }
+    }
 }
 
 struct RafsSuper {
@@ -107,6 +133,8 @@ struct RafsSuper {
     s_root_inode: Inode,
     s_block_size: u32,
     s_blocks_count: u64,
+    s_attr_timeout: Duration,
+    s_entry_timeout: Duration,
     s_index: SuperIndex,
     s_inodes: RwLock<BTreeMap<Inode, Arc<RafsInode>>>,
 }
@@ -121,6 +149,8 @@ impl RafsSuper {
             s_root_inode: 0,
             s_block_size: 0,
             s_blocks_count: 0,
+            s_attr_timeout: Duration::from_secs(RAFS_DEFAULT_ATTR_TIMEOUT),
+            s_entry_timeout: Duration::from_secs(RAFS_DEFAULT_ENTRY_TIMEOUT),
             s_index: 0,
             s_inodes: RwLock::new(BTreeMap::new()),
         }
@@ -146,6 +176,20 @@ impl RafsSuper {
             .unwrap()
             .insert(ino.i_ino, Arc::new(ino));
         Ok(())
+    }
+
+    fn get_entry(&self, ino: Inode) -> Result<Entry> {
+        let inodes = self.s_inodes.read().unwrap();
+        let inode = inodes.get(&ino).ok_or(ebadf())?;
+        let entry = Entry {
+            attr: inode.get_attr().into(),
+            inode: inode.i_ino,
+            generation: 0,
+            attr_timeout: self.s_attr_timeout,
+            entry_timeout: self.s_entry_timeout,
+        };
+
+        Ok(entry)
     }
 
     fn destroy(&mut self) -> Result<()> {
@@ -319,17 +363,29 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
 
     fn destroy(&self) {
         self.sb.s_inodes.write().unwrap().clear();
+        self.fuse_inodes.write().unwrap().clear();
     }
 
     fn lookup(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> Result<Entry> {
-        let p = self
-            .sb
-            .s_inodes
-            .read()
-            .unwrap()
-            .get(&parent)
-            .ok_or(ebadf())?;
-        Err(enosys())
+        let inodes = self.sb.s_inodes.read().unwrap();
+        let p = inodes.get(&parent).ok_or(ebadf())?;
+        if p.is_dir() {
+            return Err(ebadf());
+        }
+        let target = name.to_str().or_else(|_| Err(ebadf()))?;
+        for ino in p.i_child.iter() {
+            let child = inodes.get(&ino).ok_or(ebadf())?;
+            if !target.eq(&child.i_name) {
+                continue;
+            }
+            let entry = self.sb.get_entry(child.i_ino)?;
+            self.fuse_inodes
+                .write()
+                .unwrap()
+                .insert(child.i_ino, (self.sb.s_index, child.i_ino));
+            return Ok(entry);
+        }
+        Err(enoent())
     }
 
     fn forget(&self, ctx: Context, inode: Self::Inode, count: u64) {}

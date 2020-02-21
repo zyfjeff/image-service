@@ -423,6 +423,30 @@ impl From<libc::stat64> for Attr {
     }
 }
 
+impl Into<libc::stat64> for Attr {
+    fn into(self) -> libc::stat64 {
+        // Safe because we are zero-initializing a struct
+        let mut out: libc::stat64 = unsafe { mem::zeroed() };
+        out.st_ino = self.ino;
+        out.st_size = self.size as i64;
+        out.st_blocks = self.blocks as i64;
+        out.st_atime = self.atime as i64;
+        out.st_mtime = self.mtime as i64;
+        out.st_ctime = self.ctime as i64;
+        out.st_atime_nsec = self.atimensec as i64;
+        out.st_mtime_nsec = self.mtimensec as i64;
+        out.st_ctime_nsec = self.ctimensec as i64;
+        out.st_mode = self.mode;
+        out.st_nlink = self.nlink as u64;
+        out.st_uid = self.uid;
+        out.st_gid = self.gid;
+        out.st_rdev = self.rdev as u64;
+        out.st_blksize = self.blksize as i64;
+
+        out
+    }
+}
+
 #[repr(C)]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct Kstatfs {
