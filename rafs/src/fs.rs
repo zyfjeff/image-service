@@ -583,12 +583,15 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         handle: Self::Handle,
         size: u32,
         offset: u64,
-        add_entry: F,
+        mut add_entry: F,
     ) -> Result<()>
     where
         F: FnMut(DirEntry, Entry) -> Result<usize>,
     {
-        Err(enosys())
+        self.sb.do_readdir(ctx, inode, size, offset, |dir_entry| {
+            let entry = self.sb.get_entry(dir_entry.ino)?;
+            add_entry(dir_entry, entry)
+        })
     }
 
     fn releasedir(
