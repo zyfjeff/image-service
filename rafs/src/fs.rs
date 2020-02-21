@@ -196,6 +196,43 @@ impl RafsSuper {
         self.s_inodes.write().unwrap().clear();
         Ok(())
     }
+
+    fn do_readdir<F>(
+        &self,
+        ctx: Context,
+        inode: Inode,
+        size: u32,
+        offset: u64,
+        mut add_entry: F,
+    ) -> Result<()>
+    where
+        F: FnMut(DirEntry) -> Result<usize>,
+    {
+        if size == 0 {
+            return Ok(());
+        }
+        let inodes = self.s_inodes.read().unwrap();
+        let rafs_inode = inodes.get(&inode).ok_or(ebadf())?;
+        if !rafs_inode.is_dir() {
+            return Err(ebadf());
+        }
+
+        let mut next = offset + 1;
+        for child in rafs_inode.i_child[offset as usize..].iter() {
+            let child_inode = inodes.get(&child).ok_or(ebadf())?;
+            match add_entry(DirEntry {
+                ino: child_inode.i_ino,
+                offset: next,
+                type_: 0,
+                name: child_inode.i_name.clone().as_bytes(),
+            }) {
+                Ok(0) => break,
+                Ok(_) => next += 1,
+                Err(r) => return Err(r),
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Default)]
@@ -536,7 +573,7 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     where
         F: FnMut(DirEntry) -> Result<usize>,
     {
-        Err(enosys())
+        self.sb.do_readdir(ctx, inode, size, offset, add_entry)
     }
 
     fn readdirplus<F>(
