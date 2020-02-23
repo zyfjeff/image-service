@@ -11,7 +11,7 @@ libc = "0.2"
 log = "0.4"
 fuse = { path = "../fuse" }
 vhost_rs = { path = "../vhost_rs" }
-vm-memory = {git = "https://github.com/rust-vmm/vm-memory", features = ["backend-mmap"]}
+vm-memory = {git = "https://github.com/rust-vmm/vm-memory", branch = "master", features = ["backend-mmap"]}
 httpdate = "0.3.2"
 rust-crypto = "0.2.36"
 base64 = "0.11.0"

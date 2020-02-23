@@ -16,7 +16,7 @@ log = "0.4"
 bitflags = "1.2"
 libc = "0.2"
 vmm-sys-util = ">=0.3.1"
-vm-memory = { git = "https://github.com/rust-vmm/vm-memory" }
+vm-memory = {git = "https://github.com/rust-vmm/vm-memory", branch = "master", features = ["backend-mmap"]}
 
 [dev-dependencies]
 tempfile = "3.1.0"

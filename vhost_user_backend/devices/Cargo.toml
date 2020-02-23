@@ -1,0 +1,22 @@
+[package]
+name = "devices"
+version = "0.1.0"
+authors = ["The Chromium OS Authors"]
+
+[dependencies]
+bitflags = ">=1.2.1"
+byteorder = "1.3.4"
+epoll = ">=4.0.1"
+libc = "0.2.67"
+log = "0.4.8"
+vm-device = { path = "../vm-device" }
+vm-memory = {git = "https://github.com/rust-vmm/vm-memory", branch = "master", features = ["backend-mmap"]}
+vmm-sys-util = ">=0.3.1"
+
+[dev-dependencies]
+tempfile = "3.1.0"
+
+[features]
+default = []
+acpi = []
+cmos = []

@@ -10,5 +10,5 @@ edition = "2018"
 log = "0.4"
 libc = "0.2"
 bitflags = "1.2"
-vm-memory = { git = "https://github.com/rust-vmm/vm-memory" }
+vm-memory = {git = "https://github.com/rust-vmm/vm-memory", branch = "master", features = ["backend-mmap"]}
 vhost_rs  = { path = "../vhost_rs" }

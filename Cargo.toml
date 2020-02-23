@@ -5,4 +5,5 @@ members = [
     "rafs",
     "fuse",
     "vhost_rs",
+    "vhost_user_backend",
 ]

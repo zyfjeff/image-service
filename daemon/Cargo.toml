@@ -7,3 +7,23 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+clap = "2.33.0"
+log = { version = "0.4.8", features = ["std"] }
+virtio-bindings = "0.1.0"
+epoll = ">=4.0.1"
+libc = "0.2.66"
+vmm-sys-util = ">=0.3.1"
+vm-memory = {git = "https://github.com/rust-vmm/vm-memory", branch = "master", features = ["backend-mmap"]}
+
+[dependencies.vhost_rs]
+path = "../vhost_rs"
+features = ["vhost-user-slave"]
+
+[dependencies.vhost_user_backend]
+path = "../vhost_user_backend"
+
+[dependencies.vm-virtio]
+path = "../vhost_user_backend/vm-virtio"
+
+[dependencies.vhost_user_fs]
+path = "../vhost_user_backend/vhost_user_fs"
