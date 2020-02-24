@@ -307,6 +307,7 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
             warn! {"Rafs already initialized"}
             return Err(Error::new(ErrorKind::AlreadyExists, "Already mounted"));
         }
+        self.device.init()?;
         self.import(r).or_else(|_| self.sb.destroy())?;
         self.initialized = true;
         info! {"Mounted rafs at {}", &path};
@@ -321,28 +322,28 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
         Ok(())
     }
 
-    fn import<R: Read>(&mut self, mut r: &mut R) -> Result<()> {
+    fn import<R: Read>(&mut self, r: &mut R) -> Result<()> {
         // import superblock
         let mut info = RafsSuperBlockInfo::new();
-        info.load(&mut r)?;
+        info.load(r)?;
         self.sb.init(info)?;
 
         // import root inode
         let mut root_info = RafsInodeInfo::new();
-        root_info.load(&mut r)?;
+        root_info.load(r)?;
         let mut root_inode = RafsInode::new();
         root_inode.init(root_info.i_ino, &root_info);
-        self.unpack_dir(&mut root_inode, &mut r)?;
+        self.unpack_dir(&mut root_inode, r)?;
         self.sb.s_root_inode = root_inode.i_ino;
         // TODO: add multiple super block support
         self.sb.s_index = 100;
         self.sb.hash_inode(root_inode)
     }
 
-    fn unpack_dir<R: Read>(&self, dir: &mut RafsInode, mut r: &mut R) -> Result<()> {
+    fn unpack_dir<R: Read>(&self, dir: &mut RafsInode, r: &mut R) -> Result<()> {
         loop {
             let mut info = RafsInodeInfo::new();
-            match info.load(&mut r) {
+            match info.load(r) {
                 Ok(0) => break,
                 Ok(n) => {
                     trace!("unpacked {}", info.name);
@@ -355,9 +356,9 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
             inode.init(dir.i_ino, &info);
             dir.add_child(info.i_ino);
             if inode.is_dir() {
-                self.unpack_dir(&mut inode, &mut r)?;
+                self.unpack_dir(&mut inode, r)?;
             } else {
-                self.unpack_node(&mut inode, &mut r)?;
+                self.unpack_node(&mut inode, r)?;
             }
         }
         // Must hash at last because we need to clone

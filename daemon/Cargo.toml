@@ -11,6 +11,7 @@ log = "0.4.8"
 epoll = ">=4.0.1"
 libc = "0.2.66"
 vmm-sys-util = ">=0.3.1"
+clap = "2.33"
 vm-memory = {git = "https://github.com/rust-vmm/vm-memory", branch = "master", features = ["backend-mmap"]}
 
 [dependencies.vhost_rs]

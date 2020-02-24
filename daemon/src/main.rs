@@ -1,3 +1,13 @@
+// Copyright 2020 Ant Financial. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
+//
+// Copyright 2019 Intel Corporation. All Rights Reserved.
+//
+// SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
+
+#[macro_use(crate_version, crate_authors)]
+extern crate clap;
 #[macro_use]
 extern crate log;
 
@@ -8,6 +18,7 @@ use std::{convert, error, fmt, io, process};
 
 use libc::EFD_NONBLOCK;
 
+use clap::{App, Arg};
 use vm_memory::GuestMemoryMmap;
 use vmm_sys_util::eventfd::EventFd;
 
@@ -161,20 +172,49 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserBackend for VhostUserFsBack
 }
 
 fn main() -> Result<()> {
+    let cmd_arguments = App::new("vhost-user-fs backend")
+        .version(crate_version!())
+        .author(crate_authors!())
+        .about("Launch a vhost-user-fs backend.")
+        .arg(
+            Arg::with_name("metadata")
+                .long("metadata")
+                .help("rafs metadata file")
+                .takes_value(true)
+                .min_values(1),
+        )
+        .arg(
+            Arg::with_name("sock")
+                .long("sock")
+                .help("vhost-user socket path")
+                .takes_value(true)
+                .min_values(1),
+        )
+        .get_matches();
+
+    // Retrieve arguments
+    let sock = cmd_arguments
+        .value_of("sock")
+        .expect("Failed to retrieve vhost-user socket path");
+
     let backend = oss_backend::new();
 
     let rafs_conf = RafsConfig::new();
-    let rafs = Rafs::new(rafs_conf, backend);
+    let mut rafs = Rafs::new(rafs_conf, backend);
+
+    let metadata = cmd_arguments
+        .value_of("metadata")
+        .expect("Rafs metatada file must be set");
+    let mut file = File::open(metadata).expect("fail to open rafs metadata file");
+    rafs.mount(&mut file, "/").expect("fail to mount rafs");
 
     let mut _metadata_config = File::open("metadata.conf")?;
 
     let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(rafs).unwrap()));
 
-    let sock = String::from("sock");
-
     let mut daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),
-        sock,
+        String::from(sock),
         fs_backend.clone(),
     )
     .unwrap();
@@ -195,4 +235,3 @@ fn main() -> Result<()> {
 
     Ok(())
 }
-
