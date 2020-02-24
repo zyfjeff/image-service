@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::io;
 use std::io::{Error, Read, Write};
 
+use compress::lz4;
 use vm_memory::VolatileSlice;
 
 use fuse::filesystem::{ZeroCopyReader, ZeroCopyWriter};
@@ -115,10 +116,12 @@ impl<'a, B: BlobBackend> RafsBioDevice<'a, B> {
 
 impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
     fn read_volatile(&mut self, slice: VolatileSlice) -> Result<usize, Error> {
+        // Skip because we don't really use it
         Ok(slice.len())
     }
 
     fn write_volatile(&mut self, slice: VolatileSlice) -> Result<usize, Error> {
+        // Skip because we don't really use it
         Ok(slice.len())
     }
 
@@ -127,8 +130,11 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
         self.dev
             .b
             .read(&self.bio.blkinfo.blob_id, &mut buf, offset)?;
-        // TODO: add decompression
-        slice.copy_from(&buf[self.bio.offset as usize..self.bio.offset as usize + self.bio.size]);
+        let mut decompressed = Vec::new();
+        lz4::decode_block(&buf[..], &mut decompressed);
+        slice.copy_from(
+            &decompressed[self.bio.offset as usize..self.bio.offset as usize + self.bio.size],
+        );
         let mut count = self.bio.offset as usize + self.bio.size - self.bio.offset as usize;
         if slice.len() < count {
             count = slice.len()
@@ -138,15 +144,14 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
 
     fn write_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
         let mut buf = vec![0u8; slice.len()];
-        // TODO: add compression
         slice.copy_to(&mut buf);
-        self.dev.b.write(&self.bio.blkinfo.blob_id, &buf, offset)?;
-        slice.copy_from(&buf[self.bio.offset as usize..self.bio.offset as usize + self.bio.size]);
-        let mut count = self.bio.offset as usize + self.bio.size - self.bio.offset as usize;
-        if slice.len() < count {
-            count = slice.len()
-        }
-        Ok(count)
+        let mut compressed = Vec::new();
+        lz4::encode_block(&buf[..], &mut compressed);
+        self.dev
+            .b
+            .write(&self.bio.blkinfo.blob_id, &compressed, offset)?;
+        // Need to return slice length because that's what upper layer asks to write
+        Ok(slice.len())
     }
 }
 
