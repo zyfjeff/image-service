@@ -260,8 +260,10 @@ version = "0.1.0"
 dependencies = [
  "clap 2.33.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "epoll 4.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fuse 0.1.0",
  "libc 0.2.67 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rafs 0.1.0",
  "vhost_rs 0.1.0",
  "vhost_user_backend 0.1.0",
  "vhost_user_fs 0.1.0",
@@ -1800,6 +1802,7 @@ name = "vhost_rs"
 version = "0.1.0"
 dependencies = [
  "bitflags 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "epoll 4.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.67 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "tempfile 3.1.0 (registry+https://github.com/rust-lang/crates.io-index)",

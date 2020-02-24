@@ -17,6 +17,7 @@ use crate::storage::backend::BlobBackend;
 const HEADER_DATE: &str = "Date";
 const HEADER_AUTHORIZATION: &str = "Authorization";
 
+#[derive(Default, Debug)]
 pub struct OSS {
     access_key_id: String,
     access_key_secret: String,
@@ -121,21 +122,22 @@ impl OSS {
     }
 }
 
-pub fn new(config: HashMap<&str, &str>) -> OSS {
-    let endpoint = config.get("endpoint").unwrap();
-    let access_key_id = config.get("access_key_id").unwrap();
-    let access_key_secret = config.get("access_key_secret").unwrap();
-    let bucket_name = config.get("bucket_name").unwrap();
+pub fn new() -> OSS {
     OSS {
-        endpoint: (*endpoint).to_owned(),
-        access_key_id: (*access_key_id).to_owned(),
-        access_key_secret: (*access_key_secret).to_owned(),
-        bucket_name: (*bucket_name).to_owned(),
+        ..Default::default()
     }
 }
 
 impl BlobBackend for OSS {
-    fn init(&mut self, _config: HashMap<&str, &str>) -> IOResult<()> {
+    fn init(&mut self, config: HashMap<&str, &str>) -> IOResult<()> {
+        let endpoint = config.get("endpoint").unwrap();
+        let access_key_id = config.get("access_key_id").unwrap();
+        let access_key_secret = config.get("access_key_secret").unwrap();
+        let bucket_name = config.get("bucket_name").unwrap();
+        self.endpoint = (*endpoint).to_owned();
+        self.access_key_id = (*access_key_id).to_owned();
+        self.access_key_secret = (*access_key_secret).to_owned();
+        self.bucket_name = (*bucket_name).to_owned();
         self.create_bucket(self.bucket_name.as_str())
     }
 

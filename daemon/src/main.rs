@@ -10,22 +10,23 @@ extern crate vhost_user_backend;
 extern crate vm_virtio;
 
 use clap::{App, Arg};
-use epoll;
 use libc::EFD_NONBLOCK;
 use log::*;
 use std::sync::{Arc, RwLock};
 use std::{convert, error, fmt, io, process};
 
-use vhost_rs::vhost_user::message::*;
-use vhost_user_backend::{VhostUserBackend, VhostUserDaemon, Vring};
-use vhost_user_fs::descriptor_utils::{Reader, Writer};
-use vhost_user_fs::filesystem::FileSystem;
-use vhost_user_fs::passthrough::{self, PassthroughFs};
-use vhost_user_fs::server::Server;
-use vhost_user_fs::Error as VhostUserFsError;
 use virtio_bindings::bindings::virtio_net::*;
 use vm_memory::GuestMemoryMmap;
 use vmm_sys_util::eventfd::EventFd;
+
+use fuse::filesystem::FileSystem;
+use fuse::server::Server;
+use fuse::Error as VhostUserFsError;
+use rafs::fs::*;
+use rafs::storage::*;
+use vhost_rs::descriptor_utils::{Reader, Writer};
+use vhost_rs::vhost_user::message::*;
+use vhost_rs::vring::{VhostUserBackend, VhostUserDaemon, Vring};
 
 const QUEUE_SIZE: usize = 1024;
 const NUM_QUEUES: usize = 2;
@@ -197,9 +198,6 @@ fn main() {
         .get_matches();
 
     // Retrieve arguments
-    let shared_dir = cmd_arguments
-        .value_of("shared-dir")
-        .expect("Failed to retrieve shared directory path");
     let sock = cmd_arguments
         .value_of("sock")
         .expect("Failed to retrieve vhost-user socket path");
@@ -207,11 +205,8 @@ fn main() {
     // Convert into appropriate types
     let sock = String::from(sock);
 
-    let fs_cfg = passthrough::Config {
-        root_dir: shared_dir.to_string(),
-        ..Default::default()
-    };
-    let fs = PassthroughFs::new(fs_cfg).unwrap();
+    let fs_cfg = RafsConfig::new();
+    let fs = Rafs::new(fs_cfg, oss_backend::new());
     let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(fs).unwrap()));
 
     let mut daemon = VhostUserDaemon::new(

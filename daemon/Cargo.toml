@@ -14,6 +14,7 @@ epoll = ">=4.0.1"
 libc = "0.2.66"
 vmm-sys-util = ">=0.3.1"
 vm-memory = {git = "https://github.com/rust-vmm/vm-memory", branch = "master", features = ["backend-mmap"]}
+fuse = { path = "../fuse" }
 
 [dependencies.vhost_rs]
 path = "../vhost_rs"
@@ -21,6 +22,9 @@ features = ["vhost-user-slave"]
 
 [dependencies.vhost_user_backend]
 path = "../vhost_user_backend"
+
+[dependencies.rafs]
+path = "../rafs"
 
 [dependencies.vm-virtio]
 path = "../vhost_user_backend/vm-virtio"

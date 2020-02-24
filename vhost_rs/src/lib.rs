@@ -50,6 +50,8 @@ pub mod descriptor_utils;
 mod file_traits;
 #[allow(dead_code)]
 mod queue;
+#[allow(dead_code)]
+pub mod vring;
 
 #[cfg(any(feature = "vhost-user-master", feature = "vhost-user-slave"))]
 pub mod vhost_user;

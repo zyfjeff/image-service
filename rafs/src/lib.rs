@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 #[allow(dead_code, unused_variables)]
-mod fs;
+pub mod fs;
 #[allow(dead_code)]
 mod layout;
-mod storage;
+pub mod storage;
