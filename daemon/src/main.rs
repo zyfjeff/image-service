@@ -1,30 +1,28 @@
-// Copyright 2019 Intel Corporation. All Rights Reserved.
-//
-// SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
-
-#[macro_use(crate_version, crate_authors)]
-extern crate clap;
+#[macro_use]
 extern crate log;
-extern crate vhost_rs;
 
-use clap::{App, Arg};
-use libc::EFD_NONBLOCK;
-use log::*;
+use std::fs::File;
+use std::io::Result;
 use std::sync::{Arc, RwLock};
 use std::{convert, error, fmt, io, process};
 
-use virtio_bindings::bindings::virtio_net::*;
+use libc::EFD_NONBLOCK;
+
 use vm_memory::GuestMemoryMmap;
 use vmm_sys_util::eventfd::EventFd;
 
 use fuse::filesystem::FileSystem;
 use fuse::server::Server;
 use fuse::Error as VhostUserFsError;
-use rafs::fs::*;
-use rafs::storage::*;
+
+use rafs::fs::{Rafs, RafsConfig};
+use rafs::storage::oss_backend;
+
 use vhost_rs::descriptor_utils::{Reader, Writer};
 use vhost_rs::vhost_user::message::*;
 use vhost_rs::vring::{VhostUserBackend, VhostUserDaemon, Vring};
+
+const VIRTIO_F_VERSION_1: u32 = 32;
 
 const QUEUE_SIZE: usize = 1024;
 const NUM_QUEUES: usize = 2;
@@ -36,7 +34,6 @@ const REQ_QUEUE_EVENT: u16 = 1;
 // The device has been dropped.
 const KILL_EVENT: u16 = 2;
 
-type Result<T> = std::result::Result<T, Error>;
 type VhostUserBackendResult<T> = std::result::Result<T, std::io::Error>;
 
 #[derive(Debug)]
@@ -73,16 +70,6 @@ struct VhostUserFsBackend<F: FileSystem + Send + Sync + 'static> {
     server: Arc<Server<F>>,
 }
 
-impl<F: FileSystem + Send + Sync + 'static> Clone for VhostUserFsBackend<F> {
-    fn clone(&self) -> Self {
-        VhostUserFsBackend {
-            mem: self.mem.clone(),
-            kill_evt: self.kill_evt.try_clone().unwrap(),
-            server: self.server.clone(),
-        }
-    }
-}
-
 impl<F: FileSystem + Send + Sync + 'static> VhostUserFsBackend<F> {
     fn new(fs: F) -> Result<Self> {
         Ok(VhostUserFsBackend {
@@ -91,7 +78,6 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserFsBackend<F> {
             server: Arc::new(Server::new(fs)),
         })
     }
-
     fn process_queue(&mut self, vring: &mut Vring) -> Result<()> {
         let mem = self.mem.as_ref().ok_or(Error::NoMemoryConfigured)?;
 
@@ -174,38 +160,17 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserBackend for VhostUserFsBack
     }
 }
 
-fn main() {
-    let cmd_arguments = App::new("vhost-user-fs backend")
-        .version(crate_version!())
-        .author(crate_authors!())
-        .about("Launch a vhost-user-fs backend.")
-        .arg(
-            Arg::with_name("shared-dir")
-                .long("shared-dir")
-                .help("Shared directory path")
-                .takes_value(true)
-                .min_values(1),
-        )
-        .arg(
-            Arg::with_name("sock")
-                .long("sock")
-                .help("vhost-user socket path")
-                .takes_value(true)
-                .min_values(1),
-        )
-        .get_matches();
+fn main() -> Result<()> {
+    let backend = oss_backend::new();
 
-    // Retrieve arguments
-    let sock = cmd_arguments
-        .value_of("sock")
-        .expect("Failed to retrieve vhost-user socket path");
+    let rafs_conf = RafsConfig::new();
+    let rafs = Rafs::new(rafs_conf, backend);
 
-    // Convert into appropriate types
-    let sock = String::from(sock);
+    let mut _metadata_config = File::open("metadata.conf")?;
 
-    let fs_cfg = RafsConfig::new();
-    let fs = Rafs::new(fs_cfg, oss_backend::new());
-    let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(fs).unwrap()));
+    let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(rafs).unwrap()));
+
+    let sock = String::from("sock");
 
     let mut daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),
@@ -227,4 +192,7 @@ fn main() {
     if let Err(e) = kill_evt.write(1) {
         error!("Error shutting down worker thread: {:?}", e)
     }
+
+    Ok(())
 }
+

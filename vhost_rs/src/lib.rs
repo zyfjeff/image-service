@@ -48,8 +48,7 @@ pub use backend::*;
 
 pub mod descriptor_utils;
 mod file_traits;
-#[allow(dead_code)]
-mod queue;
+pub mod queue;
 #[allow(dead_code)]
 pub mod vring;
 

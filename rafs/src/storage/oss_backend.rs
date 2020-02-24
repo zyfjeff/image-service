@@ -32,8 +32,6 @@ impl OSS {
         let mut canonicalized_oss_headers = vec![];
         let date = headers.get(HEADER_DATE).unwrap().to_str().unwrap();
 
-        "Grimms' Fairy Tales".to_string();
-
         let mut data = vec![
             verb,
             content_md5,

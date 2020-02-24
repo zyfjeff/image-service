@@ -7,14 +7,11 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-clap = "2.33.0"
-log = { version = "0.4.8", features = ["std"] }
-virtio-bindings = "0.1.0"
+log = "0.4.8"
 epoll = ">=4.0.1"
 libc = "0.2.66"
 vmm-sys-util = ">=0.3.1"
 vm-memory = {git = "https://github.com/rust-vmm/vm-memory", branch = "master", features = ["backend-mmap"]}
-fuse = { path = "../fuse" }
 
 [dependencies.vhost_rs]
 path = "../vhost_rs"
@@ -22,3 +19,6 @@ features = ["vhost-user-slave"]
 
 [dependencies.rafs]
 path = "../rafs"
+
+[dependencies.fuse]
+path = "../fuse"
