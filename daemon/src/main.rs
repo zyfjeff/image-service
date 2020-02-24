@@ -6,8 +6,6 @@
 extern crate clap;
 extern crate log;
 extern crate vhost_rs;
-extern crate vhost_user_backend;
-extern crate vm_virtio;
 
 use clap::{App, Arg};
 use libc::EFD_NONBLOCK;

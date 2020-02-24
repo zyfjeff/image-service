@@ -20,14 +20,5 @@ fuse = { path = "../fuse" }
 path = "../vhost_rs"
 features = ["vhost-user-slave"]
 
-[dependencies.vhost_user_backend]
-path = "../vhost_user_backend"
-
 [dependencies.rafs]
 path = "../rafs"
-
-[dependencies.vm-virtio]
-path = "../vhost_user_backend/vm-virtio"
-
-[dependencies.vhost_user_fs]
-path = "../vhost_user_backend/vhost_user_fs"
