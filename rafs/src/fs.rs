@@ -308,13 +308,7 @@ impl RafsConfig {
     }
 
     fn dev_config(&self) -> device::Config {
-        let mut c = device::Config::new();
-        c.backend_type = String::from(&self.device_config.backend_type);
-        c.endpoint = String::from(&self.device_config.endpoint);
-        c.access_key_id = String::from(&self.device_config.access_key_id);
-        c.access_key_secret = String::from(&self.device_config.access_key_secret);
-        c.bucket_name = String::from(&self.device_config.bucket_name);
-        c
+        self.device_config.clone()
     }
 }
 
