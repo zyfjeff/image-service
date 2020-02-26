@@ -4,6 +4,7 @@
 //
 // A container image Registry Accerlation File System.
 
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::CStr;
 use std::io::{Error, ErrorKind, Read, Result, Write};
@@ -253,9 +254,8 @@ impl RafsSuper {
     }
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct RafsConfig {
-    pub source: String,
     pub device_config: device::Config,
 }
 
@@ -268,10 +268,11 @@ impl RafsConfig {
 
     fn dev_config(&self) -> device::Config {
         let mut c = device::Config::new();
-        c.backend_type = self.device_config.backend_type;
-        c.id = String::from(&self.device_config.id);
-        c.path = String::from(&self.device_config.path);
-        c.secret = String::from(&self.device_config.secret);
+        c.backend_type = String::from(&self.device_config.backend_type);
+        c.endpoint = String::from(&self.device_config.endpoint);
+        c.access_key_id = String::from(&self.device_config.access_key_id);
+        c.access_key_secret = String::from(&self.device_config.access_key_secret);
+        c.bucket_name = String::from(&self.device_config.bucket_name);
         c
     }
 }

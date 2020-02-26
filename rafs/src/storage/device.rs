@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io;
 use std::io::{Error, Read, Write};
@@ -15,15 +16,17 @@ use vhost_rs::descriptor_utils::FileReadWriteVolatile;
 use crate::storage::backend::*;
 
 // A rafs storage device config
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct Config {
     // backend type
-    pub backend_type: BackendType,
+    pub backend_type: String,
     // Storage path, can be a directory or a URL to some remote storage
-    pub path: String,
+    pub endpoint: String,
+    // OSS bucket name
+    pub bucket_name: String,
     // optional auth info used to access the storage
-    pub id: String,
-    pub secret: String,
+    pub access_key_id: String,
+    pub access_key_secret: String,
 }
 
 impl Config {
@@ -35,9 +38,10 @@ impl Config {
 
     pub fn hashmap(&self) -> HashMap<&str, &str> {
         let mut hmap: HashMap<&str, &str> = HashMap::new();
-        hmap.insert("path", &self.path);
-        hmap.insert("id", &self.id);
-        hmap.insert("secret", &self.secret);
+        hmap.insert("endpoint", &self.endpoint);
+        hmap.insert("access_key_id", &self.access_key_id);
+        hmap.insert("access_key_secret", &self.access_key_secret);
+        hmap.insert("bucket_name", &self.bucket_name);
         hmap
     }
 }

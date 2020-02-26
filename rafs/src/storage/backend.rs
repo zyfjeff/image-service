@@ -5,25 +5,6 @@
 use std::collections::HashMap;
 use std::io::Result;
 
-#[derive(Debug)]
-pub enum BackendType {
-    DummyBackendType,
-}
-
-impl Default for BackendType {
-    fn default() -> Self {
-        BackendType::DummyBackendType
-    }
-}
-
-impl Copy for BackendType {}
-
-impl Clone for BackendType {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-
 // Rafs blob backend API
 pub trait BlobBackend {
     // Initialize the blob backend

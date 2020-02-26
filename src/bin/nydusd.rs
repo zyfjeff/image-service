@@ -10,9 +10,11 @@
 extern crate clap;
 #[macro_use]
 extern crate log;
+extern crate config;
 
 use std::fs::File;
 use std::io::Result;
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 use std::{convert, error, fmt, io, process};
 
@@ -190,25 +192,37 @@ fn main() -> Result<()> {
                 .takes_value(true)
                 .min_values(1),
         )
+        .arg(
+            Arg::with_name("config")
+                .long("config")
+                .help("config file")
+                .takes_value(true)
+                .min_values(1),
+        )
         .get_matches();
 
     // Retrieve arguments
+    let config_file = cmd_arguments
+        .value_of("config")
+        .expect("config file must be provided");
     let sock = cmd_arguments
         .value_of("sock")
         .expect("Failed to retrieve vhost-user socket path");
-
-    let backend = oss_backend::new();
-
-    let rafs_conf = RafsConfig::new();
-    let mut rafs = Rafs::new(rafs_conf, backend);
-
     let metadata = cmd_arguments
         .value_of("metadata")
         .expect("Rafs metatada file must be set");
+
+    let mut settings = config::Config::new();
+    settings
+        .merge(config::File::from(Path::new(config_file)))
+        .expect("failed to open config file");
+    let rafs_conf: RafsConfig = settings.try_into().expect("Invalid config");
+
+    let backend = oss_backend::new();
+    let mut rafs = Rafs::new(rafs_conf, backend);
+
     let mut file = File::open(metadata)?;
     rafs.mount(&mut file, "/")?;
-
-    let mut _metadata_config = File::open("metadata.conf")?;
 
     let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(rafs).unwrap()));
 

@@ -10,6 +10,7 @@ edition = "2018"
 libc = "0.2"
 log = "0.4"
 fuse = { path = "../fuse" }
+serde = "1.0"
 vhost_rs = { path = "../vhost_rs" }
 vm-memory = {git = "https://github.com/rust-vmm/vm-memory", branch = "master", features = ["backend-mmap"]}
 httpdate = "0.3.2"
