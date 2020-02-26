@@ -13,6 +13,7 @@ use vm_memory::VolatileSlice;
 use fuse::filesystem::{ZeroCopyReader, ZeroCopyWriter};
 use vhost_rs::descriptor_utils::FileReadWriteVolatile;
 
+use crate::fs::RafsBlk;
 use crate::storage::backend::*;
 
 // A rafs storage device config
@@ -195,34 +196,6 @@ impl<'a> RafsBio<'a> {
             blkinfo: b,
             offset: offset,
             size: size,
-        }
-    }
-}
-
-// Rafs block
-#[derive(Clone, Default, Debug)]
-pub struct RafsBlk {
-    // block hash
-    pub block_id: String,
-    // blob containing the block
-    pub blob_id: String,
-    // position of the block within the file
-    pub file_pos: u64,
-    // size of the block, uncompressed
-    pub uncompr_bsize: usize,
-    // valid data length of the block, uncompressed
-    // zero means hole block
-    pub len: usize,
-    // offset of the block within the blob
-    pub blob_offset: u64,
-    // size of the block, compressed
-    pub compr_size: usize,
-}
-
-impl RafsBlk {
-    pub fn new() -> Self {
-        RafsBlk {
-            ..Default::default()
         }
     }
 }

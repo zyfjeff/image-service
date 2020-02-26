@@ -144,6 +144,45 @@ impl RafsInode {
     }
 }
 
+// Rafs block
+#[derive(Clone, Default, Debug)]
+pub struct RafsBlk {
+    // block hash
+    pub block_id: String,
+    // blob containing the block
+    pub blob_id: String,
+    // position of the block within the file
+    pub file_pos: u64,
+    // valid data length of the block, uncompressed
+    // zero means hole block
+    pub len: usize,
+    // offset of the block within the blob
+    pub blob_offset: u64,
+    // size of the block, compressed
+    pub compr_size: usize,
+}
+
+impl RafsBlk {
+    pub fn new() -> Self {
+        RafsBlk {
+            ..Default::default()
+        }
+    }
+}
+
+impl From<RafsChunkInfo> for RafsBlk {
+    fn from(info: RafsChunkInfo) -> Self {
+        RafsBlk {
+            block_id: String::from(&info.blockid),
+            blob_id: String::from(&info.blobid),
+            file_pos: info.pos,
+            len: info.len as usize,
+            blob_offset: info.offset,
+            compr_size: info.size as usize,
+        }
+    }
+}
+
 struct RafsSuper {
     s_magic: u32,
     s_version: u16,
@@ -371,8 +410,11 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
             let mut info = RafsLinkDataInfo::new(inode.i_chunk_cnt as usize);
             info.load(r)?;
         } else if inode.is_reg() {
-            let mut info = RafsChunkInfo::new();
-            info.load(r)?;
+            for i in 0..inode.i_chunk_cnt - 1 {
+                let mut info = RafsChunkInfo::new();
+                info.load(r)?;
+                inode.i_data.push(info.into())
+            }
         }
         Ok(())
     }
