@@ -140,7 +140,8 @@ impl BlobBackend for OSS {
         self.access_key_id = (*access_key_id).to_owned();
         self.access_key_secret = (*access_key_secret).to_owned();
         self.bucket_name = (*bucket_name).to_owned();
-        self.create_bucket(self.bucket_name.as_str())
+        Ok(())
+        //self.create_bucket(self.bucket_name.as_str())
     }
 
     fn read(&self, blob_id: &str, buf: &mut Vec<u8>, offset: u64) -> IOResult<usize> {
