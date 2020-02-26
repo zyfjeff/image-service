@@ -344,7 +344,10 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
             return Err(Error::new(ErrorKind::AlreadyExists, "Already mounted"));
         }
         self.device.init()?;
-        self.import(r).or_else(|_| self.sb.destroy())?;
+        self.import(r).or_else(|e| {
+            self.sb.destroy()?;
+            Err(e)
+        })?;
         self.initialized = true;
         info! {"Mounted rafs at {}", &path};
         Ok(())
