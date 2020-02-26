@@ -126,12 +126,16 @@ pub fn new() -> OSS {
     }
 }
 
+fn einval() -> Error {
+    Error::from_raw_os_error(libc::EINVAL)
+}
+
 impl BlobBackend for OSS {
     fn init(&mut self, config: HashMap<&str, &str>) -> IOResult<()> {
-        let endpoint = config.get("endpoint").unwrap();
-        let access_key_id = config.get("access_key_id").unwrap();
-        let access_key_secret = config.get("access_key_secret").unwrap();
-        let bucket_name = config.get("bucket_name").unwrap();
+        let endpoint = config.get("endpoint").ok_or(einval())?;
+        let access_key_id = config.get("access_key_id").ok_or(einval())?;
+        let access_key_secret = config.get("access_key_secret").ok_or(einval())?;
+        let bucket_name = config.get("bucket_name").ok_or(einval())?;
         self.endpoint = (*endpoint).to_owned();
         self.access_key_id = (*access_key_id).to_owned();
         self.access_key_secret = (*access_key_secret).to_owned();
