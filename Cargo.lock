@@ -234,21 +234,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "daemon"
-version = "0.1.0"
-dependencies = [
- "clap 2.33.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "epoll 4.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "fuse 0.1.0",
- "libc 0.2.67 (registry+https://github.com/rust-lang/crates.io-index)",
- "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "rafs 0.1.0",
- "vhost_rs 0.1.0",
- "vm-memory 0.1.0 (git+https://github.com/rust-vmm/vm-memory)",
- "vmm-sys-util 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
 name = "dtoa"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -746,6 +731,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "hermit-abi 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.67 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "nydus-rs"
+version = "0.1.0"
+dependencies = [
+ "clap 2.33.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "epoll 4.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "fuse 0.1.0",
+ "libc 0.2.67 (registry+https://github.com/rust-lang/crates.io-index)",
+ "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rafs 0.1.0",
+ "vhost_rs 0.1.0",
+ "vm-memory 0.1.0 (git+https://github.com/rust-vmm/vm-memory)",
+ "vmm-sys-util 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
