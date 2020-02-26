@@ -214,6 +214,10 @@ impl RafsSuper {
 
     fn init(&mut self, info: RafsSuperBlockInfo) -> Result<()> {
         if info.s_magic != RAFS_SUPER_MAGIC || info.s_fs_version != RAFS_CURR_VERSION {
+            warn!(
+                "invalid superblock, magic {}, version {}",
+                &info.s_magic, info.s_fs_version
+            );
             Err(Error::new(ErrorKind::InvalidData, "Invalid super block"))
         } else {
             self.s_magic = info.s_magic;
@@ -379,6 +383,7 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
     }
 
     fn unpack_dir<R: Read>(&self, dir: &mut RafsInode, r: &mut R) -> Result<()> {
+        trace!("unpack dir {}", &dir.i_name);
         loop {
             let mut info = RafsInodeInfo::new();
             match info.load(r) {
@@ -404,6 +409,7 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
     }
 
     fn unpack_node<R: Read>(&self, inode: &mut RafsInode, r: &mut R) -> Result<()> {
+        trace!("unpack inode {}", &inode.i_name);
         if inode.is_symlink() {
             let mut info = RafsLinkDataInfo::new(inode.i_chunk_cnt as usize);
             info.load(r)?;
