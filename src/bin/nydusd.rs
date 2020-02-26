@@ -205,8 +205,8 @@ fn main() -> Result<()> {
     let metadata = cmd_arguments
         .value_of("metadata")
         .expect("Rafs metatada file must be set");
-    let mut file = File::open(metadata).expect("fail to open rafs metadata file");
-    rafs.mount(&mut file, "/").expect("fail to mount rafs");
+    let mut file = File::open(metadata)?;
+    rafs.mount(&mut file, "/")?;
 
     let mut _metadata_config = File::open("metadata.conf")?;
 
