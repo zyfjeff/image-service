@@ -11,6 +11,7 @@ extern crate clap;
 #[macro_use]
 extern crate log;
 extern crate config;
+extern crate stderrlog;
 
 use std::fs::File;
 use std::io::Result;
@@ -212,6 +213,14 @@ fn main() -> Result<()> {
         .value_of("metadata")
         .expect("Rafs metatada file must be set");
 
+    stderrlog::new()
+        .module(module_path!())
+        .quiet(false)
+        .verbosity(log::LevelFilter::Trace as usize)
+        .timestamp(stderrlog::Timestamp::Second)
+        .init()
+        .unwrap();
+
     let mut settings = config::Config::new();
     settings
         .merge(config::File::from(Path::new(config_file)))
@@ -223,6 +232,7 @@ fn main() -> Result<()> {
 
     let mut file = File::open(metadata)?;
     rafs.mount(&mut file, "/")?;
+    info!("rafs mounted");
 
     let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(rafs).unwrap()));
 
@@ -233,6 +243,7 @@ fn main() -> Result<()> {
     )
     .unwrap();
 
+    info!("starting fuse daemon");
     if let Err(e) = daemon.start() {
         error!("Failed to start daemon: {:?}", e);
         process::exit(1);
@@ -247,5 +258,6 @@ fn main() -> Result<()> {
         error!("Error shutting down worker thread: {:?}", e)
     }
 
+    info!("nydusd quits");
     Ok(())
 }
