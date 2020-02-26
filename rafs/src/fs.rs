@@ -12,8 +12,6 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::{cmp, mem};
 
-use log::{info, trace, warn};
-
 use fuse::filesystem::*;
 use fuse::protocol::*;
 

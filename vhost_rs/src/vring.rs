@@ -5,7 +5,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use epoll;
-use log::error;
 use std::error;
 use std::fs::File;
 use std::io;

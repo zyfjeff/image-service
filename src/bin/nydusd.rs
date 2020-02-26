@@ -214,7 +214,6 @@ fn main() -> Result<()> {
         .expect("Rafs metatada file must be set");
 
     stderrlog::new()
-        .module(module_path!())
         .quiet(false)
         .verbosity(log::LevelFilter::Trace as usize)
         .timestamp(stderrlog::Timestamp::Second)
