@@ -70,11 +70,11 @@ impl RafsInode {
         }
     }
 
-    fn init(&mut self, parent: Inode, info: &RafsInodeInfo) {
+    fn init(&mut self, info: &RafsInodeInfo) {
         self.i_ino = info.i_ino;
         self.i_name = String::from(&info.name);
         self.i_data_digest = String::from(&info.digest);
-        self.i_parent = parent;
+        self.i_parent = info.i_parent;
         self.i_mode = info.i_mode;
         self.i_uid = info.i_uid;
         self.i_gid = info.i_gid;
@@ -371,7 +371,7 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
         let mut root_info = RafsInodeInfo::new();
         root_info.load(r)?;
         let mut root_inode = RafsInode::new();
-        root_inode.init(root_info.i_ino, &root_info);
+        root_inode.init(&root_info);
         self.unpack_dir(&mut root_inode, r)?;
         self.sb.s_root_inode = root_inode.i_ino;
         // TODO: add multiple super block support
@@ -379,37 +379,62 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
         self.sb.hash_inode(root_inode)
     }
 
-    fn unpack_dir<R: Read>(&self, dir: &mut RafsInode, r: &mut R) -> Result<()> {
-        trace!("unpack dir {}", &dir.i_name);
+    fn unpack_dir<R: Read>(&self, dir: &mut RafsInode, r: &mut R) -> Result<Option<RafsInodeInfo>> {
+        trace!("unpacking dir {} ino {}", &dir.i_name, dir.i_ino);
+        let mut res = None;
+        let mut next = None;
         loop {
-            let mut info = RafsInodeInfo::new();
-            match info.load(r) {
-                Ok(0) => break,
-                Ok(n) => {
-                    trace!("unpacked {}", info.name);
+            let mut info: RafsInodeInfo;
+            match next {
+                Some(i) => {
+                    info = i;
+                    next = None;
                 }
-                Err(ref e) if e.kind() == ErrorKind::Interrupted => break,
-                Err(e) => {
-                    error!("error after loading RafsInodeInfo");
-                    return Err(e);
+                None => {
+                    info = RafsInodeInfo::new();
+                    match info.load(r) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            trace!(
+                                "got inode {} ino {} parent {}",
+                                &info.name,
+                                info.i_ino,
+                                info.i_parent
+                            );
+                        }
+                        Err(ref e) if e.kind() == ErrorKind::Interrupted => break,
+                        Err(e) => {
+                            error!("error after loading RafsInodeInfo");
+                            return Err(e);
+                        }
+                    }
                 }
+            }
+            if info.i_parent != dir.i_ino {
+                res = Some(info);
+                break;
             }
 
             let mut inode = RafsInode::new();
-            inode.init(dir.i_ino, &info);
+            inode.init(&info);
             dir.add_child(info.i_ino);
             if inode.is_dir() {
-                self.unpack_dir(&mut inode, r)?;
+                match self.unpack_dir(&mut inode, r)? {
+                    Some(node) => next = Some(node),
+                    None => continue,
+                }
             } else {
                 self.unpack_node(&mut inode, r)?;
             }
         }
+        trace!("unpacked dir {}", &dir.i_name);
         // Must hash at last because we need to clone
-        self.sb.hash_inode(dir.clone())
+        self.sb.hash_inode(dir.clone())?;
+        Ok(res)
     }
 
     fn unpack_node<R: Read>(&self, inode: &mut RafsInode, r: &mut R) -> Result<()> {
-        trace!("unpack inode {}", &inode.i_name);
+        trace!("unpacking inode {}", &inode.i_name);
         if inode.is_symlink() {
             let mut info = RafsLinkDataInfo::new(inode.i_chunk_cnt as usize);
             info.load(r)?;
@@ -420,6 +445,7 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
                 inode.i_data.push(info.into())
             }
         }
+        trace!("unpacked inode {}", &inode.i_name);
         Ok(())
     }
 }
