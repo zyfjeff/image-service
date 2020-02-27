@@ -37,7 +37,7 @@ struct RafsInode {
     i_ino: Inode,
     i_name: String,
     // sha256
-    i_data_digest: String,
+    i_data_digest: RafsDigest,
     i_parent: u64,
     i_mode: u32,
     i_uid: u32,
@@ -73,7 +73,7 @@ impl RafsInode {
     fn init(&mut self, info: &RafsInodeInfo) {
         self.i_ino = info.i_ino;
         self.i_name = String::from(&info.name);
-        self.i_data_digest = String::from(&info.digest);
+        self.i_data_digest = info.digest.clone();
         self.i_parent = info.i_parent;
         self.i_mode = info.i_mode;
         self.i_uid = info.i_uid;
@@ -146,7 +146,7 @@ impl RafsInode {
 #[derive(Clone, Default, Debug)]
 pub struct RafsBlk {
     // block hash
-    pub block_id: String,
+    pub block_id: RafsDigest,
     // blob containing the block
     pub blob_id: String,
     // position of the block within the file
@@ -171,7 +171,7 @@ impl RafsBlk {
 impl From<RafsChunkInfo> for RafsBlk {
     fn from(info: RafsChunkInfo) -> Self {
         RafsBlk {
-            block_id: String::from(&info.blockid),
+            block_id: info.blockid,
             blob_id: String::from(&info.blobid),
             file_pos: info.pos,
             len: info.len as usize,
@@ -434,12 +434,18 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
     }
 
     fn unpack_node<R: Read>(&self, inode: &mut RafsInode, r: &mut R) -> Result<()> {
-        trace!("unpacking inode {}", &inode.i_name);
+        trace!(
+            "unpacking inode {} symlink {} regular {} chunk_cnt {}",
+            &inode.i_name,
+            inode.is_symlink(),
+            inode.is_reg(),
+            inode.i_chunk_cnt,
+        );
         if inode.is_symlink() {
             let mut info = RafsLinkDataInfo::new(inode.i_chunk_cnt as usize);
             info.load(r)?;
         } else if inode.is_reg() {
-            for i in 0..inode.i_chunk_cnt - 1 {
+            for i in 0..inode.i_chunk_cnt {
                 let mut info = RafsChunkInfo::new();
                 info.load(r)?;
                 inode.i_data.push(info.into())

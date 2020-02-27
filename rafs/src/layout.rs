@@ -28,8 +28,8 @@ pub trait RafsLayoutLoadStore {
 // Ondisk rafs inode, 512 bytes
 #[derive(Clone, Default, Debug)]
 pub struct RafsInodeInfo {
-    pub name: String,   //[char; MAX_RAFS_NAME + 1],
-    pub digest: String, //[char; RAFS_SHA256_LENGTH],
+    pub name: String,       //[char; MAX_RAFS_NAME + 1],
+    pub digest: RafsDigest, //[char; RAFS_SHA256_LENGTH],
     pub i_parent: u64,
     pub i_ino: u64,
     pub i_mode: u32,
@@ -92,6 +92,14 @@ fn read_string(input: &mut &[u8], count: usize) -> Result<String> {
     }
 }
 
+fn read_rafs_digest(input: &mut &[u8]) -> Result<RafsDigest> {
+    let (buf, rest) = input.split_at(RafsDigest::size());
+    *input = rest;
+    let mut d = RafsDigest::new();
+    d.data.clone_from_slice(&buf);
+    Ok(d)
+}
+
 impl RafsLayoutLoadStore for RafsInodeInfo {
     fn load<R: Read>(&mut self, r: &mut R) -> Result<usize> {
         let mut input = [0u8; RAFS_INODE_INFO_SIZE];
@@ -100,7 +108,7 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
 
         // Now we know input has enough bytes to fill in RafsInodeInfo
         self.name = read_string(&mut p, MAX_RAFS_NAME + 1)?;
-        self.digest = read_string(&mut p, RAFS_SHA256_LENGTH)?;
+        self.digest = read_rafs_digest(&mut p)?;
         self.i_parent = read_le_u64(&mut p);
         self.i_ino = read_le_u64(&mut p);
         self.i_mode = read_le_u32(&mut p);
@@ -123,7 +131,7 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
 
     fn store<W: Write>(&self, mut w: W) -> Result<usize> {
         let mut count = w.write(self.name.as_bytes())?;
-        count += w.write(self.digest.as_bytes())?;
+        count += w.write(&self.digest.data[..])?;
         count += w.write(&u64::to_le_bytes(self.i_parent))?;
         count += w.write(&u64::to_le_bytes(self.i_ino))?;
         count += w.write(&u32::to_le_bytes(self.i_mode))?;
@@ -218,8 +226,8 @@ impl RafsLayoutLoadStore for RafsSuperBlockInfo {
 // Ondisk rafs chunk, 136 bytes
 #[derive(Clone, Default, Debug)]
 pub struct RafsChunkInfo {
-    pub blockid: String, // [char; RAFS_SHA256_LENGTH],
-    pub blobid: String,  // [char; RAFS_BLOB_ID_MAX_LENGTH],
+    pub blockid: RafsDigest, // [char; RAFS_SHA256_LENGTH],
+    pub blobid: String,      // [char; RAFS_BLOB_ID_MAX_LENGTH],
     pub pos: u64,
     pub len: u32,
     pub offset: u64,
@@ -239,7 +247,7 @@ impl fmt::Display for RafsChunkInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "chunkinfo blockid: {}, blobid: {}\npos: {}, len: {}, offset: {}, size: {}",
+            "chunkinfo blockid: {}, blobid: {} pos: {}, len: {}, offset: {}, size: {}",
             &self.blockid, &self.blobid, self.pos, self.len, self.offset, self.size
         )
     }
@@ -248,11 +256,12 @@ impl fmt::Display for RafsChunkInfo {
 impl RafsLayoutLoadStore for RafsChunkInfo {
     fn load<R: Read>(&mut self, r: &mut R) -> Result<usize> {
         let mut input = [0u8; RAFS_CHUNK_INFO_SIZE];
+        trace!("loading chunk");
         r.read_exact(&mut input)?;
         let mut p = &input[..];
 
         // Now we know there is enough bytes to fill RafsChunkInfo
-        self.blockid = read_string(&mut p, RAFS_SHA256_LENGTH)?;
+        self.blockid = read_rafs_digest(&mut p)?;
         self.blobid = read_string(&mut p, RAFS_BLOB_ID_MAX_LENGTH)?;
         self.pos = read_le_u64(&mut p);
         self.len = read_le_u32(&mut p);
@@ -264,7 +273,7 @@ impl RafsLayoutLoadStore for RafsChunkInfo {
     }
 
     fn store<W: Write>(&self, mut w: W) -> Result<usize> {
-        w.write(self.blockid.as_bytes())?;
+        w.write(&self.blockid.data[..])?;
         w.write(self.blobid.as_bytes())?;
         w.write(&u64::to_le_bytes(self.pos))?;
         w.write(&u32::to_le_bytes(self.len))?;
@@ -306,5 +315,31 @@ impl RafsLayoutLoadStore for RafsLinkDataInfo {
         let count = w.write(self.target.as_bytes())?;
         w.write(&vec![0; self.ondisk_size - count])?;
         Ok(self.ondisk_size)
+    }
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct RafsDigest {
+    data: [u8; RAFS_SHA256_LENGTH],
+}
+
+impl RafsDigest {
+    fn size() -> usize {
+        RAFS_SHA256_LENGTH
+    }
+
+    fn new() -> Self {
+        RafsDigest {
+            ..Default::default()
+        }
+    }
+}
+
+impl fmt::Display for RafsDigest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for c in self.data[..].iter() {
+            write!(f, "{}", c)?;
+        }
+        Ok(())
     }
 }
