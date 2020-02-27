@@ -389,7 +389,10 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
                     trace!("unpacked {}", info.name);
                 }
                 Err(ref e) if e.kind() == ErrorKind::Interrupted => break,
-                Err(e) => return Err(e),
+                Err(e) => {
+                    error!("error after loading RafsInodeInfo");
+                    return Err(e);
+                }
             }
 
             let mut inode = RafsInode::new();
