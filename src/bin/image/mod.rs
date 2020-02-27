@@ -2,36 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use std::fs::{self, DirEntry};
+use std::fs;
 use std::io::Result;
 use std::os::linux::fs::MetadataExt;
 use std::path::Path;
 
 use rafs::layout::RafsInodeInfo;
 
-pub fn build(path: &str) -> Result<()> {
-  walk_dirs(Path::new(path), &inspect_entry)
+pub struct Builder {
+  root: String,
 }
 
-fn walk_dirs(dir: &Path, cb: &dyn Fn(&DirEntry) -> Result<()>) -> Result<()> {
-  if dir.is_dir() {
-    for entry in fs::read_dir(dir)? {
-      let entry = entry?;
-      let path = entry.path();
-      cb(&entry)?;
-      if path.is_dir() {
-        walk_dirs(&path, cb)?;
-      }
-    }
-  }
-  Ok(())
-}
-
-fn inspect_entry(entry: &DirEntry) -> Result<()> {
-  let meta = entry.metadata()?;
-
+fn inspect(path: &str, meta: &dyn MetadataExt) -> Result<()> {
+  println!("{}", path);
   let mut inode = RafsInodeInfo::new();
-  // inode.name
+  inode.name = String::from(path);
   // inode.digest
   // inode.i_parent
   inode.i_ino = meta.st_ino();
@@ -49,6 +34,44 @@ fn inspect_entry(entry: &DirEntry) -> Result<()> {
   // inode.i_chunk_cnt
   inode.i_flags = 0;
 
-  println!("{:?}", inode);
+  // println!("{:?}", inode);
   Ok(())
+}
+
+impl Builder {
+  pub fn new(root: &str) -> Builder {
+    Builder {
+      root: root.to_owned(),
+    }
+  }
+  fn walk_dirs(
+    &self,
+    file: &Path,
+    cb: &dyn Fn(&str, &dyn MetadataExt) -> Result<()>,
+  ) -> Result<()> {
+    if file.is_dir() {
+      for entry in fs::read_dir(file)? {
+        let entry = entry?;
+        let path = entry.path();
+        let relative_path = format!(
+          "/{}",
+          path
+            .strip_prefix(self.root.as_str())
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        );
+        cb(relative_path.as_str(), &entry.metadata()?)?;
+        if path.is_dir() {
+          self.walk_dirs(&path, cb)?;
+        }
+      }
+    }
+    Ok(())
+  }
+  pub fn build(&self) -> Result<()> {
+    let root_path = Path::new(self.root.as_str());
+    inspect("/", &fs::metadata(root_path)?)?;
+    self.walk_dirs(root_path, &inspect)
+  }
 }

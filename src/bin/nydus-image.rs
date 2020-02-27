@@ -26,7 +26,8 @@ fn main() -> Result<()> {
 
   let source_dir = cmd_arguments.value_of("SOURCE").unwrap();
 
-  image::build(source_dir)?;
+  let ib = image::Builder::new(source_dir);
+  ib.build()?;
 
   Ok(())
 }
