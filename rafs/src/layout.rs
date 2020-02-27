@@ -96,26 +96,28 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
     fn load<R: Read>(&mut self, r: &mut R) -> Result<usize> {
         let mut input = [0u8; RAFS_INODE_INFO_SIZE];
         r.read_exact(&mut input)?;
+        let mut p = &input[..];
 
         // Now we know input has enough bytes to fill in RafsInodeInfo
-        self.name = read_string(&mut &input[..], MAX_RAFS_NAME + 1)?;
-        self.digest = read_string(&mut &input[..], RAFS_SHA256_LENGTH)?;
-        self.i_parent = read_le_u64(&mut &input[..]);
-        self.i_ino = read_le_u64(&mut &input[..]);
-        self.i_mode = read_le_u32(&mut &input[..]);
-        self.i_uid = read_le_u32(&mut &input[..]);
-        self.i_gid = read_le_u32(&mut &input[..]);
-        self.i_padding = read_le_u32(&mut &input[..]);
-        self.i_rdev = read_le_u64(&mut &input[..]);
-        self.i_size = read_le_u64(&mut &input[..]);
-        self.i_nlink = read_le_u64(&mut &input[..]);
-        self.i_blocks = read_le_u64(&mut &input[..]);
-        self.i_atime = read_le_u64(&mut &input[..]);
-        self.i_mtime = read_le_u64(&mut &input[..]);
-        self.i_ctime = read_le_u64(&mut &input[..]);
-        self.i_chunk_cnt = read_le_u64(&mut &input[..]);
-        self.i_flags = read_le_u64(&mut &input[..]);
+        self.name = read_string(&mut p, MAX_RAFS_NAME + 1)?;
+        self.digest = read_string(&mut p, RAFS_SHA256_LENGTH)?;
+        self.i_parent = read_le_u64(&mut p);
+        self.i_ino = read_le_u64(&mut p);
+        self.i_mode = read_le_u32(&mut p);
+        self.i_uid = read_le_u32(&mut p);
+        self.i_gid = read_le_u32(&mut p);
+        self.i_padding = read_le_u32(&mut p);
+        self.i_rdev = read_le_u64(&mut p);
+        self.i_size = read_le_u64(&mut p);
+        self.i_nlink = read_le_u64(&mut p);
+        self.i_blocks = read_le_u64(&mut p);
+        self.i_atime = read_le_u64(&mut p);
+        self.i_mtime = read_le_u64(&mut p);
+        self.i_ctime = read_le_u64(&mut p);
+        self.i_chunk_cnt = read_le_u64(&mut p);
+        self.i_flags = read_le_u64(&mut p);
         trace!("loaded inode: {}", &self);
+
         Ok(RAFS_INODE_INFO_SIZE)
     }
 
@@ -183,16 +185,17 @@ impl RafsLayoutLoadStore for RafsSuperBlockInfo {
     fn load<R: Read>(&mut self, r: &mut R) -> Result<usize> {
         let mut input = [0u8; RAFS_SUPERBLOCK_SIZE];
         r.read_exact(&mut input)?;
+        let mut p = &input[..];
 
         // Now we know input has enough bytes to load RafsSuperBlockInfo
-        self.s_inodes_count = read_le_u64(&mut &input[..]);
-        self.s_blocks_count = read_le_u64(&mut &input[..]);
-        self.s_inode_size = read_le_u16(&mut &input[..]);
-        read_le_u16(&mut &input[..]);
-        self.s_block_size = read_le_u32(&mut &input[..]);
-        self.s_fs_version = read_le_u16(&mut &input[..]);
-        read_le_u16(&mut &input[..]);
-        self.s_magic = read_le_u32(&mut &input[..]);
+        self.s_inodes_count = read_le_u64(&mut p);
+        self.s_blocks_count = read_le_u64(&mut p);
+        self.s_inode_size = read_le_u16(&mut p);
+        read_le_u16(&mut p);
+        self.s_block_size = read_le_u32(&mut p);
+        self.s_fs_version = read_le_u16(&mut p);
+        read_le_u16(&mut p);
+        self.s_magic = read_le_u32(&mut p);
         trace!("loaded superblock: {}", &self);
         Ok(RAFS_SUPERBLOCK_SIZE)
     }
@@ -246,15 +249,17 @@ impl RafsLayoutLoadStore for RafsChunkInfo {
     fn load<R: Read>(&mut self, r: &mut R) -> Result<usize> {
         let mut input = [0u8; RAFS_CHUNK_INFO_SIZE];
         r.read_exact(&mut input)?;
+        let mut p = &input[..];
 
         // Now we know there is enough bytes to fill RafsChunkInfo
-        self.blockid = read_string(&mut &input[..], RAFS_SHA256_LENGTH)?;
-        self.blobid = read_string(&mut &input[..], RAFS_BLOB_ID_MAX_LENGTH)?;
-        self.pos = read_le_u64(&mut &input[..]);
-        self.len = read_le_u32(&mut &input[..]);
-        self.offset = read_le_u64(&mut &input[..]);
-        self.size = read_le_u32(&mut &input[..]);
+        self.blockid = read_string(&mut p, RAFS_SHA256_LENGTH)?;
+        self.blobid = read_string(&mut p, RAFS_BLOB_ID_MAX_LENGTH)?;
+        self.pos = read_le_u64(&mut p);
+        self.len = read_le_u32(&mut p);
+        self.offset = read_le_u64(&mut p);
+        self.size = read_le_u32(&mut p);
         trace!("loaded chunk: {}", &self);
+
         Ok(RAFS_CHUNK_INFO_SIZE)
     }
 
@@ -291,8 +296,9 @@ impl RafsLayoutLoadStore for RafsLinkDataInfo {
     fn load<R: Read>(&mut self, r: &mut R) -> Result<usize> {
         let mut input = vec![0; libc::PATH_MAX as usize];
         r.read_exact(&mut input[..self.ondisk_size])?;
+        let mut p = &input[..];
 
-        self.target = read_string(&mut &input[..], self.ondisk_size + 1)?;
+        self.target = read_string(&mut p, self.ondisk_size + 1)?;
         Ok(self.ondisk_size)
     }
 

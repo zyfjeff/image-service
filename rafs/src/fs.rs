@@ -22,7 +22,7 @@ use crate::storage::*;
 // rafs superblock magic number
 const RAFS_SUPER_MAGIC: u32 = 0x52414653;
 // rafs version number
-const RAFS_CURR_VERSION: u16 = 1;
+const RAFS_CURR_VERSION: u16 = 2;
 
 const RAFS_INODE_BLOCKSIZE: u32 = 4096;
 const RAFS_DEFAULT_ATTR_TIMEOUT: u64 = 1 << 32;
@@ -344,7 +344,10 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
             return Err(Error::new(ErrorKind::AlreadyExists, "Already mounted"));
         }
         self.device.init()?;
-        self.import(r).or_else(|_| self.sb.destroy())?;
+        self.import(r).or_else(|e| {
+            self.sb.destroy()?;
+            Err(e)
+        })?;
         self.initialized = true;
         info! {"Mounted rafs at {}", &path};
         Ok(())
@@ -386,7 +389,10 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
                     trace!("unpacked {}", info.name);
                 }
                 Err(ref e) if e.kind() == ErrorKind::Interrupted => break,
-                Err(e) => return Err(e),
+                Err(e) => {
+                    error!("error after loading RafsInodeInfo");
+                    return Err(e);
+                }
             }
 
             let mut inode = RafsInode::new();
