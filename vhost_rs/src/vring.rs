@@ -522,6 +522,11 @@ impl<S: VhostUserBackend> VhostUserSlaveReqHandler for VhostUserHandler<S> {
 
     fn set_features(&mut self, features: u64) -> VhostUserResult<()> {
         if (features & !self.backend.read().unwrap().features()) != 0 {
+            error!(
+                "set_features failed, supported {:#x} got {:#x}",
+                self.backend.read().unwrap().features(),
+                features
+            );
             return Err(VhostUserError::InvalidParam);
         }
 
