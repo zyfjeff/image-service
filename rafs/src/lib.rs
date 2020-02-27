@@ -8,5 +8,5 @@ extern crate log;
 #[allow(dead_code, unused_variables)]
 pub mod fs;
 #[allow(dead_code)]
-mod layout;
+pub mod layout;
 pub mod storage;
