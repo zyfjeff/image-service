@@ -402,7 +402,7 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
                                 info.i_parent
                             );
                         }
-                        Err(ref e) if e.kind() == ErrorKind::Interrupted => break,
+                        Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => break,
                         Err(e) => {
                             error!("error after loading RafsInodeInfo");
                             return Err(e);
