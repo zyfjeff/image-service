@@ -137,7 +137,7 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserBackend for VhostUserFsBack
 
     fn protocol_features(&self) -> VhostUserProtocolFeatures {
         // liubo: we haven't supported slave req in rafs.
-        VhostUserProtocolFeatures::MQ | VhostUserProtocolFeatures::REPLY_ACK
+        VhostUserProtocolFeatures::MQ
     }
 
     fn update_memory(&mut self, mem: GuestMemoryMmap) -> VhostUserBackendResult<()> {
