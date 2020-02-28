@@ -157,14 +157,12 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserBackend for VhostUserFsBack
 
         match index {
             HIPRIO_QUEUE_EVENT => {
-                debug!("HIPRIO_QUEUE_EVENT");
                 let mut vring = vrings[HIPRIO_QUEUE_EVENT as usize].write().unwrap();
                 // high priority requests are also just plain fuse requests, just in a
                 // different queue
                 self.process_queue(&mut vring)?;
             }
             x if x >= REQ_QUEUE_EVENT && x < vrings.len() as u16 => {
-                debug!("REQ_QUEUE_EVENT");
                 let mut vring = vrings[x as usize].write().unwrap();
                 self.process_queue(&mut vring)?;
             }
