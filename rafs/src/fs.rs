@@ -452,6 +452,7 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
             }
         }
         trace!("unpacked inode {}", &inode.i_name);
+        self.sb.hash_inode(inode.clone())?;
         Ok(())
     }
 }
