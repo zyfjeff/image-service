@@ -452,6 +452,7 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
             }
         }
         trace!("unpacked inode {}", &inode.i_name);
+        self.sb.hash_inode(inode.clone())?;
         Ok(())
     }
 }
@@ -504,7 +505,7 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     fn lookup(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> Result<Entry> {
         let inodes = self.sb.s_inodes.read().unwrap();
         let p = inodes.get(&parent).ok_or(ebadf())?;
-        if p.is_dir() {
+        if !p.is_dir() {
             return Err(ebadf());
         }
         let target = name.to_str().or_else(|_| Err(ebadf()))?;
