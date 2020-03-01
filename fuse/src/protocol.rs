@@ -129,6 +129,22 @@ const HANDLE_KILLPRIV: u32 = 524_288;
 /// FileSystem supports posix acls.
 const POSIX_ACL: u32 = 1_048_576;
 
+// Reading the fuse device after abort returns ECONNABORTED
+const ABORT_ERROR: u32 = 2_097_152;
+
+// INIT response init_out.max_pages contains the max number of req pages
+const MAX_PAGES: u32 = 4_194_304;
+
+// Kernel cachees READLINK responses
+const CACHE_SYMLINKS: u32 = 8_388_608;
+
+// Kernel supports zero-message opendir
+const NO_OPENDIR_SUPPORT: u32 = 16_777_216;
+
+// INIT response init_out.map_alignment contains byte alignment for foffset and
+// moffset fields in struct fuse_setupmapping_out and fuse_removemapping_one.
+const MAP_ALIGNMENT: u32 = 33_554_432;
+
 bitflags! {
     /// A bitfield passed in as a parameter to and returned from the `init` method of the
     /// `FileSystem` trait.
@@ -295,6 +311,49 @@ bitflags! {
         ///
         /// This feature is disabled by default.
         const POSIX_ACL = POSIX_ACL;
+
+        /// Indicates support for fuse device abort error.
+        ///
+        /// If this feature is enabled, the kernel will return ECONNABORTED to daemon when a fuse
+        /// connection is aborted. Otherwise, ENODEV is returned.
+        ///
+        /// This feature is enabled by default.
+        const ABORT_ERROR = ABORT_ERROR;
+
+        /// Indicate support for max number of req pages negotiation during INIT request handling.
+        ///
+        /// If this feature is enabled, FUSE INIT response init_out.max_pages will contain the max
+        /// number of req pages.
+        ///
+        /// This feature is enabled by default.
+        const MAX_PAGES = MAX_PAGES;
+
+        /// Indicate support for kernel caching symlinks.
+        ///
+        /// If this feature is enabled, the kernel will cache symlink contents.
+        ///
+        /// This feature is enabled by default.
+        const CACHE_SYMLINKS = CACHE_SYMLINKS;
+
+        /// Indicates support for zero-message opens. If this flag is set in the `capable` parameter
+        /// of the `init` trait method, then the file system may return `ENOSYS` from the opendir()
+        /// handler to indicate success. Further attempts to open files will be handled in the kernel
+        /// (If this flag is not set, returning ENOSYS will be treated as an error and signaled to the
+        /// caller).
+        ///
+        /// Setting (or not setting) the field in the `FsOptions` returned from the `init` method
+        /// has no effect.
+        ///
+        /// This feature is enabled by default.
+        const ZERO_MESSAGE_OPENDIR = NO_OPENDIR_SUPPORT;
+
+        /// Indicate support for byte alignment negotiation during INIT request handling.
+        ///
+        /// If this feature is enabled, the INIT response init_out.map_alignment contains byte alignment for
+        /// foffset and moffset fields in fuse_setupmapping_out and fuse_removemapping_one.
+        ///
+        /// This feature is enabled by default.
+        const MAP_ALIGNMENT = MAP_ALIGNMENT;
     }
 }
 
