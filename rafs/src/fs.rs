@@ -312,6 +312,12 @@ impl RafsConfig {
     }
 }
 
+#[derive(Default, Debug, Copy, Clone)]
+struct RafsOptions {
+    no_open: bool,
+    no_opendir: bool,
+}
+
 pub struct Rafs<B: backend::BlobBackend + 'static> {
     conf: RafsConfig,
 
@@ -321,6 +327,7 @@ pub struct Rafs<B: backend::BlobBackend + 'static> {
     // rafs super per instance, we need another indirection layer
     device: device::RafsDevice<B>,
     initialized: bool,
+    opts: RwLock<RafsOptions>,
 }
 
 impl<B: backend::BlobBackend + 'static> Rafs<B> {
@@ -331,6 +338,10 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
             fuse_inodes: RwLock::new(HashMap::new()),
             conf: conf,
             initialized: false,
+            opts: RwLock::new(RafsOptions {
+                no_open: true,
+                no_opendir: true,
+            }),
         }
     }
 
@@ -477,12 +488,14 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     type Inode = Inode;
     type Handle = Handle;
 
-    fn init(&self, _: FsOptions) -> Result<FsOptions> {
+    fn init(&self, opts: FsOptions) -> Result<FsOptions> {
         self.fuse_inodes
             .write()
             .unwrap()
             .insert(ROOT_ID, (self.sb.s_index, self.sb.s_root_inode));
 
+        self.opts.write().unwrap().no_open = (opts & FsOptions::ZERO_MESSAGE_OPEN).is_empty();
+        self.opts.write().unwrap().no_opendir = (opts & FsOptions::ZERO_MESSAGE_OPENDIR).is_empty();
         Ok(
             // These fuse features are supported by rafs by default.
             FsOptions::ASYNC_READ
@@ -493,7 +506,9 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
                 | FsOptions::HAS_IOCTL_DIR
                 | FsOptions::WRITEBACK_CACHE
                 | FsOptions::ZERO_MESSAGE_OPEN
-                | FsOptions::ATOMIC_O_TRUNC,
+                | FsOptions::ATOMIC_O_TRUNC
+                | FsOptions::CACHE_SYMLINKS
+                | FsOptions::ZERO_MESSAGE_OPENDIR,
         )
     }
 
@@ -561,8 +576,12 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         inode: Self::Inode,
         flags: u32,
     ) -> Result<(Option<Self::Handle>, OpenOptions)> {
-        // Matches the behavior of libfuse.
-        Ok((None, OpenOptions::empty()))
+        if self.opts.read().unwrap().no_open {
+            Err(enosys())
+        } else {
+            // Matches the behavior of libfuse.
+            Ok((None, OpenOptions::empty()))
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -653,7 +672,12 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         inode: Self::Inode,
         flags: u32,
     ) -> Result<(Option<Self::Handle>, OpenOptions)> {
-        Err(enosys())
+        if self.opts.read().unwrap().no_open {
+            Err(enosys())
+        } else {
+            // Matches the behavior of libfuse.
+            Ok((None, OpenOptions::empty()))
+        }
     }
 
     fn readdir<F>(
