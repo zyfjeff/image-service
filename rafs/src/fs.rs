@@ -32,7 +32,7 @@ type Inode = u64;
 type Handle = u64;
 type SuperIndex = u64;
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 struct RafsInode {
     i_ino: Inode,
     i_name: String,

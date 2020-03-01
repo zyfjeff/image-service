@@ -148,7 +148,17 @@ impl<F: FileSystem + Sync> Server<F> {
 
         r.read_exact(&mut buf).map_err(Error::DecodeMessage)?;
 
-        let name = bytes_to_cstr(buf.as_ref())?;
+        let pos = buf
+            .iter()
+            .position(|&x| x == 0)
+            .ok_or(Error::InvalidHeaderLength)?;
+        let name = match bytes_to_cstr(buf[..pos + 1].as_ref()) {
+            Ok(name) => name,
+            Err(e) => {
+                error!("fail to convert from {:?}: {}", buf[..pos + 1].as_ref(), e);
+                return Err(e);
+            }
+        };
 
         match self
             .fs
