@@ -95,7 +95,10 @@ impl OSS {
         let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
         let client = reqwest::Client::new();
         let url = format!("{}{}", url.as_str(), query_str);
-        println!("{} {}", method, url);
+        debug!(
+            "oss request header {:?} method {:?} url {:?}",
+            new_headers, method, url
+        );
         let ret = client
             .request(method, url.as_str())
             .headers(new_headers)
