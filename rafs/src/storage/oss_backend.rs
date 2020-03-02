@@ -149,7 +149,8 @@ impl BlobBackend for OSS {
 
     fn read(&self, blob_id: &str, buf: &mut Vec<u8>, offset: u64) -> IOResult<usize> {
         let mut headers = HeaderMap::new();
-        let end_at = buf.len() - 1;
+        let count = buf.len() as u64;
+        let end_at = offset + count - 1;
         let range = format!("bytes={}-{}", offset, end_at);
         headers.insert("Range", range.as_str().parse().unwrap());
         let mut resp = self.request("GET", "", self.bucket_name.as_str(), blob_id, headers, &[])?;
