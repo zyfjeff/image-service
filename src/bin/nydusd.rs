@@ -137,7 +137,7 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserBackend for VhostUserFsBack
 
     fn protocol_features(&self) -> VhostUserProtocolFeatures {
         // liubo: we haven't supported slave req in rafs.
-        VhostUserProtocolFeatures::MQ | VhostUserProtocolFeatures::REPLY_ACK
+        VhostUserProtocolFeatures::MQ
     }
 
     fn update_memory(&mut self, mem: GuestMemoryMmap) -> VhostUserBackendResult<()> {
@@ -147,7 +147,7 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserBackend for VhostUserFsBack
 
     fn handle_event(
         &mut self,
-        device_event: u16,
+        index: u16,
         evset: epoll::Events,
         vrings: &[Arc<RwLock<Vring>>],
     ) -> VhostUserBackendResult<bool> {
@@ -155,13 +155,15 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserBackend for VhostUserFsBack
             return Err(Error::HandleEventNotEpollIn.into());
         }
 
-        match device_event {
+        match index {
             HIPRIO_QUEUE_EVENT => {
-                debug!("HIPRIO_QUEUE_EVENT");
+                let mut vring = vrings[HIPRIO_QUEUE_EVENT as usize].write().unwrap();
+                // high priority requests are also just plain fuse requests, just in a
+                // different queue
+                self.process_queue(&mut vring)?;
             }
-            REQ_QUEUE_EVENT => {
-                debug!("REQ_QUEUE_EVENT");
-                let mut vring = vrings[1].write().unwrap();
+            x if x >= REQ_QUEUE_EVENT && x < vrings.len() as u16 => {
+                let mut vring = vrings[x as usize].write().unwrap();
                 self.process_queue(&mut vring)?;
             }
             _ => return Err(Error::HandleEventUnknownEvent.into()),

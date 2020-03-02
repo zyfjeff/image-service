@@ -78,6 +78,7 @@ impl<F: FileSystem + Sync> Server<F> {
     pub fn handle_message(&self, mut r: Reader, w: Writer) -> Result<usize> {
         let in_header: InHeader = r.read_obj().map_err(Error::DecodeMessage)?;
 
+        trace!("new fuse req {:?}", in_header);
         if in_header.len > MAX_BUFFER_SIZE {
             return reply_error(
                 io::Error::from_raw_os_error(libc::ENOMEM),
@@ -147,7 +148,17 @@ impl<F: FileSystem + Sync> Server<F> {
 
         r.read_exact(&mut buf).map_err(Error::DecodeMessage)?;
 
-        let name = bytes_to_cstr(buf.as_ref())?;
+        let pos = buf
+            .iter()
+            .position(|&x| x == 0)
+            .ok_or(Error::InvalidHeaderLength)?;
+        let name = match bytes_to_cstr(buf[..pos + 1].as_ref()) {
+            Ok(name) => name,
+            Err(e) => {
+                error!("fail to convert from {:?}: {}", buf[..pos + 1].as_ref(), e);
+                return Err(e);
+            }
+        };
 
         match self
             .fs
@@ -1178,6 +1189,7 @@ fn reply_ok<T: ByteValued>(
         unique,
     };
 
+    trace!("reply OK {:?}", header);
     w.write_all(header.as_slice())
         .map_err(Error::EncodeMessage)?;
 
@@ -1200,6 +1212,7 @@ fn reply_error(e: io::Error, unique: u64, mut w: Writer) -> Result<usize> {
         unique,
     };
 
+    trace!("reply error {:?}", header);
     w.write_all(header.as_slice())
         .map_err(Error::EncodeMessage)?;
 

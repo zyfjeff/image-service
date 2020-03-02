@@ -95,7 +95,10 @@ impl OSS {
         let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
         let client = reqwest::Client::new();
         let url = format!("{}{}", url.as_str(), query_str);
-        println!("{} {}", method, url);
+        debug!(
+            "oss request header {:?} method {:?} url {:?}",
+            new_headers, method, url
+        );
         let ret = client
             .request(method, url.as_str())
             .headers(new_headers)
@@ -146,7 +149,8 @@ impl BlobBackend for OSS {
 
     fn read(&self, blob_id: &str, buf: &mut Vec<u8>, offset: u64) -> IOResult<usize> {
         let mut headers = HeaderMap::new();
-        let end_at = buf.len() - 1;
+        let count = buf.len() as u64;
+        let end_at = offset + count - 1;
         let range = format!("bytes={}-{}", offset, end_at);
         headers.insert("Range", range.as_str().parse().unwrap());
         let mut resp = self.request("GET", "", self.bucket_name.as_str(), blob_id, headers, &[])?;

@@ -94,7 +94,10 @@ fn read_string(input: &mut &[u8], count: usize) -> Result<String> {
     let (buf, rest) = input.split_at(count);
     *input = rest;
     match str::from_utf8(&buf) {
-        Ok(s) => Ok(s.to_string()),
+        Ok(s) => {
+            let s: Vec<&str> = s.split_terminator("\0").collect();
+            Ok(s[0].to_string())
+        }
         Err(_) => Err(Error::from_raw_os_error(libc::EINVAL)),
     }
 }

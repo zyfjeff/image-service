@@ -81,6 +81,7 @@ impl<B: BlobBackend> RafsDevice<B> {
         for bio in desc.bi_vec.iter() {
             let mut f = RafsBioDevice::new(bio, &self)?;
             let offset = bio.blkinfo.blob_offset + bio.offset as u64;
+            debug!("reading bio desc {:?}", bio);
             count += w.write_from(&mut f, bio.size, offset)?;
         }
         Ok(count)
