@@ -35,13 +35,18 @@ pub trait RafsLayoutLoadStore {
 // Ondisk rafs inode, 512 bytes
 #[derive(Clone, Default, Debug)]
 pub struct RafsInodeInfo {
-    pub name: String,       //[char; MAX_RAFS_NAME + 1],
-    pub digest: RafsDigest, //[char; RAFS_SHA256_LENGTH],
+    /// file name, [char; MAX_RAFS_NAME + 1]
+    pub name: String,
+    /// sha256(sha256(lz4(chunk)) + ...), [char; RAFS_SHA256_LENGTH]
+    pub digest: RafsDigest,
+    /// parent inode number
     pub i_parent: u64,
+    /// from fs stat()
     pub i_ino: u64,
     pub i_mode: u32,
     pub i_uid: u32,
     pub i_gid: u32,
+    /// bytes alignment
     pub i_padding: u32,
     pub i_rdev: u64,
     pub i_size: u64,
@@ -50,7 +55,9 @@ pub struct RafsInodeInfo {
     pub i_atime: u64,
     pub i_mtime: u64,
     pub i_ctime: u64,
+    /// chunks count
     pub i_chunk_cnt: u64,
+    /// HARDLINK | SYMLINK | PREFETCH_HINT
     pub i_flags: u64,
 }
 
@@ -172,12 +179,14 @@ pub struct RafsSuperBlockInfo {
     pub s_blocks_count: u64,
     /// inode size
     pub s_inode_size: u16,
+    /// bytes alignment
     pub s_padding1: u16,
     /// block size
     pub s_block_size: u32,
     /// RAFS version
     pub s_fs_version: u16,
-    pub s_pandding2: u16,
+    /// bytes alignment
+    pub s_padding2: u16,
     /// RAFS super magic
     pub s_magic: u32,
 }

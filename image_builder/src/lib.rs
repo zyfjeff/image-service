@@ -38,7 +38,7 @@ impl<'a> Node<'a> {
     self.inode.i_mode = meta.st_mode();
     self.inode.i_uid = meta.st_uid();
     self.inode.i_gid = meta.st_gid();
-    // self.inode.i_padding
+    self.inode.i_padding = 0;
     self.inode.i_rdev = meta.st_rdev();
     self.inode.i_size = meta.st_size();
     self.inode.i_nlink = meta.st_nlink();
@@ -47,7 +47,7 @@ impl<'a> Node<'a> {
     self.inode.i_mtime = meta.st_mtime() as u64;
     self.inode.i_ctime = meta.st_ctime() as u64;
     // self.inode.i_chunk_cnt
-    self.inode.i_flags = 0;
+    // self.inode.i_flags = 0;
     Ok(())
   }
   fn build_chunk(&mut self) -> Result<()> {
@@ -76,10 +76,10 @@ impl Builder {
     sb.s_inodes_count = 0;
     sb.s_blocks_count = 0;
     sb.s_inode_size = RAFS_INODE_INFO_SIZE as u16;
-    // sb.s_padding1
+    sb.s_padding1 = 0;
     sb.s_block_size = DEFAULT_RAFS_BLOCK_SIZE as u32;
     sb.s_fs_version = RAFS_SUPER_VERSION as u16;
-    // sb.s_padding2
+    sb.s_padding2 = 0;
     sb.s_magic = RAFS_SUPER_MAGIC;
     Ok(sb)
   }
