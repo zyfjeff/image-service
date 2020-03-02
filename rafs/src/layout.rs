@@ -251,12 +251,19 @@ impl RafsLayoutLoadStore for RafsSuperBlockInfo {
 // Ondisk rafs chunk, 136 bytes
 #[derive(Clone, Default, Debug)]
 pub struct RafsChunkInfo {
-    pub blockid: RafsDigest, // [char; RAFS_SHA256_LENGTH],
-    pub blobid: String,      // [char; RAFS_BLOB_ID_MAX_LENGTH],
+    /// sha256(chunk), [char; RAFS_SHA256_LENGTH]
+    pub blockid: RafsDigest,
+    /// random string, [char; RAFS_BLOB_ID_MAX_LENGTH]
+    pub blobid: String,
+    /// file position of block, with fixed block length
     pub pos: u64,
+    /// block valid data length
     pub len: u32,
+    /// blob offset
     pub offset: u64,
+    /// blob size
     pub size: u32,
+    /// reserved
     reserved: u64,
 }
 

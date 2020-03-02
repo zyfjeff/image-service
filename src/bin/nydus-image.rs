@@ -7,6 +7,7 @@ use image_builder;
 #[macro_use(crate_version, crate_authors)]
 extern crate clap;
 use clap::{App, Arg};
+use uuid::Uuid;
 
 use std::io::Result;
 
@@ -26,7 +27,9 @@ fn main() -> Result<()> {
 
     let source_dir = cmd_arguments.value_of("SOURCE").unwrap();
 
-    let ib = image_builder::Builder::new(source_dir);
+    let blob_id = Uuid::new_v4().to_string();
+
+    let mut ib = image_builder::Builder::new(source_dir, blob_id.as_str());
     ib.build()?;
 
     Ok(())
