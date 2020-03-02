@@ -9,13 +9,20 @@ use std::fmt;
 use std::io::{Error, Read, Result, Write};
 use std::str;
 
-const MAX_RAFS_NAME: usize = 255;
-const RAFS_SHA256_LENGTH: usize = 32;
-const RAFS_BLOB_ID_MAX_LENGTH: usize = 72;
+use crypto::digest::Digest;
+use crypto::sha2::Sha256;
 
-const RAFS_SUPERBLOCK_SIZE: usize = 8192;
-const RAFS_INODE_INFO_SIZE: usize = 512;
-const RAFS_CHUNK_INFO_SIZE: usize = 136;
+pub const MAX_RAFS_NAME: usize = 255;
+pub const RAFS_SHA256_LENGTH: usize = 32;
+pub const RAFS_BLOB_ID_MAX_LENGTH: usize = 72;
+
+pub const RAFS_SUPER_VERSION: usize = 0x2;
+pub const RAFS_SUPERBLOCK_SIZE: usize = 8192;
+pub const RAFS_INODE_INFO_SIZE: usize = 512;
+pub const RAFS_CHUNK_INFO_SIZE: usize = 136;
+
+pub const DEFAULT_RAFS_BLOCK_SIZE: usize = 1024 * 1024;
+pub const RAFS_SUPER_MAGIC: u32 = 0x52414653;
 
 pub trait RafsLayoutLoadStore {
     // load rafs ondisk metadata in packed format
@@ -156,13 +163,19 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
 // Ondisk rafs superblock, 8192 bytes
 #[derive(Copy, Clone, Default, Debug)]
 pub struct RafsSuperBlockInfo {
+    /// inode count
     pub s_inodes_count: u64,
+    /// blocks count
     pub s_blocks_count: u64,
+    /// inode size
     pub s_inode_size: u16,
     pub s_padding1: u16,
+    /// block size
     pub s_block_size: u32,
+    /// RAFS version
     pub s_fs_version: u16,
     pub s_pandding2: u16,
+    /// RAFS super magic
     pub s_magic: u32,
 }
 
@@ -332,6 +345,16 @@ impl RafsDigest {
         RafsDigest {
             ..Default::default()
         }
+    }
+
+    fn from_buf(buf: &[u8]) -> Self {
+        let mut hash = Sha256::new();
+        let mut hash_buf = vec![];
+        hash.input(buf);
+        hash.result(&mut hash_buf);
+        let mut digest = RafsDigest::new();
+        digest.data.clone_from_slice(&hash_buf);
+        digest
     }
 }
 
