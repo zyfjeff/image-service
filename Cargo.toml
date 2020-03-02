@@ -26,9 +26,13 @@ path = "rafs"
 [dependencies.fuse]
 path = "fuse"
 
+[dependencies.image_builder]
+path = "image_builder"
+
 [workspace]
 members = [
     "rafs",
     "fuse",
     "vhost_rs",
+    "image_builder",
 ]
