@@ -37,7 +37,7 @@ impl BlobBackend for Dummy {
     }
 
     // Read a range of data from blob into the provided destination
-    fn read(&self, _blobid: &str, buf: &mut Vec<u8>, _offset: u64) -> Result<usize> {
+    fn read(&self, _blobid: &str, buf: &mut Vec<u8>, _offset: u64, _count: usize) -> Result<usize> {
         Ok(buf.len())
     }
 
