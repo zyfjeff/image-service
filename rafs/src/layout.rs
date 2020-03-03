@@ -37,7 +37,7 @@ pub trait RafsLayoutLoadStore {
 pub struct RafsInodeInfo {
     /// file name, [char; MAX_RAFS_NAME + 1]
     pub name: String,
-    /// sha256(sha256(lz4(chunk)) + ...), [char; RAFS_SHA256_LENGTH]
+    /// sha256(sha256(chunk) + ...), [char; RAFS_SHA256_LENGTH]
     pub digest: RafsDigest,
     /// parent inode number
     pub i_parent: u64,
@@ -251,12 +251,19 @@ impl RafsLayoutLoadStore for RafsSuperBlockInfo {
 // Ondisk rafs chunk, 136 bytes
 #[derive(Clone, Default, Debug)]
 pub struct RafsChunkInfo {
-    pub blockid: RafsDigest, // [char; RAFS_SHA256_LENGTH],
-    pub blobid: String,      // [char; RAFS_BLOB_ID_MAX_LENGTH],
+    /// sha256(chunk), [char; RAFS_SHA256_LENGTH]
+    pub blockid: RafsDigest,
+    /// random string, [char; RAFS_BLOB_ID_MAX_LENGTH]
+    pub blobid: String,
+    /// file position of block, with fixed block length
     pub pos: u64,
+    /// block valid data length
     pub len: u32,
+    /// blob offset
     pub offset: u64,
+    /// blob size
     pub size: u32,
+    /// reserved
     reserved: u64,
 }
 
@@ -345,23 +352,23 @@ impl RafsLayoutLoadStore for RafsLinkDataInfo {
 
 #[derive(Default, Debug, Clone)]
 pub struct RafsDigest {
-    data: [u8; RAFS_SHA256_LENGTH],
+    pub data: [u8; RAFS_SHA256_LENGTH],
 }
 
 impl RafsDigest {
-    fn size() -> usize {
+    pub fn size() -> usize {
         RAFS_SHA256_LENGTH
     }
 
-    fn new() -> Self {
+    pub fn new() -> Self {
         RafsDigest {
             ..Default::default()
         }
     }
 
-    fn from_buf(buf: &[u8]) -> Self {
+    pub fn from_buf(buf: &[u8]) -> Self {
         let mut hash = Sha256::new();
-        let mut hash_buf = vec![];
+        let mut hash_buf = [0; RAFS_SHA256_LENGTH];
         hash.input(buf);
         hash.result(&mut hash_buf);
         let mut digest = RafsDigest::new();

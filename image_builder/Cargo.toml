@@ -8,6 +8,9 @@ edition = "2018"
 
 [dependencies]
 libc = "0.2.66"
+log = "0.4"
+rust-crypto = "0.2.36"
+compress = "0.1.2"
 
 [dependencies.rafs]
 path = "../rafs"
