@@ -7,9 +7,10 @@
 use libc;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
-use std::io::{Error, Result};
+use std::io::{Error, Read, Result, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use bimap::hash::BiHashMap;
 
@@ -26,6 +27,12 @@ type SuperIndex = u64;
 struct InodeData {
     super_index: SuperIndex,
     ino: Inode,
+}
+
+impl InodeData {
+    fn is_pseudo(&self) -> bool {
+        self.super_index == PSEUDO_FS_SUPER
+    }
 }
 
 struct MountPointData {
@@ -136,7 +143,7 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         };
 
         let mut entry: Entry;
-        if pidata.super_index == PSEUDO_FS_SUPER {
+        if pidata.is_pseudo() {
             entry = self.root.lookup(ctx, pidata.ino, name)?;
             // check mountpoints
             let mnt = match self
@@ -173,5 +180,771 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         entry.inode = self.hash_inode(entry.inode, pidata.super_index)?;
 
         Ok(entry)
+    }
+
+    fn getattr(
+        &self,
+        ctx: Context,
+        inode: u64,
+        handle: Option<u64>,
+    ) -> Result<(libc::stat64, Duration)> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.getattr(ctx, idata.ino, handle)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.getattr(ctx, idata.ino, handle)
+        }
+    }
+
+    fn setattr(
+        &self,
+        ctx: Context,
+        inode: u64,
+        attr: libc::stat64,
+        handle: Option<u64>,
+        valid: SetattrValid,
+    ) -> Result<(libc::stat64, Duration)> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.setattr(ctx, idata.ino, attr, handle, valid)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.setattr(ctx, idata.ino, attr, handle, valid)
+        }
+    }
+
+    fn readlink(&self, ctx: Context, inode: u64) -> Result<Vec<u8>> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.readlink(ctx, idata.ino)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.readlink(ctx, idata.ino)
+        }
+    }
+
+    fn symlink(&self, ctx: Context, linkname: &CStr, parent: u64, name: &CStr) -> Result<Entry> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&parent) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.symlink(ctx, linkname, idata.ino, name)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.symlink(ctx, linkname, idata.ino, name)
+        }
+    }
+
+    fn mknod(
+        &self,
+        ctx: Context,
+        inode: u64,
+        name: &CStr,
+        mode: u32,
+        rdev: u32,
+        umask: u32,
+    ) -> Result<Entry> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.mknod(ctx, idata.ino, name, mode, rdev, umask)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.mknod(ctx, idata.ino, name, mode, rdev, umask)
+        }
+    }
+
+    fn mkdir(
+        &self,
+        ctx: Context,
+        parent: u64,
+        name: &CStr,
+        mode: u32,
+        umask: u32,
+    ) -> Result<Entry> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&parent) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.mkdir(ctx, idata.ino, name, mode, umask)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.mkdir(ctx, idata.ino, name, mode, umask)
+        }
+    }
+
+    fn unlink(&self, ctx: Context, parent: u64, name: &CStr) -> Result<()> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&parent) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.unlink(ctx, idata.ino, name)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.unlink(ctx, idata.ino, name)
+        }
+    }
+
+    fn rmdir(&self, ctx: Context, parent: u64, name: &CStr) -> Result<()> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&parent) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.rmdir(ctx, idata.ino, name)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.rmdir(ctx, idata.ino, name)
+        }
+    }
+
+    fn rename(
+        &self,
+        ctx: Context,
+        olddir: u64,
+        oldname: &CStr,
+        newdir: u64,
+        newname: &CStr,
+        flags: u32,
+    ) -> Result<()> {
+        let idata_old = match self.inodes.read().unwrap().get_by_left(&olddir) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        let idata_new = match self.inodes.read().unwrap().get_by_left(&newdir) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata_old.super_index != idata_new.super_index {
+            return Err(Error::from_raw_os_error(libc::EINVAL));
+        }
+
+        if idata_old.is_pseudo() && idata_new.is_pseudo() {
+            self.root
+                .rename(ctx, idata_old.ino, oldname, idata_new.ino, newname, flags)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata_old.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.rename(ctx, idata_old.ino, oldname, idata_new.ino, newname, flags)
+        }
+    }
+
+    fn link(&self, ctx: Context, inode: u64, newparent: u64, newname: &CStr) -> Result<Entry> {
+        let idata_old = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        let idata_new = match self.inodes.read().unwrap().get_by_left(&newparent) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata_old.super_index != idata_new.super_index {
+            return Err(Error::from_raw_os_error(libc::EINVAL));
+        }
+
+        if idata_old.is_pseudo() && idata_new.is_pseudo() {
+            self.root.link(ctx, idata_old.ino, idata_new.ino, newname)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata_old.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.link(ctx, idata_old.ino, idata_new.ino, newname)
+        }
+    }
+
+    fn open(&self, _ctx: Context, _inode: u64, _flags: u32) -> Result<(Option<u64>, OpenOptions)> {
+        // Matches the behavior of libfuse.
+        Ok((None, OpenOptions::empty()))
+    }
+
+    fn create(
+        &self,
+        ctx: Context,
+        parent: u64,
+        name: &CStr,
+        mode: u32,
+        flags: u32,
+        umask: u32,
+    ) -> Result<(Entry, Option<u64>, OpenOptions)> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&parent) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.create(ctx, idata.ino, name, mode, flags, umask)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.create(ctx, idata.ino, name, mode, flags, umask)
+        }
+    }
+
+    fn read<W: Write + ZeroCopyWriter>(
+        &self,
+        ctx: Context,
+        inode: u64,
+        handle: u64,
+        w: W,
+        size: u32,
+        offset: u64,
+        lock_owner: Option<u64>,
+        flags: u32,
+    ) -> Result<usize> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root
+                .read(ctx, idata.ino, handle, w, size, offset, lock_owner, flags)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.read(ctx, idata.ino, handle, w, size, offset, lock_owner, flags)
+        }
+    }
+
+    fn write<R: Read + ZeroCopyReader>(
+        &self,
+        ctx: Context,
+        inode: u64,
+        handle: u64,
+        r: R,
+        size: u32,
+        offset: u64,
+        lock_owner: Option<u64>,
+        delayed_write: bool,
+        flags: u32,
+    ) -> Result<usize> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.write(
+                ctx,
+                idata.ino,
+                handle,
+                r,
+                size,
+                offset,
+                lock_owner,
+                delayed_write,
+                flags,
+            )
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.write(
+                ctx,
+                idata.ino,
+                handle,
+                r,
+                size,
+                offset,
+                lock_owner,
+                delayed_write,
+                flags,
+            )
+        }
+    }
+
+    fn flush(&self, ctx: Context, inode: u64, handle: u64, lock_owner: u64) -> Result<()> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.flush(ctx, idata.ino, handle, lock_owner)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.flush(ctx, idata.ino, handle, lock_owner)
+        }
+    }
+
+    fn fsync(&self, ctx: Context, inode: u64, datasync: bool, handle: u64) -> Result<()> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.fsync(ctx, idata.ino, datasync, handle)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.fsync(ctx, idata.ino, datasync, handle)
+        }
+    }
+
+    fn fallocate(
+        &self,
+        ctx: Context,
+        inode: u64,
+        handle: u64,
+        mode: u32,
+        offset: u64,
+        length: u64,
+    ) -> Result<()> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root
+                .fallocate(ctx, inode, handle, mode, offset, length)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.fallocate(ctx, inode, handle, mode, offset, length)
+        }
+    }
+
+    fn release(
+        &self,
+        ctx: Context,
+        inode: u64,
+        flags: u32,
+        handle: u64,
+        flush: bool,
+        flock_release: bool,
+        lock_owner: Option<u64>,
+    ) -> Result<()> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.release(
+                ctx,
+                idata.ino,
+                flags,
+                handle,
+                flush,
+                flock_release,
+                lock_owner,
+            )
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.release(
+                ctx,
+                idata.ino,
+                flags,
+                handle,
+                flush,
+                flock_release,
+                lock_owner,
+            )
+        }
+    }
+
+    fn statfs(&self, ctx: Context, inode: u64) -> Result<libc::statvfs64> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.statfs(ctx, idata.ino)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.statfs(ctx, idata.ino)
+        }
+    }
+
+    fn setxattr(
+        &self,
+        ctx: Context,
+        inode: u64,
+        name: &CStr,
+        value: &[u8],
+        flags: u32,
+    ) -> Result<()> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.setxattr(ctx, idata.ino, name, value, flags)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.setxattr(ctx, idata.ino, name, value, flags)
+        }
+    }
+
+    fn getxattr(&self, ctx: Context, inode: u64, name: &CStr, size: u32) -> Result<GetxattrReply> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.getxattr(ctx, idata.ino, name, size)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.getxattr(ctx, idata.ino, name, size)
+        }
+    }
+
+    fn listxattr(&self, ctx: Context, inode: u64, size: u32) -> Result<ListxattrReply> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.listxattr(ctx, idata.ino, size)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.listxattr(ctx, idata.ino, size)
+        }
+    }
+
+    fn removexattr(&self, ctx: Context, inode: u64, name: &CStr) -> Result<()> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.removexattr(ctx, idata.ino, name)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.removexattr(ctx, idata.ino, name)
+        }
+    }
+
+    fn opendir(
+        &self,
+        _ctx: Context,
+        _inode: u64,
+        _flags: u32,
+    ) -> Result<(Option<u64>, OpenOptions)> {
+        // Matches the behavior of libfuse.
+        Ok((None, OpenOptions::empty()))
+    }
+
+    fn readdir<FF>(
+        &self,
+        ctx: Context,
+        inode: u64,
+        handle: u64,
+        size: u32,
+        offset: u64,
+        mut add_entry: FF,
+    ) -> Result<()>
+    where
+        FF: FnMut(DirEntry) -> Result<usize>,
+    {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root
+                .readdir(ctx, idata.ino, handle, size, offset, |mut dir_entry| {
+                    let mnt = match self
+                        .mountpoints
+                        .read()
+                        .unwrap()
+                        .get(&dir_entry.ino)
+                        .map(Arc::clone)
+                    {
+                        Some(mnt) => mnt,
+                        None => {
+                            dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino)?;
+                            return add_entry(dir_entry);
+                        }
+                    };
+
+                    // cross mountpoint, return mount root entry
+                    dir_entry.ino = self.hash_inode(mnt.super_index, mnt.ino)?;
+                    add_entry(dir_entry)
+                })
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.readdir(ctx, idata.ino, handle, size, offset, |mut dir_entry| {
+                dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino)?;
+                add_entry(dir_entry)
+            })
+        }
+    }
+
+    fn readdirplus<FF>(
+        &self,
+        ctx: Context,
+        inode: u64,
+        handle: u64,
+        size: u32,
+        offset: u64,
+        mut add_entry: FF,
+    ) -> Result<()>
+    where
+        FF: FnMut(DirEntry, Entry) -> Result<usize>,
+    {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.readdirplus(
+                ctx,
+                idata.ino,
+                handle,
+                size,
+                offset,
+                |mut dir_entry, mut entry| {
+                    let mnt = match self
+                        .mountpoints
+                        .read()
+                        .unwrap()
+                        .get(&dir_entry.ino)
+                        .map(Arc::clone)
+                    {
+                        Some(mnt) => mnt,
+                        None => {
+                            dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino)?;
+                            entry.inode = dir_entry.ino;
+                            return add_entry(dir_entry, entry);
+                        }
+                    };
+
+                    // cross mountpoint, return mount root entry
+                    dir_entry.ino = self.hash_inode(mnt.super_index, mnt.ino)?;
+                    entry = mnt.root_entry.clone();
+                    add_entry(dir_entry, entry)
+                },
+            )
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.readdirplus(
+                ctx,
+                idata.ino,
+                handle,
+                size,
+                offset,
+                |mut dir_entry, mut entry| {
+                    dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino)?;
+                    entry.inode = dir_entry.ino;
+                    add_entry(dir_entry, entry)
+                },
+            )
+        }
+    }
+
+    fn fsyncdir(&self, ctx: Context, inode: u64, datasync: bool, handle: u64) -> Result<()> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.fsyncdir(ctx, idata.ino, datasync, handle)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.fsyncdir(ctx, idata.ino, datasync, handle)
+        }
+    }
+
+    fn releasedir(&self, _ctx: Context, _inode: u64, _flags: u32, _handle: u64) -> Result<()> {
+        Err(Error::from_raw_os_error(libc::ENOSYS))
+    }
+
+    fn access(&self, ctx: Context, inode: u64, mask: u32) -> Result<()> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            self.root.access(ctx, idata.ino, mask)
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            fs.access(ctx, idata.ino, mask)
+        }
     }
 }
