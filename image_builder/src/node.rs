@@ -2,14 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+use lz4::EncoderBuilder;
 use std::fs::{self, File};
 use std::io::prelude::*;
-use std::io::Result;
-use std::io::SeekFrom;
+use std::io::{BufReader, Result, SeekFrom};
 use std::os::linux::fs::MetadataExt;
 use std::path::Path;
 
-use compress::lz4;
+use compress::lz4 as LZ4;
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 
@@ -130,6 +130,21 @@ impl<'a> Node<'a> {
         Ok(())
     }
 
+    fn _compress_with_lz4(&self, src: &Vec<u8>, dst: &mut Vec<u8>) -> Result<usize> {
+        let compressed_size = LZ4::encode_block(src, dst);
+        Ok(compressed_size)
+    }
+
+    fn compress_with_lz4_2(&self, src: &Vec<u8>, mut dst: &mut Vec<u8>) -> Result<usize> {
+        let mut src = BufReader::new(src.as_slice());
+
+        let mut encoder = EncoderBuilder::new().level(4).build(&mut dst)?;
+        std::io::copy(&mut src, &mut encoder)?;
+        let (_output, _result) = encoder.finish();
+
+        Ok(dst.len())
+    }
+
     fn dump_blob(&mut self, mut f_blob: &File) -> Result<()> {
         if self.is_dir() {
             return Ok(());
@@ -171,7 +186,7 @@ impl<'a> Node<'a> {
 
             // compress chunk data
             let mut compressed = Vec::new();
-            let compressed_size = lz4::encode_block(&chunk_data, &mut compressed);
+            let compressed_size = self.compress_with_lz4_2(&chunk_data, &mut compressed)?;
             chunk.offset = self.blob_offset;
             chunk.size = compressed_size as u32;
 

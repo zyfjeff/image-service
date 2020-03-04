@@ -12,6 +12,7 @@ log = "0.4"
 env_logger = "0.7.1"
 rust-crypto = "0.2.36"
 compress = "0.1.2"
+lz4 = "1.23.1"
 
 [dependencies.rafs]
 path = "../rafs"
