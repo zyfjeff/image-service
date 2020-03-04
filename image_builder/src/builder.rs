@@ -105,6 +105,8 @@ impl<'a> Builder<'a> {
         let mut root_node = Node::new(self.blob_id, self.blob_offset, root_meta, "/", &None);
         root_node.dump(&mut self.f_blob, &mut self.f_bootstrap)?;
 
-        return self.walk_dirs(root_path, &Some(Box::new(root_node)));
+        self.walk_dirs(root_path, &Some(Box::new(root_node)))?;
+
+        Ok(())
     }
 }

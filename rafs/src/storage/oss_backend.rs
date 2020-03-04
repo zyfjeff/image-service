@@ -7,6 +7,7 @@ use crypto::{hmac::Hmac, mac::Mac, sha1::Sha1};
 use httpdate;
 use reqwest::{self, header::HeaderMap, StatusCode};
 use std::collections::HashMap;
+use std::fs::File;
 use std::io::Result as IOResult;
 use std::io::{Error, ErrorKind};
 use std::time::SystemTime;
@@ -27,6 +28,34 @@ pub struct OSS {
 }
 
 impl OSS {
+    pub fn new(
+        endpoint: &str,
+        access_key_id: &str,
+        access_key_secret: &str,
+        bucket_name: &str,
+    ) -> OSS {
+        OSS {
+            client: reqwest::Client::new(),
+            endpoint: String::from(endpoint),
+            access_key_id: String::from(access_key_id),
+            access_key_secret: String::from(access_key_secret),
+            bucket_name: String::from(bucket_name),
+        }
+    }
+
+    pub fn put_object(&self, blob_id: &str, file: File) -> IOResult<()> {
+        let headers = HeaderMap::new();
+        self.request(
+            "PUT",
+            file,
+            self.bucket_name.as_str(),
+            blob_id,
+            headers,
+            &[],
+        )?;
+        Ok(())
+    }
+
     /// generate oss request signature
     fn sign(&self, verb: &str, headers: &HeaderMap, canonicalized_resource: &str) -> String {
         let content_md5 = "";
@@ -121,9 +150,9 @@ impl OSS {
         }
     }
 
-    fn create_bucket(&self, bucket_name: &str) -> IOResult<()> {
+    fn create_bucket(&self) -> IOResult<()> {
         let headers = HeaderMap::new();
-        self.request("PUT", "", bucket_name, "", headers, &[])?;
+        self.request("PUT", "", self.bucket_name.as_str(), "", headers, &[])?;
         Ok(())
     }
 }
@@ -152,7 +181,7 @@ impl BlobBackend for OSS {
         self.access_key_id = (*access_key_id).to_owned();
         self.access_key_secret = (*access_key_secret).to_owned();
         self.bucket_name = (*bucket_name).to_owned();
-        //self.create_bucket(self.bucket_name.as_str())?;
+        // self.create_bucket()?;
         Ok(())
     }
 
