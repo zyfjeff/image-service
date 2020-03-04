@@ -20,10 +20,12 @@ vhost_rs = { path = "vhost_rs", features = ["vhost-user-slave"] }
 rafs = { path = "rafs" }
 fuse = { path = "fuse" }
 vfs = { path = "vfs" }
+utils = { path = "utils" }
 image_builder = { path = "image_builder" }
 
 [workspace]
 members = [
+    "utils",
     "rafs",
     "fuse",
     "vhost_rs",
