@@ -16,13 +16,21 @@ use crypto::sha2::Sha256;
 use rafs::layout::*;
 
 pub struct Node<'a> {
+    /// image blob id
     blob_id: &'a str,
+    /// offset of blob file
     blob_offset: u64,
+    /// file metadata
     meta: &'a dyn MetadataExt,
+    /// file path
     path: &'a str,
+    /// parent dir of file
     parent: &'a Option<Box<Node<'a>>>,
+    /// file inode info
     inode: RafsInodeInfo,
+    /// chunks info of file
     chunks: Vec<RafsChunkInfo>,
+    /// chunks info of symlink file
     link_chunks: Vec<RafsLinkDataInfo>,
 }
 
@@ -46,7 +54,7 @@ impl<'a> Node<'a> {
         }
     }
 
-    pub fn build(&mut self, f_blob: &File, f_bootstrap: &File) -> Result<()> {
+    pub fn dump(&mut self, f_blob: &File, f_bootstrap: &File) -> Result<()> {
         let mut file_type = "file";
         if self.is_dir() {
             file_type = "dir";
@@ -56,7 +64,7 @@ impl<'a> Node<'a> {
         info!("building {} {}", file_type, self.path);
 
         self.build_inode()?;
-        self.build_dump_chunk(f_blob)?;
+        self.dump_blob(f_blob)?;
         self.dump_bootstrap(f_bootstrap)?;
 
         Ok(())
@@ -105,10 +113,12 @@ impl<'a> Node<'a> {
         self.inode.i_ctime = self.meta.st_ctime() as u64;
 
         if self.is_reg() {
+            self.inode.i_flags = INO_FLAG_HARDLINK;
             let file_size = self.inode.i_size;
             let chunk_count = (file_size as f64 / DEFAULT_RAFS_BLOCK_SIZE as f64).ceil() as u64;
             self.inode.i_chunk_cnt = chunk_count;
         } else if self.is_symlink() {
+            self.inode.i_flags = INO_FLAG_SYMLINK;
             let target_path = fs::read_link(self.path)?;
             let target_path_str = target_path.to_str().unwrap();
             let chunk_info_count = (target_path_str.as_bytes().len() as f64
@@ -117,13 +127,10 @@ impl<'a> Node<'a> {
             self.inode.i_chunk_cnt = chunk_info_count as u64;
         }
 
-        // self.inode.digest
-        // self.inode.i_flags
-
         Ok(())
     }
 
-    fn build_dump_chunk(&mut self, mut f_blob: &File) -> Result<()> {
+    fn dump_blob(&mut self, mut f_blob: &File) -> Result<()> {
         if self.is_dir() {
             return Ok(());
         }
@@ -204,6 +211,8 @@ impl<'a> Node<'a> {
         for chunk in &self.chunks {
             chunk.store(&mut f_bootstrap)?;
         }
+
+        // or dump symlink chunk info to bootstrap
         for chunk in &self.link_chunks {
             chunk.store(&mut f_bootstrap)?;
         }

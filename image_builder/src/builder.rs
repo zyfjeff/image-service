@@ -52,7 +52,7 @@ impl<'a> Builder<'a> {
         })
     }
 
-    fn build_dump_superblock(&mut self) -> Result<RafsSuperBlockInfo> {
+    fn dump_superblock(&mut self) -> Result<RafsSuperBlockInfo> {
         trace!("building superblock {}", self.root);
         let mut sb = RafsSuperBlockInfo::new();
 
@@ -86,7 +86,7 @@ impl<'a> Builder<'a> {
                     parent_node,
                 );
 
-                node.build(&mut self.f_blob, &mut self.f_bootstrap)?;
+                node.dump(&mut self.f_blob, &mut self.f_bootstrap)?;
                 self.blob_offset = node.blob_offset();
 
                 if path.is_dir() {
@@ -98,12 +98,12 @@ impl<'a> Builder<'a> {
     }
 
     pub fn build(&mut self) -> Result<()> {
-        self.build_dump_superblock()?;
+        self.dump_superblock()?;
 
         let root_path = Path::new(self.root);
         let root_meta = &root_path.metadata()?;
         let mut root_node = Node::new(self.blob_id, self.blob_offset, root_meta, "/", &None);
-        root_node.build(&mut self.f_blob, &mut self.f_bootstrap)?;
+        root_node.dump(&mut self.f_blob, &mut self.f_bootstrap)?;
 
         return self.walk_dirs(root_path, &Some(Box::new(root_node)));
     }

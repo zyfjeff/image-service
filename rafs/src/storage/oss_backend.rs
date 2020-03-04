@@ -17,8 +17,9 @@ use crate::storage::backend::BlobBackend;
 const HEADER_DATE: &str = "Date";
 const HEADER_AUTHORIZATION: &str = "Authorization";
 
-#[derive(Default, Debug)]
+#[derive(Debug)]
 pub struct OSS {
+    client: reqwest::Client,
     access_key_id: String,
     access_key_secret: String,
     endpoint: String,
@@ -26,6 +27,7 @@ pub struct OSS {
 }
 
 impl OSS {
+    /// generate oss request signature
     fn sign(&self, verb: &str, headers: &HeaderMap, canonicalized_resource: &str) -> String {
         let content_md5 = "";
         let content_type = "";
@@ -58,6 +60,8 @@ impl OSS {
 
         format!("OSS {}:{}", self.access_key_id, signature)
     }
+
+    /// generic oss api request
     fn request<T: Into<reqwest::Body>>(
         &self,
         method: &str,
@@ -93,13 +97,13 @@ impl OSS {
             authorization.as_str().parse().unwrap(),
         );
         let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
-        let client = reqwest::Client::new();
         let url = format!("{}{}", url.as_str(), query_str);
         debug!(
             "oss request header {:?} method {:?} url {:?}",
             new_headers, method, url
         );
-        let ret = client
+        let ret = self
+            .client
             .request(method, url.as_str())
             .headers(new_headers)
             .body(data)
@@ -116,6 +120,7 @@ impl OSS {
             Err(err) => Err(Error::new(ErrorKind::Other, format!("{}", err))),
         }
     }
+
     fn create_bucket(&self, bucket_name: &str) -> IOResult<()> {
         let headers = HeaderMap::new();
         self.request("PUT", "", bucket_name, "", headers, &[])?;
@@ -125,7 +130,11 @@ impl OSS {
 
 pub fn new() -> OSS {
     OSS {
-        ..Default::default()
+        client: reqwest::Client::new(),
+        access_key_id: String::new(),
+        access_key_secret: String::new(),
+        endpoint: String::new(),
+        bucket_name: String::new(),
     }
 }
 
@@ -143,10 +152,11 @@ impl BlobBackend for OSS {
         self.access_key_id = (*access_key_id).to_owned();
         self.access_key_secret = (*access_key_secret).to_owned();
         self.bucket_name = (*bucket_name).to_owned();
+        //self.create_bucket(self.bucket_name.as_str())?;
         Ok(())
-        //self.create_bucket(self.bucket_name.as_str())
     }
 
+    /// read ranged data from oss object
     fn read(&self, blob_id: &str, buf: &mut Vec<u8>, offset: u64, count: usize) -> IOResult<usize> {
         let mut headers = HeaderMap::new();
         let end_at = offset + count as u64 - 1;
@@ -160,6 +170,7 @@ impl BlobBackend for OSS {
         }
     }
 
+    /// append data to oss object
     fn write(&self, blob_id: &str, buf: &Vec<u8>, offset: u64) -> IOResult<usize> {
         let headers = HeaderMap::new();
         let position = format!("position={}", offset);

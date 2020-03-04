@@ -12,6 +12,9 @@ use std::str;
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 
+pub const INO_FLAG_HARDLINK: u64 = 0x1000;
+pub const INO_FLAG_SYMLINK: u64 = 0x2000;
+
 pub const MAX_RAFS_NAME: usize = 255;
 pub const RAFS_SHA256_LENGTH: usize = 32;
 pub const RAFS_BLOB_ID_MAX_LENGTH: usize = 72;
@@ -48,6 +51,7 @@ pub struct RafsInodeInfo {
     pub i_gid: u32,
     /// bytes alignment
     pub i_padding: u32,
+    /// from fs stat()
     pub i_rdev: u64,
     pub i_size: u64,
     pub i_nlink: u64,
