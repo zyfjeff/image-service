@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::io;
 use std::io::{Error, Read, Write};
 
-use compress::lz4;
 use vm_memory::VolatileSlice;
 
 use fuse::filesystem::{ZeroCopyReader, ZeroCopyWriter};
@@ -15,6 +14,8 @@ use vhost_rs::descriptor_utils::FileReadWriteVolatile;
 
 use crate::fs::RafsBlk;
 use crate::storage::backend::*;
+
+use utils;
 
 // A rafs storage device config
 #[derive(Default, Clone, Serialize, Deserialize)]
@@ -140,8 +141,7 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
             self.bio.blkinfo.compr_size,
         )?;
         debug_assert_eq!(len, buf.len());
-        let mut decompressed = Vec::new();
-        lz4::decode_block(&buf[..], &mut decompressed);
+        let decompressed = utils::decompress_with_lz4(&buf)?;
         slice.copy_from(
             &decompressed[self.bio.offset as usize..self.bio.offset as usize + self.bio.size],
         );
@@ -155,8 +155,7 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
     fn write_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
         let mut buf = vec![0u8; slice.len()];
         slice.copy_to(&mut buf);
-        let mut compressed = Vec::new();
-        lz4::encode_block(&buf[..], &mut compressed);
+        let compressed = utils::compress_with_lz4(&buf)?;
         self.dev
             .b
             .write(&self.bio.blkinfo.blob_id, &compressed, offset)?;

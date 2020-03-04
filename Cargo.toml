@@ -17,9 +17,8 @@ stderrlog = "0.4"
 uuid = { version = "0.8", features = ["serde", "v4"] }
 vm-memory = {git = "https://github.com/rust-vmm/vm-memory", branch = "master", features = ["backend-mmap"]}
 
-[dependencies.vhost_rs]
-path = "vhost_rs"
-features = ["vhost-user-slave"]
+[dependencies.utils]
+path = "utils"
 
 [dependencies.rafs]
 path = "rafs"
@@ -27,11 +26,16 @@ path = "rafs"
 [dependencies.fuse]
 path = "fuse"
 
+[dependencies.vhost_rs]
+path = "vhost_rs"
+features = ["vhost-user-slave"]
+
 [dependencies.image_builder]
 path = "image_builder"
 
 [workspace]
 members = [
+    "utils",
     "rafs",
     "fuse",
     "vhost_rs",

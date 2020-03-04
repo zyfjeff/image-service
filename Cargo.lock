@@ -581,13 +581,12 @@ dependencies = [
 name = "image_builder"
 version = "0.1.0"
 dependencies = [
- "compress 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.67 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
- "lz4 1.23.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "rafs 0.1.0",
  "rust-crypto 0.2.36 (registry+https://github.com/rust-lang/crates.io-index)",
+ "utils 0.1.0",
 ]
 
 [[package]]
@@ -926,6 +925,7 @@ dependencies = [
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "rafs 0.1.0",
  "stderrlog 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
+ "utils 0.1.0",
  "uuid 0.8.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "vhost_rs 0.1.0",
  "vm-memory 0.1.0 (git+https://github.com/rust-vmm/vm-memory)",
@@ -1061,6 +1061,7 @@ dependencies = [
  "rust-crypto 0.2.36 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde 1.0.104 (registry+https://github.com/rust-lang/crates.io-index)",
  "url 2.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "utils 0.1.0",
  "vhost_rs 0.1.0",
  "vm-memory 0.1.0 (git+https://github.com/rust-vmm/vm-memory)",
 ]
@@ -1820,6 +1821,14 @@ dependencies = [
  "idna 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "matches 0.1.8 (registry+https://github.com/rust-lang/crates.io-index)",
  "percent-encoding 2.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "utils"
+version = "0.1.0"
+dependencies = [
+ "compress 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lz4 1.23.1 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
