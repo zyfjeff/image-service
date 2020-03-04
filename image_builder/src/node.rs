@@ -23,6 +23,7 @@ pub struct Node<'a> {
     parent: &'a Option<Box<Node<'a>>>,
     inode: RafsInodeInfo,
     chunks: Vec<RafsChunkInfo>,
+    link_chunks: Vec<RafsLinkDataInfo>,
 }
 
 impl<'a> Node<'a> {
@@ -41,10 +42,11 @@ impl<'a> Node<'a> {
             parent,
             inode: RafsInodeInfo::new(),
             chunks: vec![],
+            link_chunks: vec![],
         }
     }
 
-    pub fn build(&mut self, mut f_blob: &File, mut f_bootstrap: &File) -> Result<()> {
+    pub fn build(&mut self, f_blob: &File, f_bootstrap: &File) -> Result<()> {
         let mut file_type = "file";
         if self.meta.st_mode() & libc::S_IFDIR > 0 {
             file_type = "dir";
@@ -52,9 +54,22 @@ impl<'a> Node<'a> {
         trace!("building {} {}", file_type, self.path);
 
         self.build_inode()?;
-        self.build_chunks(&mut f_blob, &mut f_bootstrap)?;
+        self.build_dump_chunk(f_blob)?;
+        self.dump_bootstrap(f_bootstrap)?;
 
         Ok(())
+    }
+
+    fn is_dir(&mut self) -> bool {
+        return self.meta.st_mode() & libc::S_IFMT == libc::S_IFDIR;
+    }
+
+    fn is_symlink(&mut self) -> bool {
+        return self.meta.st_mode() & libc::S_IFMT == libc::S_IFLNK;
+    }
+
+    fn is_reg(&mut self) -> bool {
+        return self.meta.st_mode() & libc::S_IFMT == libc::S_IFREG;
     }
 
     fn build_inode(&mut self) -> Result<()> {
@@ -66,9 +81,9 @@ impl<'a> Node<'a> {
         }
 
         let file_name = Path::new(self.path).file_name().unwrap().to_str().unwrap();
+        let parent = self.parent.as_ref().unwrap();
 
         self.inode.name = String::from(file_name);
-        let parent = self.parent.as_ref().unwrap();
         self.inode.i_parent = parent.inode.i_ino;
         self.inode.i_ino = self.meta.st_ino();
         self.inode.i_mode = self.meta.st_mode();
@@ -83,30 +98,54 @@ impl<'a> Node<'a> {
         self.inode.i_mtime = self.meta.st_mtime() as u64;
         self.inode.i_ctime = self.meta.st_ctime() as u64;
 
+        if self.is_reg() {
+            let file_size = self.inode.i_size;
+            let chunk_count = (file_size as f64 / DEFAULT_RAFS_BLOCK_SIZE as f64).ceil() as u64;
+            self.inode.i_chunk_cnt = chunk_count;
+        } else if self.is_symlink() {
+            let target_path = fs::read_link(self.path)?;
+            let target_path_str = target_path.to_str().unwrap();
+            let chunk_info_count = (target_path_str.as_bytes().len() as f64
+                / RAFS_CHUNK_INFO_SIZE as f64)
+                .ceil() as usize;
+            self.inode.i_chunk_cnt = chunk_info_count as u64;
+        }
+
         // self.inode.digest
-        // self.inode.i_chunk_cnt
-        // self.inode.i_flags = 0;
+        // self.inode.i_flags
 
         Ok(())
     }
 
-    fn build_reg_chunk(&mut self, mut f_blob: &File, mut f_bootstrap: &File) -> Result<()> {
-        let file_size = self.inode.i_size;
-        let chunk_count = (file_size as f64 / DEFAULT_RAFS_BLOCK_SIZE as f64).ceil() as u64;
-        self.inode.i_chunk_cnt = chunk_count;
+    fn build_dump_chunk(&mut self, mut f_blob: &File) -> Result<()> {
+        if self.is_dir() {
+            return Ok(());
+        }
 
-        // offset cursor in blob for compressed chunk data
-        let mut offset = 0;
+        if self.is_symlink() {
+            let target_path = fs::read_link(self.path)?;
+            let target_path_str = target_path.to_str().unwrap();
+            let mut chunk = RafsLinkDataInfo::new(self.inode.i_chunk_cnt as usize);
+            chunk.target = String::from(target_path_str);
+            // stash symlink chunk
+            self.link_chunks.push(chunk);
+            return Ok(());
+        }
+
+        let file_size = self.inode.i_size;
         let mut inode_hash = Sha256::new();
         let mut file = File::open(self.path)?;
 
-        for i in 0..chunk_count {
+        // offset cursor in blob for compressed chunk data
+        let mut compressed_offset = 0;
+
+        for i in 0..self.inode.i_chunk_cnt {
             let mut chunk = RafsChunkInfo::new();
 
             // get chunk info
             chunk.blobid = String::from(self.blob_id);
             chunk.pos = (i * DEFAULT_RAFS_BLOCK_SIZE as u64) as u64;
-            if i == chunk_count - 1 {
+            if i == self.inode.i_chunk_cnt - 1 {
                 chunk.len = (file_size % DEFAULT_RAFS_BLOCK_SIZE as u64) as u32;
             } else {
                 chunk.len = DEFAULT_RAFS_BLOCK_SIZE as u32;
@@ -134,7 +173,7 @@ impl<'a> Node<'a> {
             let compressed_size = lz4::encode_block(&chunk_data, &mut compressed);
             chunk.offset = 0;
             chunk.size = compressed_size as u32;
-            offset = offset + compressed_size;
+            compressed_offset = compressed_offset + compressed_size;
 
             // dump compressed chunk data to blob
             f_blob.write(&compressed)?;
@@ -153,6 +192,10 @@ impl<'a> Node<'a> {
         inode_digest.data.clone_from_slice(&inode_hash_buf);
         self.inode.digest = inode_digest;
 
+        Ok(())
+    }
+
+    fn dump_bootstrap(&self, mut f_bootstrap: &File) -> Result<()> {
         // dump inode info to bootstrap
         self.inode.store(&mut f_bootstrap)?;
 
@@ -160,26 +203,8 @@ impl<'a> Node<'a> {
         for chunk in &self.chunks {
             chunk.store(&mut f_bootstrap)?;
         }
-
-        Ok(())
-    }
-
-    fn build_symlink_chunk(&mut self) -> Result<()> {
-        let target_path = fs::read_link(self.path);
-        let chunk_info_count = 0;
-        let mut chunk = RafsLinkDataInfo::new(chunk_info_count);
-        chunk.target = String::from(self.path);
-
-        Ok(())
-    }
-
-    fn build_chunks(&mut self, mut f_blob: &File, mut f_bootstrap: &File) -> Result<()> {
-        let file_mode = self.meta.st_mode();
-
-        if file_mode & libc::S_IFREG > 0 {
-            self.build_reg_chunk(f_blob, f_bootstrap)?;
-        } else if file_mode & libc::S_IFLNK > 0 {
-            self.build_symlink_chunk()?;
+        for chunk in &self.link_chunks {
+            chunk.store(&mut f_bootstrap)?;
         }
 
         Ok(())

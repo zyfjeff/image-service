@@ -43,7 +43,7 @@ impl<'a> Builder<'a> {
         })
     }
 
-    fn build_superblock(&mut self) -> Result<RafsSuperBlockInfo> {
+    fn build_dump_superblock(&mut self) -> Result<RafsSuperBlockInfo> {
         trace!("building superblock {}", self.root);
         let mut sb = RafsSuperBlockInfo::new();
 
@@ -89,7 +89,7 @@ impl<'a> Builder<'a> {
     }
 
     pub fn build(&mut self) -> Result<()> {
-        self.build_superblock()?;
+        self.build_dump_superblock()?;
 
         let root_path = Path::new(self.root);
         let root_meta = &root_path.metadata()?;
