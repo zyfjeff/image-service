@@ -48,16 +48,22 @@ impl<'a> Node<'a> {
 
     pub fn build(&mut self, f_blob: &File, f_bootstrap: &File) -> Result<()> {
         let mut file_type = "file";
-        if self.meta.st_mode() & libc::S_IFDIR > 0 {
+        if self.is_dir() {
             file_type = "dir";
+        } else if self.is_symlink() {
+            file_type = "symlink"
         }
-        trace!("building {} {}", file_type, self.path);
+        info!("building {} {}", file_type, self.path);
 
         self.build_inode()?;
         self.build_dump_chunk(f_blob)?;
         self.dump_bootstrap(f_bootstrap)?;
 
         Ok(())
+    }
+
+    pub fn blob_offset(&self) -> u64 {
+        self.blob_offset
     }
 
     fn is_dir(&mut self) -> bool {
@@ -136,9 +142,6 @@ impl<'a> Node<'a> {
         let mut inode_hash = Sha256::new();
         let mut file = File::open(self.path)?;
 
-        // offset cursor in blob for compressed chunk data
-        let mut compressed_offset = 0;
-
         for i in 0..self.inode.i_chunk_cnt {
             let mut chunk = RafsChunkInfo::new();
 
@@ -150,15 +153,6 @@ impl<'a> Node<'a> {
             } else {
                 chunk.len = DEFAULT_RAFS_BLOCK_SIZE as u32;
             }
-            chunk.offset = self.blob_offset;
-            chunk.size = file_size as u32;
-            trace!(
-                "\tchunk: pos {}, len {}, offset {}, size {}",
-                chunk.pos,
-                chunk.len,
-                chunk.offset,
-                chunk.size
-            );
 
             // get chunk data
             file.seek(SeekFrom::Start(chunk.pos))?;
@@ -171,9 +165,16 @@ impl<'a> Node<'a> {
             // compress chunk data
             let mut compressed = Vec::new();
             let compressed_size = lz4::encode_block(&chunk_data, &mut compressed);
-            chunk.offset = 0;
+            chunk.offset = self.blob_offset;
             chunk.size = compressed_size as u32;
-            compressed_offset = compressed_offset + compressed_size;
+
+            // move cursor to offset of next chunk
+            self.blob_offset = self.blob_offset + compressed_size as u64;
+
+            info!(
+                "\tbuilding chunk: pos {}, len {}, offset {}, size {}",
+                chunk.pos, chunk.len, chunk.offset, chunk.size,
+            );
 
             // dump compressed chunk data to blob
             f_blob.write(&compressed)?;

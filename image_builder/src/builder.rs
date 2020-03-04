@@ -4,6 +4,7 @@
 
 use std::fs;
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::Result;
 use std::path::Path;
 
@@ -31,8 +32,16 @@ impl<'a> Builder<'a> {
         bootstrap_path: &'a str,
         blob_id: &'a str,
     ) -> Result<Builder<'a>> {
-        let f_blob = File::open(blob_path)?;
-        let f_bootstrap = File::open(bootstrap_path)?;
+        env_logger::init();
+
+        let f_blob = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(blob_path)?;
+        let f_bootstrap = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .open(bootstrap_path)?;
 
         Ok(Builder {
             root,
@@ -68,7 +77,6 @@ impl<'a> Builder<'a> {
                 let entry = entry?;
                 let path = entry.path();
                 let meta = &entry.metadata()?;
-                self.blob_offset = self.blob_offset + 1;
 
                 let mut node = Node::new(
                     self.blob_id,
@@ -79,6 +87,7 @@ impl<'a> Builder<'a> {
                 );
 
                 node.build(&mut self.f_blob, &mut self.f_bootstrap)?;
+                self.blob_offset = node.blob_offset();
 
                 if path.is_dir() {
                     self.walk_dirs(&path, &Some(Box::new(node)))?;
