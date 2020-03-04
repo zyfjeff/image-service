@@ -485,9 +485,6 @@ fn enoent() -> Error {
 }
 
 impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
-    type Inode = Inode;
-    type Handle = Handle;
-
     fn init(&self, opts: FsOptions) -> Result<FsOptions> {
         self.fuse_inodes
             .write()
@@ -517,7 +514,7 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         self.fuse_inodes.write().unwrap().clear();
     }
 
-    fn lookup(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> Result<Entry> {
+    fn lookup(&self, ctx: Context, parent: u64, name: &CStr) -> Result<Entry> {
         let inodes = self.sb.s_inodes.read().unwrap();
         let p = inodes.get(&parent).ok_or(ebadf())?;
         if !p.is_dir() {
@@ -539,11 +536,11 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         Err(enoent())
     }
 
-    fn forget(&self, ctx: Context, inode: Self::Inode, count: u64) {
+    fn forget(&self, ctx: Context, inode: u64, count: u64) {
         self.fuse_inodes.write().unwrap().remove(&inode);
     }
 
-    fn batch_forget(&self, ctx: Context, requests: Vec<(Self::Inode, u64)>) {
+    fn batch_forget(&self, ctx: Context, requests: Vec<(u64, u64)>) {
         for (inode, count) in requests {
             self.forget(ctx, inode, count)
         }
@@ -552,15 +549,15 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     fn getattr(
         &self,
         ctx: Context,
-        inode: Self::Inode,
-        handle: Option<Self::Handle>,
+        inode: u64,
+        handle: Option<u64>,
     ) -> Result<(libc::stat64, Duration)> {
         let inodes = self.sb.s_inodes.read().unwrap();
         let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
         Ok((rafs_inode.get_attr().into(), self.sb.s_attr_timeout))
     }
 
-    fn readlink(&self, ctx: Context, inode: Self::Inode) -> Result<Vec<u8>> {
+    fn readlink(&self, ctx: Context, inode: u64) -> Result<Vec<u8>> {
         let inodes = self.sb.s_inodes.read().unwrap();
         let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
         if !rafs_inode.is_symlink() {
@@ -570,12 +567,7 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         Ok(rafs_inode.i_target.clone().into_bytes())
     }
 
-    fn open(
-        &self,
-        ctx: Context,
-        inode: Self::Inode,
-        flags: u32,
-    ) -> Result<(Option<Self::Handle>, OpenOptions)> {
+    fn open(&self, ctx: Context, inode: u64, flags: u32) -> Result<(Option<u64>, OpenOptions)> {
         if self.opts.read().unwrap().no_open {
             Err(enosys())
         } else {
@@ -588,8 +580,8 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     fn read<W: Write + ZeroCopyWriter>(
         &self,
         ctx: Context,
-        inode: Self::Inode,
-        handle: Self::Handle,
+        inode: u64,
+        handle: u64,
         w: W,
         size: u32,
         offset: u64,
@@ -608,8 +600,8 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     fn write<R: Read + ZeroCopyReader>(
         &self,
         ctx: Context,
-        inode: Self::Inode,
-        handle: Self::Handle,
+        inode: u64,
+        handle: u64,
         r: R,
         size: u32,
         offset: u64,
@@ -627,9 +619,9 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     fn release(
         &self,
         ctx: Context,
-        inode: Self::Inode,
+        inode: u64,
         flags: u32,
-        handle: Self::Handle,
+        handle: u64,
         flush: bool,
         flock_release: bool,
         lock_owner: Option<u64>,
@@ -637,7 +629,7 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         Ok(())
     }
 
-    fn statfs(&self, ctx: Context, inode: Self::Inode) -> Result<libc::statvfs64> {
+    fn statfs(&self, ctx: Context, inode: u64) -> Result<libc::statvfs64> {
         // Safe because we are zero-initializing a struct with only POD fields.
         let mut st: libc::statvfs64 = unsafe { mem::zeroed() };
 
@@ -652,26 +644,15 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         Ok(st)
     }
 
-    fn getxattr(
-        &self,
-        ctx: Context,
-        inode: Self::Inode,
-        name: &CStr,
-        size: u32,
-    ) -> Result<GetxattrReply> {
+    fn getxattr(&self, ctx: Context, inode: u64, name: &CStr, size: u32) -> Result<GetxattrReply> {
         Err(enosys())
     }
 
-    fn listxattr(&self, ctx: Context, inode: Self::Inode, size: u32) -> Result<ListxattrReply> {
+    fn listxattr(&self, ctx: Context, inode: u64, size: u32) -> Result<ListxattrReply> {
         Err(enosys())
     }
 
-    fn opendir(
-        &self,
-        ctx: Context,
-        inode: Self::Inode,
-        flags: u32,
-    ) -> Result<(Option<Self::Handle>, OpenOptions)> {
+    fn opendir(&self, ctx: Context, inode: u64, flags: u32) -> Result<(Option<u64>, OpenOptions)> {
         if self.opts.read().unwrap().no_open {
             Err(enosys())
         } else {
@@ -683,8 +664,8 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     fn readdir<F>(
         &self,
         ctx: Context,
-        inode: Self::Inode,
-        handle: Self::Handle,
+        inode: u64,
+        handle: u64,
         size: u32,
         offset: u64,
         add_entry: F,
@@ -698,8 +679,8 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     fn readdirplus<F>(
         &self,
         ctx: Context,
-        inode: Self::Inode,
-        handle: Self::Handle,
+        inode: u64,
+        handle: u64,
         size: u32,
         offset: u64,
         mut add_entry: F,
@@ -713,17 +694,11 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         })
     }
 
-    fn releasedir(
-        &self,
-        ctx: Context,
-        inode: Self::Inode,
-        flags: u32,
-        handle: Self::Handle,
-    ) -> Result<()> {
+    fn releasedir(&self, ctx: Context, inode: u64, flags: u32, handle: u64) -> Result<()> {
         Ok(())
     }
 
-    fn access(&self, ctx: Context, inode: Self::Inode, mask: u32) -> Result<()> {
+    fn access(&self, ctx: Context, inode: u64, mask: u32) -> Result<()> {
         let inodes = self.sb.s_inodes.read().unwrap();
         let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
         let st = rafs_inode.get_attr();

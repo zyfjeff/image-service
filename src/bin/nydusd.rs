@@ -232,6 +232,12 @@ fn main() -> Result<()> {
     let backend = oss_backend::new();
     let mut rafs = Rafs::new(rafs_conf, backend);
 
+    /* example code to call pseudofs
+    let rafs2 = Rafs::new(RafsConfig::new(), oss_backend::new());
+    let vfs = PseudoFs::new();
+    vfs.mount(rafs2, "/etc")?;
+    */
+
     let mut file = File::open(metadata)?;
     rafs.mount(&mut file, "/")?;
     info!("rafs mounted");

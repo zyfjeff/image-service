@@ -17,6 +17,7 @@ pub use protocol::ROOT_ID;
 use vhost_rs::descriptor_utils::FileReadWriteVolatile;
 
 /// Information about a path in the filesystem.
+#[derive(Clone)]
 pub struct Entry {
     /// An `Inode` that uniquely identifies this path. During `lookup`, setting this to `0` means a
     /// negative entry. Returning `ENOENT` also means a negative entry but setting this to `0`
@@ -341,7 +342,7 @@ impl<'a, W: ZeroCopyWriter> ZeroCopyWriter for &'a mut W {
 }
 
 /// Additional context associated with requests.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Context {
     /// The user ID of the calling process.
     pub uid: libc::uid_t,
@@ -351,6 +352,14 @@ pub struct Context {
 
     /// The thread group ID of the calling process.
     pub pid: libc::pid_t,
+}
+
+impl Context {
+    pub fn new() -> Self {
+        Context {
+            ..Default::default()
+        }
+    }
 }
 
 impl From<protocol::InHeader> for Context {
@@ -366,33 +375,6 @@ impl From<protocol::InHeader> for Context {
 /// The main trait that connects a file system with a transport.
 #[allow(unused_variables)]
 pub trait FileSystem {
-    /// Represents a location in the filesystem tree and can be used to perform operations that act
-    /// on the metadata of a file/directory (e.g., `getattr` and `setattr`). Can also be used as the
-    /// starting point for looking up paths in the filesystem tree. An `Inode` may support operating
-    /// directly on the content of the path that to which it points. `FileSystem` implementations
-    /// that support this should set the `FsOptions::ZERO_MESSAGE_OPEN` option in the return value
-    /// of the `init` function. On linux based systems, an `Inode` is equivalent to opening a file
-    /// or directory with the `libc::O_PATH` flag.
-    ///
-    /// # Lookup Count
-    ///
-    /// The `FileSystem` implementation is required to keep a "lookup count" for every `Inode`.
-    /// Every time an `Entry` is returned by a `FileSystem` trait method, this lookup count should
-    /// increase by 1. The lookup count for an `Inode` decreases when the kernel sends a `forget`
-    /// request. `Inode`s with a non-zero lookup count may receive requests from the kernel even
-    /// after calls to `unlink`, `rmdir` or (when overwriting an existing file) `rename`.
-    /// `FileSystem` implementations must handle such requests properly and it is recommended to
-    /// defer removal of the `Inode` until the lookup count reaches zero. Calls to `unlink`, `rmdir`
-    /// or `rename` will be followed closely by `forget` unless the file or directory is open, in
-    /// which case the kernel issues `forget` only after the `release` or `releasedir` calls.
-    ///
-    /// Note that if a file system will be exported over NFS the `Inode`'s lifetime must extend even
-    /// beyond `forget`. See the `generation` field in `Entry`.
-    type Inode: From<u64> + Into<u64>;
-
-    /// Represents a file or directory that is open for reading/writing.
-    type Handle: From<u64> + Into<u64>;
-
     /// Initialize the file system.
     ///
     /// This method is called when a connection to the FUSE kernel module is first established. The
@@ -427,7 +409,7 @@ pub trait FileSystem {
     ///
     /// If this call is successful then the lookup count of the `Inode` associated with the returned
     /// `Entry` must be increased by 1.
-    fn lookup(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> io::Result<Entry> {
+    fn lookup(&self, ctx: Context, parent: u64, name: &CStr) -> io::Result<Entry> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -436,13 +418,13 @@ pub trait FileSystem {
     /// Called when the kernel removes an inode from its internal caches. `count` indicates the
     /// amount by which the lookup count for the inode should be decreased. If reducing the lookup
     /// count by `count` causes it to go to zero, then the implementation may delete the `Inode`.
-    fn forget(&self, ctx: Context, inode: Self::Inode, count: u64) {}
+    fn forget(&self, ctx: Context, inode: u64, count: u64) {}
 
     /// Forget about multiple inodes.
     ///
     /// `requests` is a vector of `(inode, count)` pairs. See the documentation for `forget` for
     /// more information.
-    fn batch_forget(&self, ctx: Context, requests: Vec<(Self::Inode, u64)>) {
+    fn batch_forget(&self, ctx: Context, requests: Vec<(u64, u64)>) {
         for (inode, count) in requests {
             self.forget(ctx, inode, count)
         }
@@ -465,8 +447,8 @@ pub trait FileSystem {
     fn getattr(
         &self,
         ctx: Context,
-        inode: Self::Inode,
-        handle: Option<Self::Handle>,
+        inode: u64,
+        handle: Option<u64>,
     ) -> io::Result<(libc::stat64, Duration)> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
@@ -491,16 +473,16 @@ pub trait FileSystem {
     fn setattr(
         &self,
         ctx: Context,
-        inode: Self::Inode,
+        inode: u64,
         attr: libc::stat64,
-        handle: Option<Self::Handle>,
+        handle: Option<u64>,
         valid: SetattrValid,
     ) -> io::Result<(libc::stat64, Duration)> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
     /// Read a symbolic link.
-    fn readlink(&self, ctx: Context, inode: Self::Inode) -> io::Result<Vec<u8>> {
+    fn readlink(&self, ctx: Context, inode: u64) -> io::Result<Vec<u8>> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -516,7 +498,7 @@ pub trait FileSystem {
         &self,
         ctx: Context,
         linkname: &CStr,
-        parent: Self::Inode,
+        parent: u64,
         name: &CStr,
     ) -> io::Result<Entry> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
@@ -536,7 +518,7 @@ pub trait FileSystem {
     fn mknod(
         &self,
         ctx: Context,
-        inode: Self::Inode,
+        inode: u64,
         name: &CStr,
         mode: u32,
         rdev: u32,
@@ -556,7 +538,7 @@ pub trait FileSystem {
     fn mkdir(
         &self,
         ctx: Context,
-        parent: Self::Inode,
+        parent: u64,
         name: &CStr,
         mode: u32,
         umask: u32,
@@ -569,7 +551,7 @@ pub trait FileSystem {
     /// If the file's inode lookup count is non-zero, then the file system is expected to delay
     /// removal of the inode until the lookup count goes to zero. See the documentation of the
     /// `forget` function for more information.
-    fn unlink(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> io::Result<()> {
+    fn unlink(&self, ctx: Context, parent: u64, name: &CStr) -> io::Result<()> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -578,7 +560,7 @@ pub trait FileSystem {
     /// If the directory's inode lookup count is non-zero, then the file system is expected to delay
     /// removal of the inode until the lookup count goes to zero. See the documentation of the
     /// `forget` function for more information.
-    fn rmdir(&self, ctx: Context, parent: Self::Inode, name: &CStr) -> io::Result<()> {
+    fn rmdir(&self, ctx: Context, parent: u64, name: &CStr) -> io::Result<()> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -597,9 +579,9 @@ pub trait FileSystem {
     fn rename(
         &self,
         ctx: Context,
-        olddir: Self::Inode,
+        olddir: u64,
         oldname: &CStr,
-        newdir: Self::Inode,
+        newdir: u64,
         newname: &CStr,
         flags: u32,
     ) -> io::Result<()> {
@@ -612,13 +594,7 @@ pub trait FileSystem {
     ///
     /// If this call is successful then the lookup count of the `Inode` associated with the returned
     /// `Entry` must be increased by 1.
-    fn link(
-        &self,
-        ctx: Context,
-        inode: Self::Inode,
-        newparent: Self::Inode,
-        newname: &CStr,
-    ) -> io::Result<Entry> {
+    fn link(&self, ctx: Context, inode: u64, newparent: u64, newname: &CStr) -> io::Result<Entry> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -662,12 +638,7 @@ pub trait FileSystem {
     /// implementation and the kernel, then the file system may return an error of `ENOSYS`. This
     /// will be interpreted by the kernel as success and future calls to `open` and `release` will
     /// be handled by the kernel without being passed on to the file system.
-    fn open(
-        &self,
-        ctx: Context,
-        inode: Self::Inode,
-        flags: u32,
-    ) -> io::Result<(Option<Self::Handle>, OpenOptions)> {
+    fn open(&self, ctx: Context, inode: u64, flags: u32) -> io::Result<(Option<u64>, OpenOptions)> {
         // Matches the behavior of libfuse.
         Ok((None, OpenOptions::empty()))
     }
@@ -689,12 +660,12 @@ pub trait FileSystem {
     fn create(
         &self,
         ctx: Context,
-        parent: Self::Inode,
+        parent: u64,
         name: &CStr,
         mode: u32,
         flags: u32,
         umask: u32,
-    ) -> io::Result<(Entry, Option<Self::Handle>, OpenOptions)> {
+    ) -> io::Result<(Entry, Option<u64>, OpenOptions)> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -717,8 +688,8 @@ pub trait FileSystem {
     fn read<W: io::Write + ZeroCopyWriter>(
         &self,
         ctx: Context,
-        inode: Self::Inode,
-        handle: Self::Handle,
+        inode: u64,
+        handle: u64,
         w: W,
         size: u32,
         offset: u64,
@@ -751,8 +722,8 @@ pub trait FileSystem {
     fn write<R: io::Read + ZeroCopyReader>(
         &self,
         ctx: Context,
-        inode: Self::Inode,
-        handle: Self::Handle,
+        inode: u64,
+        handle: u64,
         r: R,
         size: u32,
         offset: u64,
@@ -785,13 +756,7 @@ pub trait FileSystem {
     /// If this method returns an `ENOSYS` error then the kernel will treat it as success and all
     /// subsequent calls to `flush` will be handled by the kernel without being forwarded to the
     /// file system.
-    fn flush(
-        &self,
-        ctx: Context,
-        inode: Self::Inode,
-        handle: Self::Handle,
-        lock_owner: u64,
-    ) -> io::Result<()> {
+    fn flush(&self, ctx: Context, inode: u64, handle: u64, lock_owner: u64) -> io::Result<()> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -808,13 +773,7 @@ pub trait FileSystem {
     /// If this method returns an `ENOSYS` error then the kernel will treat it as success and all
     /// subsequent calls to `fsync` will be handled by the kernel without being forwarded to the
     /// file system.
-    fn fsync(
-        &self,
-        ctx: Context,
-        inode: Self::Inode,
-        datasync: bool,
-        handle: Self::Handle,
-    ) -> io::Result<()> {
+    fn fsync(&self, ctx: Context, inode: u64, datasync: bool, handle: u64) -> io::Result<()> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -834,8 +793,8 @@ pub trait FileSystem {
     fn fallocate(
         &self,
         ctx: Context,
-        inode: Self::Inode,
-        handle: Self::Handle,
+        inode: u64,
+        handle: u64,
         mode: u32,
         offset: u64,
         length: u64,
@@ -863,9 +822,9 @@ pub trait FileSystem {
     fn release(
         &self,
         ctx: Context,
-        inode: Self::Inode,
+        inode: u64,
         flags: u32,
-        handle: Self::Handle,
+        handle: u64,
         flush: bool,
         flock_release: bool,
         lock_owner: Option<u64>,
@@ -874,7 +833,7 @@ pub trait FileSystem {
     }
 
     /// Get information about the file system.
-    fn statfs(&self, ctx: Context, inode: Self::Inode) -> io::Result<libc::statvfs64> {
+    fn statfs(&self, ctx: Context, inode: u64) -> io::Result<libc::statvfs64> {
         // Safe because we are zero-initializing a struct with only POD fields.
         let mut st: libc::statvfs64 = unsafe { mem::zeroed() };
 
@@ -897,7 +856,7 @@ pub trait FileSystem {
     fn setxattr(
         &self,
         ctx: Context,
-        inode: Self::Inode,
+        inode: u64,
         name: &CStr,
         value: &[u8],
         flags: u32,
@@ -919,7 +878,7 @@ pub trait FileSystem {
     fn getxattr(
         &self,
         ctx: Context,
-        inode: Self::Inode,
+        inode: u64,
         name: &CStr,
         size: u32,
     ) -> io::Result<GetxattrReply> {
@@ -938,7 +897,7 @@ pub trait FileSystem {
     /// If this method fails with an `ENOSYS` error, then the kernel will treat that as a permanent
     /// failure. The kernel will return `EOPNOTSUPP` for all future calls to `listxattr` without
     /// forwarding them to the file system.
-    fn listxattr(&self, ctx: Context, inode: Self::Inode, size: u32) -> io::Result<ListxattrReply> {
+    fn listxattr(&self, ctx: Context, inode: u64, size: u32) -> io::Result<ListxattrReply> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -947,7 +906,7 @@ pub trait FileSystem {
     /// If this method fails with an `ENOSYS` error, then the kernel will treat that as a permanent
     /// failure. The kernel will return `EOPNOTSUPP` for all future calls to `removexattr` without
     /// forwarding them to the file system.
-    fn removexattr(&self, ctx: Context, inode: Self::Inode, name: &CStr) -> io::Result<()> {
+    fn removexattr(&self, ctx: Context, inode: u64, name: &CStr) -> io::Result<()> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -970,9 +929,9 @@ pub trait FileSystem {
     fn opendir(
         &self,
         ctx: Context,
-        inode: Self::Inode,
+        inode: u64,
         flags: u32,
-    ) -> io::Result<(Option<Self::Handle>, OpenOptions)> {
+    ) -> io::Result<(Option<u64>, OpenOptions)> {
         // Matches the behavior of libfuse.
         Ok((None, OpenOptions::empty()))
     }
@@ -1007,8 +966,8 @@ pub trait FileSystem {
     fn readdir<F>(
         &self,
         ctx: Context,
-        inode: Self::Inode,
-        handle: Self::Handle,
+        inode: u64,
+        handle: u64,
         size: u32,
         offset: u64,
         add_entry: F,
@@ -1046,8 +1005,8 @@ pub trait FileSystem {
     fn readdirplus<F>(
         &self,
         ctx: Context,
-        inode: Self::Inode,
-        handle: Self::Handle,
+        inode: u64,
+        handle: u64,
         size: u32,
         offset: u64,
         add_entry: F,
@@ -1071,13 +1030,7 @@ pub trait FileSystem {
     /// If this method returns an `ENOSYS` error then the kernel will treat it as success and all
     /// subsequent calls to `fsyncdir` will be handled by the kernel without being forwarded to the
     /// file system.
-    fn fsyncdir(
-        &self,
-        ctx: Context,
-        inode: Self::Inode,
-        datasync: bool,
-        handle: Self::Handle,
-    ) -> io::Result<()> {
+    fn fsyncdir(&self, ctx: Context, inode: u64, datasync: bool, handle: u64) -> io::Result<()> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -1091,13 +1044,7 @@ pub trait FileSystem {
     /// undefined.
     ///
     /// `flags` contains used the flags used to open the directory in `opendir`.
-    fn releasedir(
-        &self,
-        ctx: Context,
-        inode: Self::Inode,
-        flags: u32,
-        handle: Self::Handle,
-    ) -> io::Result<()> {
+    fn releasedir(&self, ctx: Context, inode: u64, flags: u32, handle: u64) -> io::Result<()> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -1111,7 +1058,7 @@ pub trait FileSystem {
     /// If this method returns an `ENOSYS` error, then the kernel will treat it as a permanent
     /// success: all future calls to `access` will return success without being forwarded to the
     /// file system.
-    fn access(&self, ctx: Context, inode: Self::Inode, mask: u32) -> io::Result<()> {
+    fn access(&self, ctx: Context, inode: u64, mask: u32) -> io::Result<()> {
         Err(io::Error::from_raw_os_error(libc::ENOSYS))
     }
 
