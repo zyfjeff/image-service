@@ -141,7 +141,8 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
             self.bio.blkinfo.compr_size,
         )?;
         debug_assert_eq!(len, buf.len());
-        let decompressed = utils::decompress_with_lz4(&buf)?;
+        let mut decompressed = Vec::new();
+        utils::decompress_with_lz4_old(&buf[..], &mut decompressed);
         slice.copy_from(
             &decompressed[self.bio.offset as usize..self.bio.offset as usize + self.bio.size],
         );
@@ -155,7 +156,8 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
     fn write_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
         let mut buf = vec![0u8; slice.len()];
         slice.copy_to(&mut buf);
-        let compressed = utils::compress_with_lz4(&buf)?;
+        let mut compressed = Vec::new();
+        utils::compress_with_lz4_old(&buf[..], &mut compressed);
         self.dev
             .b
             .write(&self.bio.blkinfo.blob_id, &compressed, offset)?;
