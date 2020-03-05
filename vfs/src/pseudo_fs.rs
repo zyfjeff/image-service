@@ -5,7 +5,7 @@
 // A pseudo fs for path walking to other real filesystems
 
 use std::collections::HashMap;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::io::{Error, Result};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,6 +21,7 @@ const PSEUDOFS_DEFAULT_ENTRY_TIMEOUT: u64 = PSEUDOFS_DEFAULT_ATTR_TIMEOUT;
 
 struct PseudoInode {
     ino: u64,
+    parent: u64,
     name: String,
     childs: RwLock<Vec<u64>>,
 }
@@ -42,6 +43,7 @@ impl PseudoFs {
             ROOT_ID,
             Arc::new(PseudoInode {
                 ino: ROOT_ID,
+                parent: ROOT_ID,
                 name: String::from("/"),
                 childs: RwLock::new(Vec::new()),
             }),
@@ -49,12 +51,13 @@ impl PseudoFs {
         fs
     }
 
-    pub fn new_inode(&self, name: &str) -> u64 {
+    pub fn new_inode(&self, parent: u64, name: &str) -> u64 {
         let ino = self.next_inode.fetch_add(1, Ordering::Relaxed);
         self.inodes.write().unwrap().insert(
             ino,
             Arc::new(PseudoInode {
                 ino: ino,
+                parent: parent,
                 name: String::from(name),
                 childs: RwLock::new(Vec::new()),
             }),
@@ -119,9 +122,11 @@ impl PseudoFs {
                 None => continue,
             }
         }
-        let ino = self.new_inode(name);
+
+        let ino = self.new_inode(parent.ino, name);
         childs.push(ino);
         drop(childs);
+
         self.inodes
             .read()
             .unwrap()
@@ -152,14 +157,139 @@ impl PseudoFs {
             entry_timeout: Duration::from_secs(PSEUDOFS_DEFAULT_ENTRY_TIMEOUT),
         }
     }
+
+    fn do_readdir<F>(&self, parent: u64, size: u32, offset: u64, mut add_entry: F) -> Result<()>
+    where
+        F: FnMut(DirEntry) -> Result<usize>,
+    {
+        if size == 0 {
+            return Ok(());
+        }
+
+        let inode = self
+            .inodes
+            .read()
+            .unwrap()
+            .get(&parent)
+            .map(Arc::clone)
+            .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+
+        let mut next = offset + 1;
+        let childs = inode.childs.read().unwrap().clone();
+
+        for child in childs[offset as usize..].iter() {
+            let child_inode = self
+                .inodes
+                .read()
+                .unwrap()
+                .get(&child)
+                .map(Arc::clone)
+                .unwrap();
+            match add_entry(DirEntry {
+                ino: child_inode.ino,
+                offset: next,
+                type_: 0,
+                name: child_inode.name.clone().as_bytes(),
+            }) {
+                Ok(0) => break,
+                Ok(_) => next += 1,
+                Err(r) => return Err(r),
+            }
+        }
+
+        Ok(())
+    }
 }
 
 impl FileSystem for PseudoFs {
     fn lookup(&self, _: Context, parent: u64, name: &CStr) -> Result<Entry> {
-        if parent != ROOT_ID || !name.eq(&CString::new(".").unwrap()) {
-            Err(Error::from_raw_os_error(libc::ENOSYS))
+        let pinode = self
+            .inodes
+            .read()
+            .unwrap()
+            .get(&parent)
+            .map(Arc::clone)
+            .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+        let child_name = name
+            .to_str()
+            .map_err(|_| Error::from_raw_os_error(libc::EINVAL))?;
+        let mut ino: u64 = 0;
+        if child_name == "." {
+            ino = pinode.ino;
+        } else if child_name == ".." {
+            ino = pinode.parent;
         } else {
-            Ok(self.get_entry(ROOT_ID))
+            let childs = pinode.childs.read().unwrap();
+            for c in childs.iter() {
+                match self.inodes.read().unwrap().get(c) {
+                    Some(inode) => {
+                        if inode.name == child_name {
+                            ino = inode.ino;
+                            break;
+                        }
+                    }
+                    None => continue,
+                }
+            }
+            // not found, create new
+            drop(childs);
         }
+
+        if ino == 0 {
+            // not found
+            Err(Error::from_raw_os_error(libc::ENOENT))
+        } else {
+            Ok(self.get_entry(ino))
+        }
+    }
+
+    fn getattr(&self, _: Context, inode: u64, _: Option<u64>) -> Result<(libc::stat64, Duration)> {
+        let info = self
+            .inodes
+            .read()
+            .unwrap()
+            .get(&inode)
+            .map(Arc::clone)
+            .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+
+        let entry = self.get_entry(info.ino);
+        Ok((entry.attr.into(), entry.attr_timeout))
+    }
+
+    fn readdir<F>(
+        &self,
+        _ctx: Context,
+        inode: u64,
+        _: u64,
+        size: u32,
+        offset: u64,
+        add_entry: F,
+    ) -> Result<()>
+    where
+        F: FnMut(DirEntry) -> Result<usize>,
+    {
+        self.do_readdir(inode, size, offset, add_entry)
+    }
+
+    fn readdirplus<F>(
+        &self,
+        _ctx: Context,
+        inode: u64,
+        _handle: u64,
+        size: u32,
+        offset: u64,
+        mut add_entry: F,
+    ) -> Result<()>
+    where
+        F: FnMut(DirEntry, Entry) -> Result<usize>,
+    {
+        self.do_readdir(inode, size, offset, |dir_entry| {
+            let entry = self.get_entry(dir_entry.ino);
+            add_entry(dir_entry, entry)
+        })
+    }
+
+    fn access(&self, _ctx: Context, _inode: u64, _mask: u32) -> Result<()> {
+        Ok(())
     }
 }
