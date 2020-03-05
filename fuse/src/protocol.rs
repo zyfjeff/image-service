@@ -66,6 +66,9 @@ bitflags! {
 
 // INIT request/reply flags.
 
+/// NONE feature, used for initialization.
+const NONE: u32 = 0;
+
 /// Asynchronous read requests.
 const ASYNC_READ: u32 = 1;
 
@@ -149,6 +152,8 @@ bitflags! {
     /// A bitfield passed in as a parameter to and returned from the `init` method of the
     /// `FileSystem` trait.
     pub struct FsOptions: u32 {
+        /// Used for initialization
+        const NONE = NONE;
         /// Indicates that the filesystem supports asynchronous read requests.
         ///
         /// If this capability is not requested/available, the kernel will ensure that there is at

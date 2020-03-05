@@ -41,6 +41,35 @@ struct MountPointData {
     root_entry: Entry,
 }
 
+#[derive(Debug, Copy, Clone)]
+struct VfsOptions {
+    no_open: bool,
+    no_opendir: bool,
+    in_opts: FsOptions,
+    out_opts: FsOptions,
+}
+
+impl Default for VfsOptions {
+    fn default() -> Self {
+        VfsOptions {
+            no_open: true,
+            no_opendir: true,
+            in_opts: FsOptions::NONE,
+            out_opts: FsOptions::ASYNC_READ
+                | FsOptions::PARALLEL_DIROPS
+                | FsOptions::BIG_WRITES
+                | FsOptions::HANDLE_KILLPRIV
+                | FsOptions::ASYNC_DIO
+                | FsOptions::HAS_IOCTL_DIR
+                | FsOptions::WRITEBACK_CACHE
+                | FsOptions::ZERO_MESSAGE_OPEN
+                | FsOptions::ATOMIC_O_TRUNC
+                | FsOptions::CACHE_SYMLINKS
+                | FsOptions::ZERO_MESSAGE_OPENDIR,
+        }
+    }
+}
+
 pub struct Vfs<F: FileSystem> {
     next_inode: AtomicU64,
     next_super: AtomicU64,
@@ -51,6 +80,7 @@ pub struct Vfs<F: FileSystem> {
     mountpoints: RwLock<HashMap<Inode, Arc<MountPointData>>>,
     // superblocks keeps track of all mounted file systems
     superblocks: RwLock<HashMap<SuperIndex, Arc<F>>>,
+    opts: RwLock<VfsOptions>,
 }
 
 impl<F: FileSystem> Vfs<F> {
@@ -62,6 +92,7 @@ impl<F: FileSystem> Vfs<F> {
             mountpoints: RwLock::new(HashMap::new()),
             superblocks: RwLock::new(HashMap::new()),
             root: PseudoFs::new(PSEUDO_FS_SUPER),
+            opts: RwLock::new(VfsOptions::default()),
         };
         vfs.inodes.write().unwrap().insert(
             ROOT_ID,
@@ -140,21 +171,11 @@ impl<F: FileSystem> Vfs<F> {
 }
 
 impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
-    fn init(&self, _: FsOptions) -> Result<FsOptions> {
-        Ok(
-            // These fuse features are supported by rafs by default.
-            FsOptions::ASYNC_READ
-                | FsOptions::PARALLEL_DIROPS
-                | FsOptions::BIG_WRITES
-                | FsOptions::HANDLE_KILLPRIV
-                | FsOptions::ASYNC_DIO
-                | FsOptions::HAS_IOCTL_DIR
-                | FsOptions::WRITEBACK_CACHE
-                | FsOptions::ZERO_MESSAGE_OPEN
-                | FsOptions::ATOMIC_O_TRUNC
-                | FsOptions::CACHE_SYMLINKS
-                | FsOptions::ZERO_MESSAGE_OPENDIR,
-        )
+    fn init(&self, opts: FsOptions) -> Result<FsOptions> {
+        self.opts.write().unwrap().no_open = (opts & FsOptions::ZERO_MESSAGE_OPEN).is_empty();
+        self.opts.write().unwrap().no_opendir = (opts & FsOptions::ZERO_MESSAGE_OPENDIR).is_empty();
+        self.opts.write().unwrap().in_opts = opts;
+        Ok(self.opts.read().unwrap().out_opts)
     }
 
     fn destroy(&self) {
@@ -469,8 +490,12 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     }
 
     fn open(&self, _ctx: Context, _inode: u64, _flags: u32) -> Result<(Option<u64>, OpenOptions)> {
-        // Matches the behavior of libfuse.
-        Ok((None, OpenOptions::empty()))
+        if self.opts.read().unwrap().no_open {
+            Err(Error::from_raw_os_error(libc::ENOSYS))
+        } else {
+            // Matches the behavior of libfuse.
+            Ok((None, OpenOptions::empty()))
+        }
     }
 
     fn create(
@@ -810,8 +835,12 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         _inode: u64,
         _flags: u32,
     ) -> Result<(Option<u64>, OpenOptions)> {
-        // Matches the behavior of libfuse.
-        Ok((None, OpenOptions::empty()))
+        if self.opts.read().unwrap().no_opendir {
+            Err(Error::from_raw_os_error(libc::ENOSYS))
+        } else {
+            // Matches the behavior of libfuse.
+            Ok((None, OpenOptions::empty()))
+        }
     }
 
     fn readdir<FF>(
