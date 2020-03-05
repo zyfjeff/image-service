@@ -231,15 +231,18 @@ fn main() -> Result<()> {
         .expect("failed to open config file");
     let rafs_conf: RafsConfig = settings.try_into().expect("Invalid config");
 
-    let backend = oss_backend::new();
-    let mut rafs = Rafs::new(rafs_conf, backend);
-
+    let mut rafs1 = Rafs::new(rafs_conf.clone(), oss_backend::new());
     let mut file = File::open(metadata)?;
-    rafs.mount(&mut file, "/")?;
+    rafs1.mount(&mut file, "/")?;
     info!("rafs mounted");
 
+    let mut rafs2 = Rafs::new(rafs_conf, oss_backend::new());
+    file = File::open(metadata)?;
+    rafs2.mount(&mut file, "/")?;
+
     let vfs = Vfs::new();
-    vfs.mount(rafs, "/")?;
+    vfs.mount(rafs1, "/foo/bar1/")?;
+    vfs.mount(rafs2, "/foo/bar2/")?;
     info!("vfs mounted");
 
     let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(vfs).unwrap()));
