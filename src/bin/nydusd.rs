@@ -36,6 +36,8 @@ use vhost_rs::descriptor_utils::{Reader, Writer};
 use vhost_rs::vhost_user::message::*;
 use vhost_rs::vring::{VhostUserBackend, VhostUserDaemon, Vring};
 
+use vfs::vfs::Vfs;
+
 const VIRTIO_F_VERSION_1: u32 = 32;
 
 const QUEUE_SIZE: usize = 1024;
@@ -232,17 +234,15 @@ fn main() -> Result<()> {
     let backend = oss_backend::new();
     let mut rafs = Rafs::new(rafs_conf, backend);
 
-    /* example code to call pseudofs
-    let rafs2 = Rafs::new(RafsConfig::new(), oss_backend::new());
-    let vfs = PseudoFs::new();
-    vfs.mount(rafs2, "/etc")?;
-    */
-
     let mut file = File::open(metadata)?;
     rafs.mount(&mut file, "/")?;
     info!("rafs mounted");
 
-    let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(rafs).unwrap()));
+    let vfs = Vfs::new();
+    vfs.mount(rafs, "/")?;
+    info!("vfs mounted");
+
+    let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(vfs).unwrap()));
 
     let mut daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),

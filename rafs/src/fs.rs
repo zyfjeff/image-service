@@ -28,6 +28,9 @@ const RAFS_INODE_BLOCKSIZE: u32 = 4096;
 const RAFS_DEFAULT_ATTR_TIMEOUT: u64 = 1 << 32;
 const RAFS_DEFAULT_ENTRY_TIMEOUT: u64 = RAFS_DEFAULT_ATTR_TIMEOUT;
 
+const DOT: &'static str = ".";
+const DOTDOT: &'static str = "..";
+
 type Inode = u64;
 type Handle = u64;
 type SuperIndex = u64;
@@ -360,6 +363,10 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
             Err(e)
         })?;
         self.initialized = true;
+        self.fuse_inodes
+            .write()
+            .unwrap()
+            .insert(ROOT_ID, (self.sb.s_index, self.sb.s_root_inode));
         info! {"Mounted rafs at {}", &path};
         Ok(())
     }
@@ -486,11 +493,6 @@ fn enoent() -> Error {
 
 impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     fn init(&self, opts: FsOptions) -> Result<FsOptions> {
-        self.fuse_inodes
-            .write()
-            .unwrap()
-            .insert(ROOT_ID, (self.sb.s_index, self.sb.s_root_inode));
-
         self.opts.write().unwrap().no_open = (opts & FsOptions::ZERO_MESSAGE_OPEN).is_empty();
         self.opts.write().unwrap().no_opendir = (opts & FsOptions::ZERO_MESSAGE_OPENDIR).is_empty();
         Ok(
@@ -521,6 +523,11 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
             return Err(ebadf());
         }
         let target = name.to_str().or_else(|_| Err(ebadf()))?;
+        if target == DOT || (parent == ROOT_ID && target == DOTDOT) {
+            let mut entry = self.sb.get_entry(parent)?;
+            entry.inode = parent;
+            return Ok(entry);
+        }
         for ino in p.i_child.iter() {
             let child = inodes.get(&ino).ok_or(ebadf())?;
             if !target.eq(&child.i_name) {

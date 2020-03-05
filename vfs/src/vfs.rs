@@ -23,7 +23,7 @@ const PSEUDO_FS_SUPER: u64 = 1;
 type Inode = u64;
 type SuperIndex = u64;
 
-#[derive(Clone, Copy, Eq, PartialEq, Hash)]
+#[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
 struct InodeData {
     super_index: SuperIndex,
     ino: Inode,
@@ -91,13 +91,26 @@ impl<F: FileSystem> Vfs<F> {
             .write()
             .unwrap()
             .insert(index, Arc::new(fs));
+        // Special case, mount on pseudo fs root, need to hash it so that
+        // future access to vfs ROOT_ID points to the new mount
+        if inode == ROOT_ID {
+            self.inodes.write().unwrap().insert(
+                inode,
+                InodeData {
+                    super_index: index,
+                    ino: inode,
+                },
+            );
+        }
         Ok(())
     }
 
     // bimap insert_no_overwrite ensures hashed inode number uniqueness
+    // We assume we never run out of u64 fuse inode number
     fn hash_inode(&self, index: u64, inode: u64) -> Result<u64> {
         let mut ino = self.next_inode.fetch_add(1, Ordering::Relaxed);
-        ino = match self.inodes.write().unwrap().insert_no_overwrite(
+        let mut inodes = self.inodes.write().unwrap();
+        ino = match inodes.insert_no_overwrite(
             ino,
             InodeData {
                 super_index: index,
@@ -105,9 +118,23 @@ impl<F: FileSystem> Vfs<F> {
             },
         ) {
             Ok(()) => ino,
-            Err((ino, _)) => ino,
+            Err((_, _)) => {
+                // conflicts, find out the existing one
+                ino = inodes
+                    .get_by_right(&InodeData {
+                        super_index: index,
+                        ino: inode,
+                    })
+                    .unwrap()
+                    .clone();
+                ino
+            }
         };
 
+        debug!(
+            "vfs hash inode index {} ino {} fuse ino {}",
+            index, inode, ino
+        );
         Ok(ino)
     }
 }
@@ -159,10 +186,15 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
                     return Ok(entry);
                 }
             };
-
             // cross mountpoint, return mount root entry
             entry = mnt.root_entry.clone();
             entry.inode = self.hash_inode(mnt.super_index, mnt.ino)?;
+            trace!(
+                "vfs lookup cross mountpoint, return new mount index {} inode {} fuse inode {}",
+                mnt.super_index,
+                mnt.ino,
+                entry.inode
+            );
             return Ok(entry);
         }
 
@@ -177,7 +209,7 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         entry = fs.lookup(ctx, pidata.ino, name)?;
 
         // lookup succees, hash it to a real fuse inode
-        entry.inode = self.hash_inode(entry.inode, pidata.super_index)?;
+        entry.inode = self.hash_inode(pidata.super_index, entry.inode)?;
 
         Ok(entry)
     }
@@ -925,7 +957,7 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     }
 
     fn releasedir(&self, _ctx: Context, _inode: u64, _flags: u32, _handle: u64) -> Result<()> {
-        Err(Error::from_raw_os_error(libc::ENOSYS))
+        Ok(())
     }
 
     fn access(&self, ctx: Context, inode: u64, mask: u32) -> Result<()> {

@@ -3,6 +3,9 @@
 // found in the LICENSE file.
 //
 
+#[macro_use]
+extern crate log;
+
 #[allow(dead_code)]
 pub mod pseudo_fs;
 #[allow(dead_code)]
