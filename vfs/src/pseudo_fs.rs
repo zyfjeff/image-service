@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::io::{Error, Result};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
@@ -20,7 +21,6 @@ const PSEUDOFS_DEFAULT_ENTRY_TIMEOUT: u64 = PSEUDOFS_DEFAULT_ATTR_TIMEOUT;
 
 struct PseudoInode {
     ino: u64,
-    super_index: u64,
     name: String,
     childs: RwLock<Vec<u64>>,
 }
@@ -42,7 +42,6 @@ impl PseudoFs {
             ROOT_ID,
             Arc::new(PseudoInode {
                 ino: ROOT_ID,
-                super_index: index,
                 name: String::from("/"),
                 childs: RwLock::new(Vec::new()),
             }),
@@ -50,20 +49,85 @@ impl PseudoFs {
         fs
     }
 
+    pub fn new_inode(&self, name: &str) -> u64 {
+        let ino = self.next_inode.fetch_add(1, Ordering::Relaxed);
+        self.inodes.write().unwrap().insert(
+            ino,
+            Arc::new(PseudoInode {
+                ino: ino,
+                name: String::from(name),
+                childs: RwLock::new(Vec::new()),
+            }),
+        );
+        ino
+    }
+
     // mount creates path walk nodes all the way from root
     // to @path, and returns pseudo fs inode number for the path
-    pub fn mount(&self, path: &str) -> Result<u64> {
-        // alloc parent path all the way
-        // self.make_parent_dir(path);
-        // lock, check and add the target path
-        let inode: u64;
-        if path == "/" {
-            inode = ROOT_ID;
-        } else {
-            inode = self.next_inode.fetch_add(1, Ordering::Relaxed);
+    pub fn mount(&self, mountpoint: &str) -> Result<u64> {
+        let path = Path::new(mountpoint);
+        if !path.has_root() {
+            error!("pseudo fs mount failure: invalid mount path {}", mountpoint);
+            return Err(Error::from_raw_os_error(libc::EINVAL));
         }
-        // make node
-        Ok(inode)
+
+        let mut pathbuf = PathBuf::from("/");
+        let mut inode = self
+            .inodes
+            .read()
+            .unwrap()
+            .get(&ROOT_ID)
+            .map(Arc::clone)
+            .unwrap();
+
+        for component in path.components() {
+            debug!("pseudo fs mount iterate {:?}", component.as_os_str());
+            if component == Component::RootDir {
+                continue;
+            }
+            // lookup or create component
+            inode = self.do_lookup_create(&inode, component.as_os_str().to_str().unwrap());
+            pathbuf.push(inode.name.clone());
+        }
+
+        // Now we have all path components exist, return the last one
+        Ok(inode.ino)
+    }
+
+    fn do_lookup_create(&self, parent: &Arc<PseudoInode>, name: &str) -> Arc<PseudoInode> {
+        let childs = parent.childs.read().unwrap();
+        for ino in childs.iter() {
+            match self.inodes.read().unwrap().get(ino) {
+                Some(inode) => {
+                    if inode.name == name {
+                        return Arc::clone(inode);
+                    }
+                }
+                None => continue,
+            }
+        }
+        // not found, create new
+        drop(childs);
+        let mut childs = parent.childs.write().unwrap();
+        for ino in childs.iter() {
+            match self.inodes.read().unwrap().get(ino) {
+                Some(inode) => {
+                    if inode.name == name {
+                        return Arc::clone(inode);
+                    }
+                }
+                None => continue,
+            }
+        }
+        let ino = self.new_inode(name);
+        childs.push(ino);
+        drop(childs);
+        self.inodes
+            .read()
+            .unwrap()
+            .get(&ino)
+            .map(Arc::clone)
+            .unwrap()
     }
 
     fn get_entry(&self, ino: u64) -> Entry {
