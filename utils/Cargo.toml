@@ -8,4 +8,4 @@ edition = "2018"
 
 [dependencies]
 compress = "0.1.2"
-lz4 = "1.23.1"
+lz4-compress = "0.1.1"
