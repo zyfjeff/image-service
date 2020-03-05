@@ -143,13 +143,12 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
         debug_assert_eq!(len, buf.len());
         let mut decompressed = Vec::new();
         utils::decompress_with_lz4_old(&buf[..], &mut decompressed);
-        slice.copy_from(
-            &decompressed[self.bio.offset as usize..self.bio.offset as usize + self.bio.size],
-        );
-        let mut count = self.bio.offset as usize + self.bio.size - self.bio.offset as usize;
+        let mut count = self.bio.size;
         if slice.len() < count {
             count = slice.len()
         }
+        slice.copy_from(&decompressed[self.bio.offset as usize..self.bio.offset as usize + count]);
+
         Ok(count)
     }
 
