@@ -1,0 +1,109 @@
+openapi: 3.0.1
+info:
+  description: RESTful public-facing management API. The API is accessible through
+    HTTP calls on specific URLs carrying JSON modeled data.
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  title: Nydus-rs API
+  version: 0.1.0
+servers:
+- url: http://localhost/v1
+paths:
+  /:
+    get:
+      operationId: describeDaemon
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DaemonInfo'
+          description: Daemon information
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Returns general information about a nydus-rs daemon
+  /mount:
+    put:
+      operationId: createMount
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MountInfo'
+        required: true
+      responses:
+        "204":
+          content: {}
+          description: The mount was successful
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: The mount action cannot be executed due to bad input
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Internal Server Error
+      summary: Creates a mount.
+      x-codegen-request-body-name: info
+components:
+  schemas:
+    DaemonInfo:
+      example:
+        id: id
+        state: Starting
+        version: version
+      properties:
+        id:
+          type: string
+        state:
+          enum:
+          - Starting
+          - Running
+          - Stopping
+          type: string
+        version:
+          type: string
+      required:
+      - id
+      - state
+      - version
+      type: object
+    MountInfo:
+      example:
+        source: /foo/bar/bootstrap
+        fstype: rafs
+        mountpoint: /foo/bar
+      properties:
+        fstype:
+          description: mount type
+          example: rafs
+          type: string
+        source:
+          description: mount source
+          example: /foo/bar/bootstrap
+          type: string
+        mountpoint:
+          description: mount target
+          example: /foo/bar
+          type: string
+      required:
+      - fstype
+      - mountpoint
+      - source
+      type: object
+    Error:
+      properties:
+        fault_message:
+          description: A description of the error condition
+          readOnly: true
+          type: string
+      type: object

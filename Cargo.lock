@@ -872,6 +872,10 @@ version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
+name = "nydus-api"
+version = "0.1.0"
+
+[[package]]
 name = "nydus-rs"
 version = "0.1.0"
 dependencies = [
@@ -882,6 +886,7 @@ dependencies = [
  "image_builder 0.1.0",
  "libc 0.2.67 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "nydus-api 0.1.0",
  "rafs 0.1.0",
  "stderrlog 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "utils 0.1.0",
