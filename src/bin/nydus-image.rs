@@ -34,8 +34,8 @@ fn main() -> Result<()> {
                 .min_values(1),
         )
         .arg(
-            Arg::with_name("blod_id")
-                .long("blod_id")
+            Arg::with_name("blob_id")
+                .long("blob_id")
                 .help("blob id")
                 .takes_value(true)
                 .min_values(0),
