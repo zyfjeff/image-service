@@ -88,6 +88,7 @@ impl<'a> Node<'a> {
 
     fn build_inode(&mut self) -> Result<()> {
         if self.parent.is_none() {
+            self.inode.name = String::from("/");
             self.inode.i_parent = 0;
             self.inode.i_ino = 1;
             self.inode.i_mode = libc::S_IFDIR;
@@ -178,7 +179,7 @@ impl<'a> Node<'a> {
             // move cursor to offset of next chunk
             self.blob_offset = self.blob_offset + compressed_size as u64;
 
-            info!(
+            trace!(
                 "\tbuilding chunk: pos {}, len {}, offset {}, size {}",
                 chunk.pos, chunk.len, chunk.offset, chunk.size,
             );
@@ -199,6 +200,11 @@ impl<'a> Node<'a> {
         let mut inode_digest = RafsDigest::new();
         inode_digest.data.clone_from_slice(&inode_hash_buf);
         self.inode.digest = inode_digest;
+
+        trace!(
+            "\tbuilding inode: name {}, ino {}, digest {}, parent {}, chunk_cnt {}",
+            self.inode.name, self.inode.i_ino, self.inode.digest, self.inode.i_parent, self.inode.i_chunk_cnt,
+        );
 
         Ok(())
     }

@@ -151,7 +151,11 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
     }
 
     fn store<W: Write>(&self, mut w: W) -> Result<usize> {
-        let mut count = w.write(self.name.as_bytes())?;
+        let name = self.name.as_bytes();
+        let name_padding = vec![0; MAX_RAFS_NAME + 1 - name.len()];
+        let mut count = w.write(name)?;
+        count += w.write(&name_padding.as_slice())?;
+
         count += w.write(&self.digest.data[..])?;
         count += w.write(&u64::to_le_bytes(self.i_parent))?;
         count += w.write(&u64::to_le_bytes(self.i_ino))?;
@@ -310,7 +314,12 @@ impl RafsLayoutLoadStore for RafsChunkInfo {
 
     fn store<W: Write>(&self, mut w: W) -> Result<usize> {
         w.write(&self.blockid.data[..])?;
-        w.write(self.blobid.as_bytes())?;
+
+        let blobid = self.blobid.as_bytes();
+        let blobid_padding = vec![0; RAFS_BLOB_ID_MAX_LENGTH - blobid.len()];
+        w.write(blobid)?;
+        w.write(blobid_padding.as_slice())?;
+
         w.write(&u64::to_le_bytes(self.pos))?;
         w.write(&u32::to_le_bytes(self.len))?;
         w.write(&u64::to_le_bytes(self.offset))?;
