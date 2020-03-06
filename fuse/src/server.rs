@@ -9,6 +9,7 @@
 use std::ffi::CStr;
 use std::io::{self, Read, Write};
 use std::mem::size_of;
+use std::sync::Arc;
 
 use vm_memory::ByteValued;
 
@@ -66,11 +67,11 @@ impl<'a> io::Write for ZCWriter<'a> {
 }
 
 pub struct Server<F: FileSystem + Sync> {
-    fs: F,
+    fs: Arc<F>,
 }
 
 impl<F: FileSystem + Sync> Server<F> {
-    pub fn new(fs: F) -> Server<F> {
+    pub fn new(fs: Arc<F>) -> Server<F> {
         Server { fs }
     }
 

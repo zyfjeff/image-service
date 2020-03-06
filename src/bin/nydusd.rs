@@ -15,8 +15,11 @@ extern crate stderrlog;
 
 use std::fs::File;
 use std::io::Result;
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
+use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, RwLock};
+use std::thread;
 use std::{convert, error, fmt, io, process};
 
 use libc::EFD_NONBLOCK;
@@ -28,15 +31,14 @@ use vmm_sys_util::eventfd::EventFd;
 use fuse::filesystem::FileSystem;
 use fuse::server::Server;
 use fuse::Error as VhostUserFsError;
-
+use nydus_api::http::start_http_thread;
+use nydus_api::http_endpoint::{ApiError, ApiRequest, ApiResponsePayload, DaemonInfo, MountInfo};
 use rafs::fs::{Rafs, RafsConfig};
 use rafs::storage::oss_backend;
-
+use vfs::vfs::Vfs;
 use vhost_rs::descriptor_utils::{Reader, Writer};
 use vhost_rs::vhost_user::message::*;
 use vhost_rs::vring::{VhostUserBackend, VhostUserDaemon, Vring};
-
-use vfs::vfs::Vfs;
 
 const VIRTIO_F_VERSION_1: u32 = 32;
 
@@ -54,8 +56,6 @@ type VhostUserBackendResult<T> = std::result::Result<T, std::io::Error>;
 
 #[derive(Debug)]
 enum Error {
-    /// Failed to create kill eventfd.
-    CreateKillEventFd(io::Error),
     /// Failed to handle event other than input event.
     HandleEventNotEpollIn,
     /// Failed to handle unknown event.
@@ -64,6 +64,12 @@ enum Error {
     NoMemoryConfigured,
     /// Processing queue failed.
     ProcessQueue(VhostUserFsError),
+    /// Cannot create epoll context.
+    Epoll(io::Error),
+    /// Cannot clone event fd.
+    EventFdClone(io::Error),
+    /// Cannot spawn a new thread
+    ThreadSpawn(io::Error),
 }
 
 impl fmt::Display for Error {
@@ -80,20 +86,227 @@ impl convert::From<Error> for io::Error {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EpollDispatch {
+    Exit,
+    Reset,
+    Stdin,
+    Api,
+}
+
+pub struct EpollContext {
+    raw_fd: RawFd,
+    dispatch_table: Vec<Option<EpollDispatch>>,
+}
+
+impl EpollContext {
+    pub fn new() -> Result<EpollContext> {
+        let raw_fd = epoll::create(true)?;
+
+        // Initial capacity needs to be large enough to hold:
+        // * 1 exit event
+        // * 1 reset event
+        // * 1 stdin event
+        // * 1 API event
+        let mut dispatch_table = Vec::with_capacity(5);
+        dispatch_table.push(None);
+
+        Ok(EpollContext {
+            raw_fd,
+            dispatch_table,
+        })
+    }
+
+    fn add_event<T>(&mut self, fd: &T, token: EpollDispatch) -> Result<()>
+    where
+        T: AsRawFd,
+    {
+        let dispatch_index = self.dispatch_table.len() as u64;
+        epoll::ctl(
+            self.raw_fd,
+            epoll::ControlOptions::EPOLL_CTL_ADD,
+            fd.as_raw_fd(),
+            epoll::Event::new(epoll::Events::EPOLLIN, dispatch_index),
+        )?;
+        self.dispatch_table.push(Some(token));
+
+        Ok(())
+    }
+}
+
+impl AsRawFd for EpollContext {
+    fn as_raw_fd(&self) -> RawFd {
+        self.raw_fd
+    }
+}
+
 struct VhostUserFsBackend<F: FileSystem + Send + Sync + 'static> {
     mem: Option<GuestMemoryMmap>,
     kill_evt: EventFd,
-    server: Arc<Server<F>>,
+    vfs: Arc<Vfs<F>>,
+    server: Arc<Server<Vfs<F>>>,
+}
+
+struct ApiServer {
+    id: String,
+    version: String,
+    epoll: EpollContext,
+    api_evt: EventFd,
+}
+
+impl ApiServer {
+    fn new(id: String, version: String, api_evt: EventFd) -> Result<Self> {
+        let mut epoll = EpollContext::new().map_err(Error::Epoll)?;
+        epoll
+            .add_event(&api_evt, EpollDispatch::Api)
+            .map_err(Error::Epoll)?;
+
+        Ok(ApiServer {
+            id: id,
+            version: version,
+            epoll: epoll,
+            api_evt: api_evt,
+        })
+    }
+
+    // control loop to handle api requests
+    fn control_loop<FF>(&self, api_receiver: Receiver<ApiRequest>, mut mounter: FF) -> Result<()>
+    where
+        FF: FnMut(MountInfo) -> std::result::Result<ApiResponsePayload, ApiError>,
+    {
+        const EPOLL_EVENTS_LEN: usize = 100;
+
+        let mut events = vec![epoll::Event::new(epoll::Events::empty(), 0); EPOLL_EVENTS_LEN];
+        let epoll_fd = self.epoll.as_raw_fd();
+
+        'outer: loop {
+            let num_events = match epoll::wait(epoll_fd, -1, &mut events[..]) {
+                Ok(res) => res,
+                Err(e) => {
+                    if e.kind() == io::ErrorKind::Interrupted {
+                        // It's well defined from the epoll_wait() syscall
+                        // documentation that the epoll loop can be interrupted
+                        // before any of the requested events occurred or the
+                        // timeout expired. In both those cases, epoll_wait()
+                        // returns an error of type EINTR, but this should not
+                        // be considered as a regular error. Instead it is more
+                        // appropriate to retry, by calling into epoll_wait().
+                        continue;
+                    }
+                    return Err(e);
+                }
+            };
+
+            for event in events.iter().take(num_events) {
+                let dispatch_idx = event.data as usize;
+
+                if let Some(dispatch_type) = self.epoll.dispatch_table[dispatch_idx] {
+                    match dispatch_type {
+                        EpollDispatch::Api => {
+                            // Consume the event.
+                            self.api_evt.read()?;
+
+                            // Read from the API receiver channel
+                            let api_request = api_receiver.recv().map_err(|e| {
+                                error!("receive API channel failed {}", e);
+                                io::Error::from(io::ErrorKind::BrokenPipe)
+                            })?;
+
+                            match api_request {
+                                ApiRequest::DaemonInfo(sender) => {
+                                    let response = DaemonInfo {
+                                        id: self.id.to_string(),
+                                        version: self.version.to_string(),
+                                        state: "Running".to_string(),
+                                    };
+
+                                    sender
+                                        .send(Ok(response).map(ApiResponsePayload::DaemonInfo))
+                                        .map_err(|e| {
+                                            error!("send API response failed {}", e);
+                                            io::Error::from(io::ErrorKind::BrokenPipe)
+                                        })?;
+                                }
+                                ApiRequest::Mount(info, sender) => {
+                                    /*
+                                    let response = {
+                                        let mut rafs =
+                                            Rafs::new(self.conf.clone(), oss_backend::new());
+                                        let mut file = File::open(&info.source)?;
+                                        rafs.mount(&mut file, "/")?;
+                                        info!("rafs mounted");
+                                        let vfs = Arc::clone(&self.backend.write().unwrap().vfs);
+
+                                        match vfs.do_mount(rafs, &info.mountpoint) {
+                                            Ok(()) => Ok(ApiResponsePayload::Mount),
+                                            Err(e) => {
+                                                error!("mount {:?} failed {}", info, e);
+                                                Err(ApiError::MountFailure(io::Error::from(
+                                                    io::ErrorKind::InvalidData,
+                                                )))
+                                            }
+                                        }
+                                    };
+                                    */
+                                    let response = mounter(info);
+
+                                    sender.send(response).map_err(|e| {
+                                        error!("send API response failed {}", e);
+                                        io::Error::from(io::ErrorKind::BrokenPipe)
+                                    })?;
+                                }
+                            }
+                        }
+                        t => {
+                            error!("unexpected event type {:?}", t);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Start the api server and kick of a local thread to handle
+// api requests.
+fn start_api_server<FF>(
+    id: String,
+    version: String,
+    http_path: String,
+    mounter: FF,
+) -> Result<thread::JoinHandle<Result<()>>>
+where
+    FF: Send + Sync + 'static + Fn(MountInfo) -> std::result::Result<ApiResponsePayload, ApiError>,
+{
+    let api_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::Epoll)?;
+    let http_api_event = api_evt.try_clone().map_err(Error::EventFdClone)?;
+    let (api_sender, api_receiver) = channel();
+
+    let thread = thread::Builder::new()
+        .name("api_handler".to_string())
+        .spawn(move || {
+            let s = ApiServer::new(id, version, api_evt)?;
+            s.control_loop(api_receiver, mounter)
+        })
+        .map_err(Error::ThreadSpawn)?;
+
+    // The VMM thread is started, we can start serving HTTP requests
+    start_http_thread(&http_path, http_api_event, api_sender)?;
+
+    Ok(thread)
 }
 
 impl<F: FileSystem + Send + Sync + 'static> VhostUserFsBackend<F> {
-    fn new(fs: F) -> Result<Self> {
+    fn new(vfs: Vfs<F>) -> Result<Self> {
+        let fs = Arc::new(vfs);
         Ok(VhostUserFsBackend {
             mem: None,
-            kill_evt: EventFd::new(EFD_NONBLOCK).map_err(Error::CreateKillEventFd)?,
-            server: Arc::new(Server::new(fs)),
+            kill_evt: EventFd::new(EFD_NONBLOCK).map_err(Error::Epoll)?,
+            server: Arc::new(Server::new(Arc::clone(&fs))),
+            vfs: Arc::clone(&fs),
         })
     }
+
     fn process_queue(&mut self, vring: &mut Vring) -> Result<()> {
         let mem = self.mem.as_ref().ok_or(Error::NoMemoryConfigured)?;
 
@@ -214,9 +427,7 @@ fn main() -> Result<()> {
     let sock = cmd_arguments
         .value_of("sock")
         .expect("Failed to retrieve vhost-user socket path");
-    let metadata = cmd_arguments
-        .value_of("metadata")
-        .expect("Rafs metatada file must be set");
+    let metadata = cmd_arguments.value_of("metadata").unwrap_or_default();
 
     stderrlog::new()
         .quiet(false)
@@ -231,21 +442,42 @@ fn main() -> Result<()> {
         .expect("failed to open config file");
     let rafs_conf: RafsConfig = settings.try_into().expect("Invalid config");
 
-    let mut rafs1 = Rafs::new(rafs_conf.clone(), oss_backend::new());
-    let mut file = File::open(metadata)?;
-    rafs1.mount(&mut file, "/")?;
-    info!("rafs mounted");
-
-    let mut rafs2 = Rafs::new(rafs_conf, oss_backend::new());
-    file = File::open(metadata)?;
-    rafs2.mount(&mut file, "/")?;
-
-    let vfs = Vfs::new();
-    vfs.mount(rafs1, "/foo/bar1/")?;
-    vfs.mount(rafs2, "/foo/bar2/")?;
-    info!("vfs mounted");
-
+    let vfs: Vfs<Rafs<oss_backend::OSS>> = Vfs::new();
     let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(vfs).unwrap()));
+
+    if metadata != "" {
+        let mut rafs = Rafs::new(rafs_conf.clone(), oss_backend::new());
+        let mut file = File::open(metadata)?;
+        rafs.mount(&mut file, "/")?;
+        info!("rafs mounted");
+        let fs = Arc::clone(&fs_backend.write().unwrap().vfs);
+        fs.mount(rafs, "/").unwrap();
+        info!("vfs mounted");
+    }
+
+    let backend = Arc::clone(&fs_backend);
+    start_api_server(
+        "foo".to_string(),
+        "bar".to_string(),
+        "sock".to_string(),
+        move |info| {
+            let mut rafs = Rafs::new(rafs_conf.clone(), oss_backend::new());
+            let mut file = File::open(&info.source).map_err(ApiError::MountFailure)?;
+            rafs.mount(&mut file, "/").map_err(ApiError::MountFailure)?;
+            info!("rafs mounted");
+            let vfs = Arc::clone(&backend.write().unwrap().vfs);
+
+            match vfs.mount(rafs, &info.mountpoint) {
+                Ok(()) => Ok(ApiResponsePayload::Mount),
+                Err(e) => {
+                    error!("mount {:?} failed {}", info, e);
+                    Err(ApiError::MountFailure(io::Error::from(
+                        io::ErrorKind::InvalidData,
+                    )))
+                }
+            }
+        },
+    )?;
 
     let mut daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),
