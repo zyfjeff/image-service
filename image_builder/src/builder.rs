@@ -32,8 +32,6 @@ impl<'a> Builder<'a> {
         bootstrap_path: &'a str,
         blob_id: &'a str,
     ) -> Result<Builder<'a>> {
-        env_logger::init();
-
         let f_blob = OpenOptions::new()
             .write(true)
             .create(true)
@@ -53,7 +51,7 @@ impl<'a> Builder<'a> {
     }
 
     fn dump_superblock(&mut self) -> Result<RafsSuperBlockInfo> {
-        trace!("building superblock {}", self.root);
+        info!("building superblock {}", self.root);
         let mut sb = RafsSuperBlockInfo::new();
 
         sb.s_inodes_count = 0;

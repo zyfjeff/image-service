@@ -181,7 +181,10 @@ impl<'a> Node<'a> {
 
             trace!(
                 "\tbuilding chunk: pos {}, len {}, offset {}, size {}",
-                chunk.pos, chunk.len, chunk.offset, chunk.size,
+                chunk.pos,
+                chunk.len,
+                chunk.offset,
+                chunk.size,
             );
 
             // dump compressed chunk data to blob
@@ -203,7 +206,11 @@ impl<'a> Node<'a> {
 
         trace!(
             "\tbuilding inode: name {}, ino {}, digest {}, parent {}, chunk_cnt {}",
-            self.inode.name, self.inode.i_ino, self.inode.digest, self.inode.i_parent, self.inode.i_chunk_cnt,
+            self.inode.name,
+            self.inode.i_ino,
+            self.inode.digest,
+            self.inode.i_parent,
+            self.inode.i_chunk_cnt,
         );
 
         Ok(())

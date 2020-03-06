@@ -9,7 +9,6 @@ edition = "2018"
 [dependencies]
 libc = "0.2.66"
 log = "0.4"
-env_logger = "0.7.1"
 rust-crypto = "0.2.36"
 
 [dependencies.rafs]
