@@ -179,7 +179,8 @@ impl ApiServer {
         let mut events = vec![epoll::Event::new(epoll::Events::empty(), 0); EPOLL_EVENTS_LEN];
         let epoll_fd = self.epoll.as_raw_fd();
 
-        'outer: loop {
+        trace!("api control loop start");
+        loop {
             let num_events = match epoll::wait(epoll_fd, -1, &mut events[..]) {
                 Ok(res) => res,
                 Err(e) => {
@@ -196,6 +197,8 @@ impl ApiServer {
                     return Err(e);
                 }
             };
+
+            trace!("receive api control {} events", num_events);
 
             for event in events.iter().take(num_events) {
                 let dispatch_idx = event.data as usize;
@@ -228,29 +231,7 @@ impl ApiServer {
                                         })?;
                                 }
                                 ApiRequest::Mount(info, sender) => {
-                                    /*
-                                    let response = {
-                                        let mut rafs =
-                                            Rafs::new(self.conf.clone(), oss_backend::new());
-                                        let mut file = File::open(&info.source)?;
-                                        rafs.mount(&mut file, "/")?;
-                                        info!("rafs mounted");
-                                        let vfs = Arc::clone(&self.backend.write().unwrap().vfs);
-
-                                        match vfs.do_mount(rafs, &info.mountpoint) {
-                                            Ok(()) => Ok(ApiResponsePayload::Mount),
-                                            Err(e) => {
-                                                error!("mount {:?} failed {}", info, e);
-                                                Err(ApiError::MountFailure(io::Error::from(
-                                                    io::ErrorKind::InvalidData,
-                                                )))
-                                            }
-                                        }
-                                    };
-                                    */
-                                    let response = mounter(info);
-
-                                    sender.send(response).map_err(|e| {
+                                    sender.send(mounter(info)).map_err(|e| {
                                         error!("send API response failed {}", e);
                                         io::Error::from(io::ErrorKind::BrokenPipe)
                                     })?;
@@ -418,6 +399,13 @@ fn main() -> Result<()> {
                 .takes_value(true)
                 .min_values(1),
         )
+        .arg(
+            Arg::with_name("apisock")
+                .long("apisock")
+                .help("admin api socket path")
+                .takes_value(true)
+                .min_values(1),
+        )
         .get_matches();
 
     // Retrieve arguments
@@ -428,6 +416,7 @@ fn main() -> Result<()> {
         .value_of("sock")
         .expect("Failed to retrieve vhost-user socket path");
     let metadata = cmd_arguments.value_of("metadata").unwrap_or_default();
+    let apisock = cmd_arguments.value_of("apisock").unwrap_or_default();
 
     stderrlog::new()
         .quiet(false)
@@ -455,29 +444,32 @@ fn main() -> Result<()> {
         info!("vfs mounted");
     }
 
-    let backend = Arc::clone(&fs_backend);
-    start_api_server(
-        "foo".to_string(),
-        "bar".to_string(),
-        "sock".to_string(),
-        move |info| {
-            let mut rafs = Rafs::new(rafs_conf.clone(), oss_backend::new());
-            let mut file = File::open(&info.source).map_err(ApiError::MountFailure)?;
-            rafs.mount(&mut file, "/").map_err(ApiError::MountFailure)?;
-            info!("rafs mounted");
-            let vfs = Arc::clone(&backend.write().unwrap().vfs);
+    if apisock != "" {
+        let backend = Arc::clone(&fs_backend);
+        start_api_server(
+            "nydusd".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+            apisock.to_string(),
+            move |info| {
+                let mut rafs = Rafs::new(rafs_conf.clone(), oss_backend::new());
+                let mut file = File::open(&info.source).map_err(ApiError::MountFailure)?;
+                rafs.mount(&mut file, "/").map_err(ApiError::MountFailure)?;
+                info!("rafs mounted");
+                let vfs = Arc::clone(&backend.write().unwrap().vfs);
 
-            match vfs.mount(rafs, &info.mountpoint) {
-                Ok(()) => Ok(ApiResponsePayload::Mount),
-                Err(e) => {
-                    error!("mount {:?} failed {}", info, e);
-                    Err(ApiError::MountFailure(io::Error::from(
-                        io::ErrorKind::InvalidData,
-                    )))
+                match vfs.mount(rafs, &info.mountpoint) {
+                    Ok(()) => Ok(ApiResponsePayload::Mount),
+                    Err(e) => {
+                        error!("mount {:?} failed {}", info, e);
+                        Err(ApiError::MountFailure(io::Error::from(
+                            io::ErrorKind::InvalidData,
+                        )))
+                    }
                 }
-            }
-        },
-    )?;
+            },
+        )?;
+        info!("api server running at {}", apisock);
+    }
 
     let mut daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),

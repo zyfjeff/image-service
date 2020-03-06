@@ -92,6 +92,7 @@ pub fn start_http_thread(
         .spawn(move || {
             let mut server = HttpServer::new(socket_path).unwrap();
             server.start_server().unwrap();
+            info!("http server started");
             loop {
                 match server.requests() {
                     Ok(request_vec) => {
