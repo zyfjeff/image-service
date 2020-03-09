@@ -56,6 +56,8 @@ struct RafsInode {
     i_atimensec: u64,
     i_mtimensec: u64,
     i_ctimensec: u64,
+    // xattr
+    i_xattr: HashMap<String, Vec<u8>>,
     i_chunk_cnt: u64,
     // symlink target
     i_target: String,
@@ -98,6 +100,10 @@ impl RafsInode {
 
     fn is_symlink(&self) -> bool {
         self.i_mode & libc::S_IFMT == libc::S_IFLNK
+    }
+
+    fn has_xattr(&self) -> bool {
+        self.i_flags & INO_FLAG_XATTR == INO_FLAG_XATTR
     }
 
     fn is_reg(&self) -> bool {
@@ -411,7 +417,7 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
                         }
                         Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => break,
                         Err(e) => {
-                            error!("error after loading RafsInodeInfo");
+                            error!("error after loading RafsInodeInfo {:?}", e);
                             return Err(e);
                         }
                     }
@@ -442,17 +448,23 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
 
     fn unpack_node<R: Read>(&self, inode: &mut RafsInode, r: &mut R) -> Result<()> {
         trace!(
-            "unpacking inode {} symlink {} regular {} chunk_cnt {}",
+            "unpacking inode {} xattr {} symlink {} regular {} chunk_cnt {}",
             &inode.i_name,
+            inode.has_xattr(),
             inode.is_symlink(),
             inode.is_reg(),
             inode.i_chunk_cnt,
         );
+        if inode.has_xattr() {
+            let mut info = RafsInodeXattrInfos::new();
+            info.load(r)?;
+            inode.i_xattr = info.into();
+        }
         if inode.is_symlink() {
             let mut info = RafsLinkDataInfo::new(inode.i_chunk_cnt as usize);
             info.load(r)?;
         } else if inode.is_reg() {
-            for i in 0..inode.i_chunk_cnt {
+            for _ in 0..inode.i_chunk_cnt {
                 let mut info = RafsChunkInfo::new();
                 info.load(r)?;
                 inode.i_data.push(info.into())
@@ -478,6 +490,10 @@ fn einval() -> Error {
 
 fn enoent() -> Error {
     Error::from_raw_os_error(libc::ENOENT)
+}
+
+fn enoattr() -> Error {
+    Error::from_raw_os_error(libc::ENODATA)
 }
 
 impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
@@ -630,11 +646,50 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
     }
 
     fn getxattr(&self, ctx: Context, inode: u64, name: &CStr, size: u32) -> Result<GetxattrReply> {
-        Err(enosys())
+        let inode = self
+            .sb
+            .s_inodes
+            .read()
+            .unwrap()
+            .get(&inode)
+            .map(Arc::clone)
+            .ok_or(enoent())?;
+
+        let key = name.to_str().or_else(|_| Err(einval()))?;
+        let value = inode.i_xattr.get(key).ok_or(enoattr())?;
+        match size {
+            0 => Ok(GetxattrReply::Count(value.len() as u32)),
+            _ => Ok(GetxattrReply::Value(value.clone())),
+        }
     }
 
     fn listxattr(&self, ctx: Context, inode: u64, size: u32) -> Result<ListxattrReply> {
-        Err(enosys())
+        let inode = self
+            .sb
+            .s_inodes
+            .read()
+            .unwrap()
+            .get(&inode)
+            .map(Arc::clone)
+            .ok_or(enoent())?;
+
+        match size {
+            0 => {
+                let mut count = 0;
+                for (key, _) in inode.i_xattr.iter() {
+                    count += key.len();
+                }
+                Ok(ListxattrReply::Count(count as u32))
+            }
+            _ => {
+                let mut buf = Vec::new();
+                for (key, _) in inode.i_xattr.iter() {
+                    buf.append(&mut key.clone().into_bytes());
+                    buf.append(&mut vec![0u8; 1])
+                }
+                Ok(ListxattrReply::Names(buf))
+            }
+        }
     }
 
     fn readdir<F>(
