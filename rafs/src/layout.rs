@@ -4,9 +4,11 @@
 //
 // Rafs ondisk layout structures.
 
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt;
 use std::io::{Error, Read, Result, Write};
+use std::mem::size_of;
 use std::str;
 
 use crypto::digest::Digest;
@@ -14,6 +16,7 @@ use crypto::sha2::Sha256;
 
 pub const INO_FLAG_HARDLINK: u64 = 0x1000;
 pub const INO_FLAG_SYMLINK: u64 = 0x2000;
+pub const INO_FLAG_XATTR: u64 = 0x4000;
 
 pub const MAX_RAFS_NAME: usize = 255;
 pub const RAFS_SHA256_LENGTH: usize = 32;
@@ -26,6 +29,8 @@ pub const RAFS_CHUNK_INFO_SIZE: usize = 136;
 
 pub const DEFAULT_RAFS_BLOCK_SIZE: usize = 1024 * 1024;
 pub const RAFS_SUPER_MAGIC: u32 = 0x52414653;
+
+const RAFS_XATTR_ALIGNMENT: usize = 8;
 
 pub trait RafsLayoutLoadStore {
     // load rafs ondisk metadata in packed format
@@ -111,6 +116,12 @@ fn read_string(input: &mut &[u8], count: usize) -> Result<String> {
         }
         Err(_) => Err(Error::from_raw_os_error(libc::EINVAL)),
     }
+}
+
+fn read_opaque(input: &mut &[u8], count: usize) -> Result<Vec<u8>> {
+    let (buf, rest) = input.split_at(count);
+    *input = rest;
+    Ok(buf.into())
 }
 
 fn read_rafs_digest(input: &mut &[u8]) -> Result<RafsDigest> {
@@ -333,8 +344,8 @@ impl RafsLayoutLoadStore for RafsChunkInfo {
 // symlink data, aligned with size of RafsChunkInfo
 #[derive(Clone, Default, Debug)]
 pub struct RafsLinkDataInfo {
-    pub target: String,
     pub ondisk_size: usize,
+    pub target: String,
 }
 
 impl RafsLinkDataInfo {
@@ -396,5 +407,85 @@ impl fmt::Display for RafsDigest {
             write!(f, "{}", c)?;
         }
         Ok(())
+    }
+}
+
+// Aligned to RAFS_XATTR_ALIGNMENT bytes
+#[derive(Debug, Clone, Default)]
+pub struct RafsInodeXattrInfos {
+    // byte length of the xattr area
+    pub ondisk_size: u32,
+    // number of xattrs
+    pub count: u32,
+    // xattr array
+    pub data: HashMap<String, Vec<u8>>,
+}
+
+impl RafsInodeXattrInfos {
+    pub fn new() -> Self {
+        RafsInodeXattrInfos {
+            ..Default::default()
+        }
+    }
+}
+
+impl Into<HashMap<String, Vec<u8>>> for RafsInodeXattrInfos {
+    fn into(self) -> HashMap<String, Vec<u8>> {
+        self.data
+    }
+}
+
+impl RafsLayoutLoadStore for RafsInodeXattrInfos {
+    fn load<R: Read>(&mut self, r: &mut R) -> Result<usize> {
+        let mut input = vec![0u8; size_of::<u32>()];
+        r.read_exact(&mut input[..])?;
+        let mut p = &input[..];
+        self.ondisk_size = read_le_u32(&mut p);
+
+        input = Vec::new();
+        input.resize(self.ondisk_size as usize, 0);
+        r.read_exact(&mut input[..self.ondisk_size as usize - size_of::<u32>()])?;
+        let mut p = &input[..];
+        self.count = read_le_u32(&mut p);
+        for _ in 0..self.count {
+            let key_size = read_le_u32(&mut p);
+            let key = read_string(&mut p, key_size as usize)?;
+            let value_size = read_le_u32(&mut p);
+            let value = read_opaque(&mut p, value_size as usize)?;
+            self.data.insert(key, value);
+        }
+
+        trace!("loaded xattr {:?}", self);
+        Ok(self.ondisk_size as usize + size_of::<u32>())
+    }
+
+    fn store<W: Write>(&self, mut w: W) -> Result<usize> {
+        if self.count == 0 {
+            return Ok(0);
+        }
+
+        let mut buf: Vec<u8> = Vec::new();
+
+        buf.write(&u32::to_le_bytes(self.count as u32))?;
+        for (key, value) in self.data.iter() {
+            buf.write(&u32::to_le_bytes(key.len() as u32))?;
+            buf.write(key.as_bytes())?;
+            buf.write(&u32::to_le_bytes(value.len() as u32))?;
+            if value.len() > 0 {
+                buf.write(&value)?;
+            }
+        }
+
+        // round up
+        let ondisk_size = (buf.len() + size_of::<u32>() + RAFS_XATTR_ALIGNMENT - 1)
+            / RAFS_XATTR_ALIGNMENT
+            * RAFS_XATTR_ALIGNMENT;
+
+        let mut count = w.write(&u32::to_le_bytes(ondisk_size as u32))?;
+        count += w.write(&buf)?;
+        w.write(&vec![0; ondisk_size - count])?;
+
+        info!("written size {} xattr {:?}", ondisk_size, self);
+        Ok(ondisk_size)
     }
 }
