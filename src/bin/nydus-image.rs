@@ -15,13 +15,14 @@ use clap::{App, Arg, SubCommand};
 use uuid::Uuid;
 
 use std::fs::File;
-use std::io::Result;
+use std::io::{self, Result, Write};
 
 use rafs::storage::oss_backend::OSS;
 
 fn main() -> Result<()> {
     stderrlog::new()
         .quiet(false)
+        .modules(vec![module_path!(), "image_builder"])
         .verbosity(log::LevelFilter::Info as usize)
         .timestamp(stderrlog::Timestamp::Second)
         .init()
@@ -128,13 +129,20 @@ fn main() -> Result<()> {
 
             let blob_file = File::open(blob_path)?;
             oss.put_object(blob_id.as_str(), blob_file, |(current, total)| {
-                info!(
+                io::stdout().flush().unwrap();
+                print!("\r");
+                print!(
                     "OSS blob uploading: {}/{} bytes ({}%)",
                     current,
                     total,
-                    current * 100 / total
+                    current * 100 / total,
                 );
             })?;
+
+            print!("\r");
+            io::stdout().flush().unwrap();
+
+            info!("build finished, blob id: {}", blob_id.as_str());
         }
     }
 
