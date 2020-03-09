@@ -8,6 +8,7 @@ use httpdate;
 use reqwest::{self, header::HeaderMap, StatusCode};
 use std::collections::HashMap;
 use std::fs::File;
+use std::io::Read;
 use std::io::Result as IOResult;
 use std::io::{Error, ErrorKind};
 use std::time::SystemTime;
@@ -17,6 +18,39 @@ use crate::storage::backend::BlobBackend;
 
 const HEADER_DATE: &str = "Date";
 const HEADER_AUTHORIZATION: &str = "Authorization";
+
+struct Progress {
+    inner: File,
+    current: u64,
+    total: u64,
+    callback: fn((u64, u64)),
+}
+
+impl Progress {
+    fn new(file: File, total: u64, callback: fn((u64, u64))) -> Progress {
+        Progress {
+            inner: file,
+            current: 0,
+            total,
+            callback,
+        }
+    }
+}
+
+impl Read for Progress {
+    fn read(&mut self, buf: &mut [u8]) -> IOResult<usize> {
+        self.inner.read(buf).map(|count| {
+            self.current += count as u64;
+            (self.callback)((self.current, self.total));
+            count
+        })
+    }
+}
+
+enum Body {
+    File(Progress, u64),
+    Buf(Vec<u8>),
+}
 
 #[derive(Debug)]
 pub struct OSS {
@@ -43,11 +77,13 @@ impl OSS {
         }
     }
 
-    pub fn put_object(&self, blob_id: &str, file: File) -> IOResult<()> {
+    pub fn put_object(&self, blob_id: &str, file: File, callback: fn((u64, u64))) -> IOResult<()> {
         let headers = HeaderMap::new();
+        let size = file.metadata().unwrap().len();
+        let body = Progress::new(file, size, callback);
         self.request(
             "PUT",
-            file,
+            Body::File(body, size),
             self.bucket_name.as_str(),
             blob_id,
             headers,
@@ -91,10 +127,10 @@ impl OSS {
     }
 
     /// generic oss api request
-    fn request<T: Into<reqwest::Body>>(
+    fn request(
         &self,
         method: &str,
-        data: T,
+        data: Body,
         bucket_name: &str,
         object_key: &str,
         headers: HeaderMap,
@@ -131,12 +167,22 @@ impl OSS {
             "oss request header {:?} method {:?} url {:?}",
             new_headers, method, url
         );
-        let ret = self
+        let rb = self
             .client
             .request(method, url.as_str())
-            .headers(new_headers)
-            .body(data)
-            .send();
+            .headers(new_headers);
+
+        let ret;
+        match data {
+            Body::File(body, total) => {
+                let body = reqwest::Body::sized(body, total);
+                ret = rb.body(body).send();
+            }
+            Body::Buf(buf) => {
+                ret = rb.body(buf).send();
+            }
+        }
+
         match ret {
             Ok(mut resp) => {
                 let status = resp.status();
@@ -152,7 +198,14 @@ impl OSS {
 
     fn create_bucket(&self) -> IOResult<()> {
         let headers = HeaderMap::new();
-        self.request("PUT", "", self.bucket_name.as_str(), "", headers, &[])?;
+        self.request(
+            "PUT",
+            Body::Buf("".as_bytes().to_vec()),
+            self.bucket_name.as_str(),
+            "",
+            headers,
+            &[],
+        )?;
         Ok(())
     }
 }
@@ -191,7 +244,14 @@ impl BlobBackend for OSS {
         let end_at = offset + count as u64 - 1;
         let range = format!("bytes={}-{}", offset, end_at);
         headers.insert("Range", range.as_str().parse().unwrap());
-        let mut resp = self.request("GET", "", self.bucket_name.as_str(), blob_id, headers, &[])?;
+        let mut resp = self.request(
+            "GET",
+            Body::Buf("".as_bytes().to_vec()),
+            self.bucket_name.as_str(),
+            blob_id,
+            headers,
+            &[],
+        )?;
         let ret = resp.copy_to(buf);
         match ret {
             Ok(size) => Ok(size as usize),
@@ -205,7 +265,7 @@ impl BlobBackend for OSS {
         let position = format!("position={}", offset);
         self.request(
             "POST",
-            buf.to_owned(),
+            Body::Buf(buf.to_vec()),
             self.bucket_name.as_str(),
             blob_id,
             headers,

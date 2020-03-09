@@ -1,6 +1,6 @@
 use compress::lz4 as LZ4;
-use std::io::{Error, ErrorKind, Result};
 use lz4_compress;
+use std::io::{Error, ErrorKind, Result};
 
 pub fn compress_with_lz4_old(src: &[u8], dst: &mut Vec<u8>) -> Result<usize> {
     Ok(LZ4::encode_block(src, dst))

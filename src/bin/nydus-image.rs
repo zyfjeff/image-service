@@ -8,6 +8,9 @@ use image_builder::builder;
 extern crate clap;
 extern crate stderrlog;
 
+#[macro_use]
+extern crate log;
+
 use clap::{App, Arg, SubCommand};
 use uuid::Uuid;
 
@@ -124,7 +127,14 @@ fn main() -> Result<()> {
             );
 
             let blob_file = File::open(blob_path)?;
-            oss.put_object(blob_id.as_str(), blob_file)?;
+            oss.put_object(blob_id.as_str(), blob_file, |(current, total)| {
+                info!(
+                    "OSS blob uploading: {}/{} bytes ({}%)",
+                    current,
+                    total,
+                    current * 100 / total
+                );
+            })?;
         }
     }
 
