@@ -35,10 +35,12 @@ impl<'a> Builder<'a> {
         let f_blob = OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .open(blob_path)?;
         let f_bootstrap = OpenOptions::new()
             .write(true)
             .create(true)
+            .truncate(true)
             .open(bootstrap_path)?;
 
         Ok(Builder {
