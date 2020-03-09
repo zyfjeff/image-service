@@ -9,7 +9,7 @@ edition = "2018"
 [dependencies]
 lazy_static = "1.4.0"
 log = "0.4.8"
-micro_http = { git = "https://github.com/firecracker-microvm/firecracker", branch = "master" }
+micro_http = { git = "https://github.com/firecracker-microvm/micro-http.git", branch = "master" }
 serde = {version = ">=1.0.27", features = ["rc"] }
 serde_derive = ">=1.0.27"
 serde_json = ">=1.0.9"
