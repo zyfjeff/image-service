@@ -2,11 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+use std::ffi::c_void;
 use std::fs::{self, File};
 use std::io::prelude::*;
-use std::io::{Result, SeekFrom};
+use std::io::{Error, Result, SeekFrom};
 use std::os::linux::fs::MetadataExt;
 use std::path::Path;
+use std::str;
 
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
@@ -32,6 +34,8 @@ pub struct Node<'a> {
     chunks: Vec<RafsChunkInfo>,
     /// chunks info of symlink file
     link_chunks: Vec<RafsLinkDataInfo>,
+    /// xattr info of file
+    xattr_chunks: RafsInodeXattrInfos,
 }
 
 impl<'a> Node<'a> {
@@ -49,8 +53,9 @@ impl<'a> Node<'a> {
             path,
             parent,
             inode: RafsInodeInfo::new(),
-            chunks: vec![],
-            link_chunks: vec![],
+            chunks: Vec::new(),
+            link_chunks: Vec::new(),
+            xattr_chunks: RafsInodeXattrInfos::new(),
         }
     }
 
@@ -86,6 +91,85 @@ impl<'a> Node<'a> {
         return self.meta.st_mode() & libc::S_IFMT == libc::S_IFREG;
     }
 
+    fn build_inode_xattr(&mut self) -> Result<()> {
+        // Safe because we don't actually use raw
+        let name_size =
+            unsafe { libc::listxattr(self.path.as_ptr() as *const i8, std::ptr::null_mut(), 0) };
+        if name_size <= 0 {
+            return Ok(());
+        }
+
+        let mut buf: Vec<u8> = Vec::new();
+        buf.resize(name_size as usize, 0);
+        // Safe because we are calling into C functions.
+        unsafe {
+            let ret = libc::listxattr(
+                self.path.as_ptr() as *const i8,
+                buf.as_mut_ptr() as *mut i8,
+                name_size as usize,
+            );
+            if ret <= 0 {
+                return Ok(());
+            }
+        };
+
+        let names = match str::from_utf8(&buf) {
+            Ok(s) => {
+                let s: Vec<&str> = s.split_terminator("\0").collect();
+                Ok(s)
+            }
+            Err(_) => Err(Error::from_raw_os_error(libc::EINVAL)),
+        }?;
+
+        let mut count = 0;
+        for name in names.iter() {
+            let value_size = unsafe {
+                libc::getxattr(
+                    self.path.as_ptr() as *const i8,
+                    name.as_ptr() as *const i8,
+                    std::ptr::null_mut(),
+                    0,
+                )
+            };
+            if value_size < 0 {
+                continue;
+            }
+            if value_size == 0 {
+                count += 1;
+                self.xattr_chunks.data.insert(name.to_string(), vec![]);
+                continue;
+            }
+            // Need to read xattr value
+            let mut value_buf: Vec<u8> = Vec::new();
+            value_buf.resize(value_size as usize, 0);
+            // Safe because we are calling into C functions.
+            unsafe {
+                let ret = libc::getxattr(
+                    self.path.as_ptr() as *const i8,
+                    name.as_ptr() as *const i8,
+                    value_buf.as_mut_ptr() as *mut c_void,
+                    value_size as usize,
+                );
+                if ret < 0 {
+                    continue;
+                }
+                if ret == 0 {
+                    count += 1;
+                    self.xattr_chunks.data.insert(name.to_string(), vec![]);
+                    continue;
+                }
+            };
+            count += 1;
+            self.xattr_chunks.data.insert(name.to_string(), value_buf);
+        }
+
+        if count > 0 {
+            self.inode.i_flags |= INO_FLAG_XATTR;
+            self.xattr_chunks.count = count;
+        }
+        Ok(())
+    }
+
     fn build_inode(&mut self) -> Result<()> {
         if self.parent.is_none() {
             self.inode.name = String::from("/");
@@ -113,13 +197,15 @@ impl<'a> Node<'a> {
         self.inode.i_mtime = self.meta.st_mtime() as u64;
         self.inode.i_ctime = self.meta.st_ctime() as u64;
 
+        self.build_inode_xattr()?;
+
         if self.is_reg() {
-            self.inode.i_flags = INO_FLAG_HARDLINK;
+            self.inode.i_flags |= INO_FLAG_HARDLINK;
             let file_size = self.inode.i_size;
             let chunk_count = (file_size as f64 / DEFAULT_RAFS_BLOCK_SIZE as f64).ceil() as u64;
             self.inode.i_chunk_cnt = chunk_count;
         } else if self.is_symlink() {
-            self.inode.i_flags = INO_FLAG_SYMLINK;
+            self.inode.i_flags |= INO_FLAG_SYMLINK;
             let target_path = fs::read_link(self.path)?;
             let target_path_str = target_path.to_str().unwrap();
             let chunk_info_count = (target_path_str.as_bytes().len() as f64
@@ -219,6 +305,9 @@ impl<'a> Node<'a> {
     fn dump_bootstrap(&self, mut f_bootstrap: &File) -> Result<()> {
         // dump inode info to bootstrap
         self.inode.store(&mut f_bootstrap)?;
+
+        // dump inode xattr to bootstrap
+        self.xattr_chunks.store(&mut f_bootstrap)?;
 
         // dump chunk info to bootstrap
         for chunk in &self.chunks {
