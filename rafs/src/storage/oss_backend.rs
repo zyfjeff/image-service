@@ -156,17 +156,19 @@ impl OSS {
             prefix = format!("/{}", bucket_name);
         }
         let resource = format!("{}/{}{}", prefix, object_key, query_str);
+        let url = format!("{}{}", url.as_str(), query_str);
+        debug!(
+            "oss request header {:?} method {:?} url {:?}",
+            new_headers, method, url
+        );
+
         let authorization = self.sign(method, &new_headers, resource.as_str());
         new_headers.insert(
             HEADER_AUTHORIZATION,
             authorization.as_str().parse().unwrap(),
         );
         let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
-        let url = format!("{}{}", url.as_str(), query_str);
-        debug!(
-            "oss request header {:?} method {:?} url {:?}",
-            new_headers, method, url
-        );
+
         let rb = self
             .client
             .request(method, url.as_str())

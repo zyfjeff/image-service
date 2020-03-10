@@ -53,7 +53,7 @@ impl<'a> Builder<'a> {
     }
 
     fn dump_superblock(&mut self) -> Result<RafsSuperBlockInfo> {
-        info!("building superblock {}", self.root);
+        info!("building superblock");
         let mut sb = RafsSuperBlockInfo::new();
 
         sb.s_inodes_count = 0;
@@ -102,7 +102,7 @@ impl<'a> Builder<'a> {
 
         let root_path = Path::new(self.root);
         let root_meta = &root_path.metadata()?;
-        let mut root_node = Node::new(self.blob_id, self.blob_offset, root_meta, "/", &None);
+        let mut root_node = Node::new(self.blob_id, self.blob_offset, root_meta, root_path.to_str().unwrap(), &None);
         root_node.dump(&mut self.f_blob, &mut self.f_bootstrap)?;
 
         self.walk_dirs(root_path, &Some(Box::new(root_node)))?;
