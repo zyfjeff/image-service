@@ -463,6 +463,7 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
         if inode.is_symlink() {
             let mut info = RafsLinkDataInfo::new(inode.i_chunk_cnt as usize);
             info.load(r)?;
+            inode.i_target = info.target;
         } else if inode.is_reg() {
             for _ in 0..inode.i_chunk_cnt {
                 let mut info = RafsChunkInfo::new();
