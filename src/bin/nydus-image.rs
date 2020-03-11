@@ -36,60 +36,55 @@ fn main() -> Result<()> {
             SubCommand::with_name("create")
                 .about("create image and upload blob to oss")
                 .arg(
+                    Arg::with_name("SOURCE")
+                        .help("source directory")
+                        .required(true)
+                        .index(1),
+                )
+                .arg(
                     Arg::with_name("blob")
                         .long("blob")
                         .help("blob file path (required)")
                         .takes_value(true)
-                        .min_values(1),
+                        .required(true)
                 )
                 .arg(
                     Arg::with_name("bootstrap")
                         .long("bootstrap")
                         .help("bootstrap file path (required)")
                         .takes_value(true)
-                        .min_values(1),
+                        .required(true)
                 )
                 .arg(
                     Arg::with_name("blob_id")
                         .long("blob_id")
                         .help("blob id (as object key in oss)")
                         .takes_value(true)
-                        .min_values(0),
                 )
                 .arg(
                     Arg::with_name("oss_endpoint")
                         .long("oss_endpoint")
                         .help("oss endpoint (enable oss upload if specified)")
                         .takes_value(true)
-                        .min_values(0),
                 )
                 .arg(
                     Arg::with_name("oss_access_key_id")
                         .long("oss_access_key_id")
                         .help("oss access key id")
                         .takes_value(true)
-                        .min_values(0),
                 )
                 .arg(
                     Arg::with_name("oss_access_key_secret")
                         .long("oss_access_key_secret")
                         .help("oss access key secret")
                         .takes_value(true)
-                        .min_values(0),
                 )
                 .arg(
                     Arg::with_name("oss_bucket_name")
                         .long("oss_bucket_name")
                         .help("oss bucket name")
                         .takes_value(true)
-                        .min_values(0),
                 )
-                .arg(
-                    Arg::with_name("SOURCE")
-                        .help("source directory")
-                        .required(true)
-                        .index(1),
-                ),
         )
         .get_matches();
 
