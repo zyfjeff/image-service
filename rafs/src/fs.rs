@@ -63,8 +63,7 @@ struct RafsInode {
     // data chunks
     i_data: Vec<RafsBlk>,
     // dir
-    // FIXME: hardlinks
-    i_child: Vec<Inode>,
+    i_child: Vec<(Inode, String)>,
 }
 
 impl RafsInode {
@@ -109,8 +108,12 @@ impl RafsInode {
         self.i_mode & libc::S_IFMT == libc::S_IFREG
     }
 
-    fn add_child(&mut self, ino: Inode) {
-        self.i_child.push(ino);
+    fn is_hardlink(&self) -> bool {
+        self.i_flags & INO_FLAG_HARDLINK == INO_FLAG_HARDLINK || self.i_nlink > 0
+    }
+
+    fn add_child(&mut self, child: &RafsInode) {
+        self.i_child.push((child.i_ino, child.i_name.to_string()));
     }
 
     fn get_attr(&self) -> Attr {
@@ -237,16 +240,31 @@ impl RafsSuper {
     }
 
     fn hash_inode(&self, ino: RafsInode) -> Result<()> {
-        self.s_inodes
-            .write()
-            .unwrap()
-            .insert(ino.i_ino, Arc::new(ino));
+        let mut skip = false;
+        if ino.is_hardlink() {
+            if let Some(inode) = self
+                .s_inodes
+                .read()
+                .unwrap()
+                .get(&ino.i_ino)
+                .map(Arc::clone)
+            {
+                skip = inode.i_data.len() > 0;
+            }
+        }
+
+        if !skip {
+            self.s_inodes
+                .write()
+                .unwrap()
+                .insert(ino.i_ino, Arc::new(ino));
+        }
         Ok(())
     }
 
-    fn get_entry(&self, ino: Inode) -> Result<Entry> {
+    fn get_entry(&self, ino: &Inode) -> Result<Entry> {
         let inodes = self.s_inodes.read().unwrap();
-        let inode = inodes.get(&ino).ok_or(ebadf())?;
+        let inode = inodes.get(ino).ok_or(ebadf())?;
         let entry = Entry {
             attr: inode.get_attr().into(),
             inode: inode.i_ino,
@@ -284,13 +302,13 @@ impl RafsSuper {
         }
 
         let mut next = offset + 1;
-        for child in rafs_inode.i_child[offset as usize..].iter() {
-            let child_inode = inodes.get(&child).ok_or(ebadf())?;
+        for (ino, name) in rafs_inode.i_child[offset as usize..].iter() {
+            let child_inode = inodes.get(&ino).ok_or(ebadf())?;
             match add_entry(DirEntry {
                 ino: child_inode.i_ino,
                 offset: next,
                 type_: 0,
-                name: child_inode.i_name.clone().as_bytes(),
+                name: name.to_string().as_bytes(),
             }) {
                 Ok(0) => break,
                 Ok(_) => next += 1,
@@ -322,9 +340,6 @@ pub struct Rafs<B: backend::BlobBackend + 'static> {
     conf: RafsConfig,
 
     sb: RafsSuper,
-    fuse_inodes: RwLock<HashMap<Inode, Inode>>,
-    // TODO: add vfs inode map, in order to support multiple
-    // rafs super per instance, we need another indirection layer
     device: device::RafsDevice<B>,
     initialized: bool,
 }
@@ -334,7 +349,6 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
         Rafs {
             sb: RafsSuper::new(),
             device: device::RafsDevice::new(conf.dev_config(), b),
-            fuse_inodes: RwLock::new(HashMap::new()),
             conf: conf,
             initialized: false,
         }
@@ -343,8 +357,6 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
     // mount an rafs metadata provided by Read, to the specified virtual path
     // E.g., mount / would create a virtual path the same as the container rootfs
     pub fn import<R: Read>(&mut self, r: &mut R) -> Result<()> {
-        info!("Mounting rafs");
-        // FIXME: Only support single root mount for now.
         if self.initialized {
             warn! {"Rafs already initialized"}
             return Err(Error::new(ErrorKind::AlreadyExists, "Already mounted"));
@@ -355,17 +367,13 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
             Err(e)
         })?;
         self.initialized = true;
-        self.fuse_inodes
-            .write()
-            .unwrap()
-            .insert(ROOT_ID, self.sb.s_root_inode);
-        info!("Mounted rafs");
+        info!("rafs imported");
         Ok(())
     }
 
     // umount a prviously mounted rafs virtual path
     pub fn destroy(&mut self) -> Result<()> {
-        info! {"Umounting rafs"}
+        info! {"Destroy rafs"}
         self.sb.destroy()?;
         self.initialized = false;
         Ok(())
@@ -384,7 +392,13 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
         root_inode.init(&root_info);
         self.unpack_dir(&mut root_inode, r)?;
         self.sb.s_root_inode = root_inode.i_ino;
-        self.sb.hash_inode(root_inode)
+        // root inode must have ROOT_ID as its inode number
+        self.sb
+            .s_inodes
+            .write()
+            .unwrap()
+            .insert(ROOT_ID, Arc::new(root_inode));
+        Ok(())
     }
 
     fn unpack_dir<R: Read>(&self, dir: &mut RafsInode, r: &mut R) -> Result<Option<RafsInodeInfo>> {
@@ -425,7 +439,7 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
 
             let mut inode = RafsInode::new();
             inode.init(&info);
-            dir.add_child(info.i_ino);
+            dir.add_child(&inode);
             if inode.is_dir() {
                 match self.unpack_dir(&mut inode, r)? {
                     Some(node) => next = Some(node),
@@ -512,7 +526,6 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
 
     fn destroy(&self) {
         self.sb.s_inodes.write().unwrap().clear();
-        self.fuse_inodes.write().unwrap().clear();
     }
 
     fn lookup(&self, ctx: Context, parent: u64, name: &CStr) -> Result<Entry> {
@@ -523,28 +536,21 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         }
         let target = name.to_str().or_else(|_| Err(ebadf()))?;
         if target == DOT || (parent == ROOT_ID && target == DOTDOT) {
-            let mut entry = self.sb.get_entry(parent)?;
+            let mut entry = self.sb.get_entry(&parent)?;
             entry.inode = parent;
             return Ok(entry);
         }
-        for ino in p.i_child.iter() {
-            let child = inodes.get(&ino).ok_or(ebadf())?;
-            if !target.eq(&child.i_name) {
+        for (ino, name) in p.i_child.iter() {
+            if !target.eq(name) {
                 continue;
             }
-            let entry = self.sb.get_entry(child.i_ino)?;
-            self.fuse_inodes
-                .write()
-                .unwrap()
-                .insert(child.i_ino, child.i_ino);
+            let entry = self.sb.get_entry(ino)?;
             return Ok(entry);
         }
         Err(enoent())
     }
 
-    fn forget(&self, ctx: Context, inode: u64, count: u64) {
-        self.fuse_inodes.write().unwrap().remove(&inode);
-    }
+    fn forget(&self, ctx: Context, inode: u64, count: u64) {}
 
     fn batch_forget(&self, ctx: Context, requests: Vec<(u64, u64)>) {
         for (inode, count) in requests {
@@ -716,7 +722,7 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         F: FnMut(DirEntry, Entry) -> Result<usize>,
     {
         self.sb.do_readdir(ctx, inode, size, offset, |dir_entry| {
-            let entry = self.sb.get_entry(dir_entry.ino)?;
+            let entry = self.sb.get_entry(&dir_entry.ino)?;
             add_entry(dir_entry, entry)
         })
     }
