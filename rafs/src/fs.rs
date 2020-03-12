@@ -33,7 +33,6 @@ const DOTDOT: &'static str = "..";
 
 type Inode = u64;
 type Handle = u64;
-type SuperIndex = u64;
 
 #[derive(Default, Clone, Debug)]
 struct RafsInode {
@@ -200,7 +199,6 @@ struct RafsSuper {
     s_blocks_count: u64,
     s_attr_timeout: Duration,
     s_entry_timeout: Duration,
-    s_index: SuperIndex,
     s_inodes: RwLock<BTreeMap<Inode, Arc<RafsInode>>>,
 }
 
@@ -216,7 +214,6 @@ impl RafsSuper {
             s_blocks_count: 0,
             s_attr_timeout: Duration::from_secs(RAFS_DEFAULT_ATTR_TIMEOUT),
             s_entry_timeout: Duration::from_secs(RAFS_DEFAULT_ENTRY_TIMEOUT),
-            s_index: 0,
             s_inodes: RwLock::new(BTreeMap::new()),
         }
     }
@@ -325,7 +322,7 @@ pub struct Rafs<B: backend::BlobBackend + 'static> {
     conf: RafsConfig,
 
     sb: RafsSuper,
-    fuse_inodes: RwLock<HashMap<Inode, (SuperIndex, Inode)>>,
+    fuse_inodes: RwLock<HashMap<Inode, Inode>>,
     // TODO: add vfs inode map, in order to support multiple
     // rafs super per instance, we need another indirection layer
     device: device::RafsDevice<B>,
@@ -345,15 +342,15 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
 
     // mount an rafs metadata provided by Read, to the specified virtual path
     // E.g., mount / would create a virtual path the same as the container rootfs
-    pub fn mount<R: Read>(&mut self, r: &mut R, path: &str) -> Result<()> {
-        info! {"Mounting rafs at {}", &path};
+    pub fn import<R: Read>(&mut self, r: &mut R) -> Result<()> {
+        info!("Mounting rafs");
         // FIXME: Only support single root mount for now.
         if self.initialized {
             warn! {"Rafs already initialized"}
             return Err(Error::new(ErrorKind::AlreadyExists, "Already mounted"));
         }
         self.device.init()?;
-        self.import(r).or_else(|e| {
+        self.do_import(r).or_else(|e| {
             self.sb.destroy()?;
             Err(e)
         })?;
@@ -361,20 +358,20 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
         self.fuse_inodes
             .write()
             .unwrap()
-            .insert(ROOT_ID, (self.sb.s_index, self.sb.s_root_inode));
-        info! {"Mounted rafs at {}", &path};
+            .insert(ROOT_ID, self.sb.s_root_inode);
+        info!("Mounted rafs");
         Ok(())
     }
 
     // umount a prviously mounted rafs virtual path
-    pub fn umount(&mut self, path: &str) -> Result<()> {
+    pub fn destroy(&mut self) -> Result<()> {
         info! {"Umounting rafs"}
         self.sb.destroy()?;
         self.initialized = false;
         Ok(())
     }
 
-    fn import<R: Read>(&mut self, r: &mut R) -> Result<()> {
+    fn do_import<R: Read>(&mut self, r: &mut R) -> Result<()> {
         // import superblock
         let mut info = RafsSuperBlockInfo::new();
         info.load(r)?;
@@ -387,8 +384,6 @@ impl<B: backend::BlobBackend + 'static> Rafs<B> {
         root_inode.init(&root_info);
         self.unpack_dir(&mut root_inode, r)?;
         self.sb.s_root_inode = root_inode.i_ino;
-        // TODO: add multiple super block support
-        self.sb.s_index = 100;
         self.sb.hash_inode(root_inode)
     }
 
@@ -541,7 +536,7 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
             self.fuse_inodes
                 .write()
                 .unwrap()
-                .insert(child.i_ino, (self.sb.s_index, child.i_ino));
+                .insert(child.i_ino, child.i_ino);
             return Ok(entry);
         }
         Err(enoent())
@@ -640,7 +635,7 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         st.f_namemax = 255;
         st.f_bsize = 512;
         st.f_blocks = self.sb.s_blocks_count;
-        st.f_fsid = self.sb.s_magic as u64 + self.sb.s_index;
+        st.f_fsid = self.sb.s_magic as u64;
         st.f_files = self.sb.s_inodes_count;
 
         Ok(st)

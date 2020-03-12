@@ -437,7 +437,7 @@ fn main() -> Result<()> {
     if metadata != "" {
         let mut rafs = Rafs::new(rafs_conf.clone(), oss_backend::new());
         let mut file = File::open(metadata)?;
-        rafs.mount(&mut file, "/")?;
+        rafs.import(&mut file)?;
         info!("rafs mounted");
         let fs = Arc::clone(&fs_backend.write().unwrap().vfs);
         fs.mount(rafs, "/").unwrap();
@@ -453,7 +453,7 @@ fn main() -> Result<()> {
             move |info| {
                 let mut rafs = Rafs::new(rafs_conf.clone(), oss_backend::new());
                 let mut file = File::open(&info.source).map_err(ApiError::MountFailure)?;
-                rafs.mount(&mut file, "/").map_err(ApiError::MountFailure)?;
+                rafs.import(&mut file).map_err(ApiError::MountFailure)?;
                 info!("rafs mounted");
                 let vfs = Arc::clone(&backend.write().unwrap().vfs);
 
