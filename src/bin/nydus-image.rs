@@ -13,6 +13,7 @@ extern crate log;
 
 use clap::{App, Arg, SubCommand};
 use uuid::Uuid;
+use mktemp::Temp;
 
 use std::fs::File;
 use std::io::{self, Result, Write};
@@ -44,9 +45,8 @@ fn main() -> Result<()> {
                 .arg(
                     Arg::with_name("blob")
                         .long("blob")
-                        .help("blob file path (required)")
+                        .help("blob file path")
                         .takes_value(true)
-                        .required(true)
                 )
                 .arg(
                     Arg::with_name("bootstrap")
@@ -90,7 +90,7 @@ fn main() -> Result<()> {
 
     if let Some(matches) = cmd.subcommand_matches("create") {
         let source_path = matches.value_of("SOURCE").expect("SOURCE is required");
-        let blob_path = matches.value_of("blob").expect("blob is required");
+        let blob_path = matches.value_of("blob");
         let bootstrap_path = matches
             .value_of("bootstrap")
             .expect("bootstrap is required");
@@ -100,8 +100,17 @@ fn main() -> Result<()> {
             blob_id = String::from(p_blob_id);
         }
 
+        let temp_blob_file = Temp::new_file().unwrap();
+
+        let real_blob_path;
+        if blob_path.is_none() {
+            real_blob_path = temp_blob_file.to_str().unwrap();
+        } else {
+            real_blob_path = blob_path.unwrap();
+        }
+
         let mut ib =
-            builder::Builder::new(source_path, blob_path, bootstrap_path, blob_id.as_str())?;
+            builder::Builder::new(source_path, real_blob_path, bootstrap_path, blob_id.as_str())?;
         ib.build()?;
 
         if let Some(oss_endpoint) = matches.value_of("oss_endpoint") {
@@ -122,7 +131,7 @@ fn main() -> Result<()> {
                 oss_bucket_name,
             );
 
-            let blob_file = File::open(blob_path)?;
+            let blob_file = File::open(real_blob_path)?;
             oss.put_object(blob_id.as_str(), blob_file, |(current, total)| {
                 io::stdout().flush().unwrap();
                 print!("\r");
@@ -136,7 +145,11 @@ fn main() -> Result<()> {
 
             print!("\r");
             io::stdout().flush().unwrap();
+        }
 
+        if blob_path.is_some() {
+            info!("build finished, blob id: {}, blob file: {}", blob_id.as_str(), real_blob_path);
+        } else {
             info!("build finished, blob id: {}", blob_id.as_str());
         }
     }

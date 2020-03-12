@@ -60,17 +60,23 @@ impl<'a> Node<'a> {
     }
 
     pub fn dump(&mut self, f_blob: &File, f_bootstrap: &File) -> Result<()> {
-        let mut file_type = "file";
+        let mut file_type = "";
         if self.is_dir() {
             file_type = "dir";
         } else if self.is_symlink() {
             file_type = "symlink"
+        } else if self.is_reg() {
+            file_type = "file";
         }
-        info!("building {} {}", file_type, self.path);
 
-        self.build_inode()?;
-        self.dump_blob(f_blob)?;
-        self.dump_bootstrap(f_bootstrap)?;
+        if file_type != "" {
+            info!("building {} {}", file_type, self.path);
+            self.build_inode()?;
+            self.dump_blob(f_blob)?;
+            self.dump_bootstrap(f_bootstrap)?;
+        } else {
+            info!("skip build {}", self.path);
+        }
 
         Ok(())
     }

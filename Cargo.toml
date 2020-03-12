@@ -14,6 +14,7 @@ vmm-sys-util = ">=0.3.1"
 clap = "2.33"
 config = "0.10"
 stderrlog = "0.4"
+mktemp = "0.4.0"
 uuid = { version = "0.8", features = ["serde", "v4"] }
 vm-memory = { git = "https://github.com/rust-vmm/vm-memory", branch = "master", features = ["backend-mmap"] }
 vhost_rs = { path = "vhost_rs", features = ["vhost-user-slave"] }

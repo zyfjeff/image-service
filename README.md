@@ -47,7 +47,6 @@ mount -t virtiofs nydus /mnt
 ```
 nydus-image create \
             --blob_id $BLOB_ID \
-            --blob $BLOB_PATH \
             --bootstrap $BOOTSTRAP_PATH \
             --oss_endpoint $OSS_ENDPOINT \
             --oss_access_key_id $OSS_ACCESS_KEY_ID \
