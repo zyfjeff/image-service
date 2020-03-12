@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use std::ffi::c_void;
+use std::ffi::{c_void, CString};
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::io::{Error, Result, SeekFrom};
@@ -92,9 +92,10 @@ impl<'a> Node<'a> {
     }
 
     fn build_inode_xattr(&mut self) -> Result<()> {
-        // Safe because we don't actually use raw
+        let filepath = CString::new(self.path)?;
+        // Safe because we are calling into C functions.
         let name_size =
-            unsafe { libc::listxattr(self.path.as_ptr() as *const i8, std::ptr::null_mut(), 0) };
+            unsafe { libc::llistxattr(filepath.as_ptr() as *const i8, std::ptr::null_mut(), 0) };
         if name_size <= 0 {
             return Ok(());
         }
@@ -103,8 +104,8 @@ impl<'a> Node<'a> {
         buf.resize(name_size as usize, 0);
         // Safe because we are calling into C functions.
         unsafe {
-            let ret = libc::listxattr(
-                self.path.as_ptr() as *const i8,
+            let ret = libc::llistxattr(
+                filepath.as_ptr() as *const i8,
                 buf.as_mut_ptr() as *mut i8,
                 name_size as usize,
             );
@@ -124,8 +125,8 @@ impl<'a> Node<'a> {
         let mut count = 0;
         for name in names.iter() {
             let value_size = unsafe {
-                libc::getxattr(
-                    self.path.as_ptr() as *const i8,
+                libc::lgetxattr(
+                    filepath.as_ptr() as *const i8,
                     name.as_ptr() as *const i8,
                     std::ptr::null_mut(),
                     0,
@@ -144,8 +145,8 @@ impl<'a> Node<'a> {
             value_buf.resize(value_size as usize, 0);
             // Safe because we are calling into C functions.
             unsafe {
-                let ret = libc::getxattr(
-                    self.path.as_ptr() as *const i8,
+                let ret = libc::lgetxattr(
+                    filepath.as_ptr() as *const i8,
                     name.as_ptr() as *const i8,
                     value_buf.as_mut_ptr() as *mut c_void,
                     value_size as usize,
@@ -166,6 +167,11 @@ impl<'a> Node<'a> {
         if count > 0 {
             self.inode.i_flags |= INO_FLAG_XATTR;
             self.xattr_chunks.count = count;
+            trace!(
+                "inode {} has xattr {:?}",
+                self.inode.name,
+                self.xattr_chunks
+            );
         }
         Ok(())
     }
