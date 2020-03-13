@@ -129,7 +129,10 @@ impl<'a> Node<'a> {
         }?;
 
         let mut count = 0;
-        for name in names.iter() {
+        for n in names.iter() {
+            // make sure name is nul terminated
+            let mut name = n.to_string();
+            name.push('\0');
             let value_size = unsafe {
                 libc::lgetxattr(
                     filepath.as_ptr() as *const i8,
@@ -143,7 +146,7 @@ impl<'a> Node<'a> {
             }
             if value_size == 0 {
                 count += 1;
-                self.xattr_chunks.data.insert(name.to_string(), vec![]);
+                self.xattr_chunks.data.insert(name, vec![]);
                 continue;
             }
             // Need to read xattr value
@@ -162,12 +165,12 @@ impl<'a> Node<'a> {
                 }
                 if ret == 0 {
                     count += 1;
-                    self.xattr_chunks.data.insert(name.to_string(), vec![]);
+                    self.xattr_chunks.data.insert(name, vec![]);
                     continue;
                 }
             };
             count += 1;
-            self.xattr_chunks.data.insert(name.to_string(), value_buf);
+            self.xattr_chunks.data.insert(name, value_buf);
         }
 
         if count > 0 {

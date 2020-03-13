@@ -452,6 +452,13 @@ impl RafsLayoutLoadStore for RafsInodeXattrInfos {
             let key = read_string(&mut p, key_size as usize)?;
             let value_size = read_le_u32(&mut p);
             let value = read_opaque(&mut p, value_size as usize)?;
+            trace!(
+                "key_size {} key {} value_size {} value {:?}",
+                key_size,
+                key,
+                value_size,
+                value_size
+            );
             self.data.insert(key, value);
         }
 
