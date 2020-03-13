@@ -22,7 +22,9 @@ use crate::storage::*;
 // rafs superblock magic number
 const RAFS_SUPER_MAGIC: u32 = 0x52414653;
 // rafs version number
-const RAFS_CURR_VERSION: u16 = 2;
+const RAFS_CURR_VERSION: u16 = 0;
+// minimal supported version
+const RAFS_MIN_VERSION: u16 = RAFS_CURR_VERSION;
 
 const RAFS_INODE_BLOCKSIZE: u32 = 4096;
 const RAFS_DEFAULT_ATTR_TIMEOUT: u64 = 1 << 32;
@@ -222,7 +224,7 @@ impl RafsSuper {
     }
 
     fn init(&mut self, info: RafsSuperBlockInfo) -> Result<()> {
-        if info.s_magic != RAFS_SUPER_MAGIC || info.s_fs_version != RAFS_CURR_VERSION {
+        if info.s_magic != RAFS_SUPER_MAGIC || info.s_fs_version < RAFS_MIN_VERSION {
             warn!(
                 "invalid superblock, magic {}, version {}",
                 &info.s_magic, info.s_fs_version
