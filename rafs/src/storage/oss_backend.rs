@@ -146,7 +146,7 @@ impl OSS {
         }
         let url = format!("https://{}{}", host_prefix, self.endpoint);
         let mut url = Url::parse(url.as_str()).unwrap();
-        url = url.join(object_key).unwrap();
+        url.path_segments_mut().unwrap().push(object_key);
         let mut query_str = String::new();
         if query.len() > 0 {
             query_str = format!("?{}", query.join("&"));
@@ -158,7 +158,7 @@ impl OSS {
         let resource = format!("{}/{}{}", prefix, object_key, query_str);
         let url = format!("{}{}", url.as_str(), query_str);
         debug!(
-            "oss request header {:?} method {:?} url {:?}",
+            "oss request {:?} method {:?} url {:?}",
             new_headers, method, url
         );
 
