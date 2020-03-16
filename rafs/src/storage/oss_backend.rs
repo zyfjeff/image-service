@@ -68,8 +68,13 @@ impl OSS {
         access_key_secret: &str,
         bucket_name: &str,
     ) -> OSS {
+        let client = reqwest::Client::builder()
+            .gzip(true)
+            .timeout(None)
+            .build()
+            .unwrap();
         OSS {
-            client: reqwest::Client::new(),
+            client,
             endpoint: String::from(endpoint),
             access_key_id: String::from(access_key_id),
             access_key_secret: String::from(access_key_secret),
