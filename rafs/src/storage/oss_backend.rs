@@ -251,19 +251,25 @@ impl BlobBackend for OSS {
         let end_at = offset + count as u64 - 1;
         let range = format!("bytes={}-{}", offset, end_at);
         headers.insert("Range", range.as_str().parse().unwrap());
-        let mut resp = self.request(
-            "GET",
-            Body::Buf("".as_bytes().to_vec()),
-            self.bucket_name.as_str(),
-            blob_id,
-            headers,
-            &[],
-        )?;
-        let ret = resp.copy_to(buf);
-        match ret {
-            Ok(size) => Ok(size as usize),
-            Err(err) => Err(Error::new(ErrorKind::BrokenPipe, format!("{}", err))),
-        }
+        let mut resp = self
+            .request(
+                "GET",
+                Body::Buf("".as_bytes().to_vec()),
+                self.bucket_name.as_str(),
+                blob_id,
+                headers,
+                &[],
+            )
+            .or_else(|e| {
+                error!("oss req failed {:?}", e);
+                Err(e)
+            })?;
+        resp.copy_to(buf)
+            .or_else(|err| {
+                error!("oss read failed {:?}", err);
+                Err(Error::new(ErrorKind::BrokenPipe, format!("{}", err)))
+            })
+            .map(|size| size as usize)
     }
 
     /// append data to oss object
