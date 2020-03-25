@@ -38,12 +38,7 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new(
-        blob_id: String,
-        blob_offset: u64,
-        path: String,
-        parent: Option<Box<Node>>,
-    ) -> Node {
+    pub fn new(blob_id: String, blob_offset: u64, path: String, parent: Option<Box<Node>>) -> Node {
         Node {
             blob_id,
             blob_offset,
@@ -56,7 +51,12 @@ impl Node {
         }
     }
 
-    pub fn dump(&mut self, f_blob: &File, f_bootstrap: &File, hardlink_node: Option<Box<Node>>) -> Result<u64> {
+    pub fn dump(
+        &mut self,
+        f_blob: &File,
+        f_bootstrap: &File,
+        hardlink_node: Option<Box<Node>>,
+    ) -> Result<u64> {
         let mut file_type = "";
         if self.is_dir() {
             file_type = "dir";
@@ -84,7 +84,7 @@ impl Node {
 
     fn meta(&self) -> Box<dyn MetadataExt> {
         let path = Path::new(self.path.as_str());
-        Box::new(path.metadata().unwrap())
+        Box::new(path.symlink_metadata().unwrap())
     }
 
     fn is_dir(&mut self) -> bool {
@@ -200,7 +200,11 @@ impl Node {
             return Ok(());
         }
 
-        let file_name = Path::new(self.path.as_str()).file_name().unwrap().to_str().unwrap();
+        let file_name = Path::new(self.path.as_str())
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap();
         let parent = self.parent.as_ref().unwrap();
         let meta = self.meta();
 
