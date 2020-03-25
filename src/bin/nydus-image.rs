@@ -110,7 +110,7 @@ fn main() -> Result<()> {
         }
 
         let mut ib =
-            builder::Builder::new(source_path, real_blob_path, bootstrap_path, blob_id.as_str())?;
+            builder::Builder::new(source_path.to_owned(), real_blob_path.to_owned(), bootstrap_path.to_owned(), blob_id.clone())?;
         ib.build()?;
 
         if let Some(oss_endpoint) = matches.value_of("oss_endpoint") {

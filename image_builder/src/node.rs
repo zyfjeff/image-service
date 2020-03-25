@@ -17,17 +17,16 @@ use rafs::layout::*;
 
 use utils;
 
-pub struct Node<'a> {
+#[derive(Default, Clone, Debug)]
+pub struct Node {
     /// image blob id
-    blob_id: &'a str,
+    blob_id: String,
     /// offset of blob file
-    blob_offset: u64,
-    /// file metadata
-    meta: &'a dyn MetadataExt,
+    pub blob_offset: u64,
     /// file path
-    path: &'a str,
+    path: String,
     /// parent dir of file
-    parent: &'a Option<Box<Node<'a>>>,
+    parent: Option<Box<Node>>,
     /// file inode info
     inode: RafsInodeInfo,
     /// chunks info of file
@@ -38,18 +37,16 @@ pub struct Node<'a> {
     xattr_chunks: RafsInodeXattrInfos,
 }
 
-impl<'a> Node<'a> {
+impl Node {
     pub fn new(
-        blob_id: &'a str,
+        blob_id: String,
         blob_offset: u64,
-        meta: &'a dyn MetadataExt,
-        path: &'a str,
-        parent: &'a Option<Box<Node>>,
-    ) -> Node<'a> {
+        path: String,
+        parent: Option<Box<Node>>,
+    ) -> Node {
         Node {
             blob_id,
             blob_offset,
-            meta,
             path,
             parent,
             inode: RafsInodeInfo::new(),
@@ -59,46 +56,55 @@ impl<'a> Node<'a> {
         }
     }
 
-    pub fn dump(&mut self, f_blob: &File, f_bootstrap: &File) -> Result<()> {
+    pub fn dump(&mut self, f_blob: &File, f_bootstrap: &File, hardlink_node: Option<Box<Node>>) -> Result<u64> {
         let mut file_type = "";
         if self.is_dir() {
             file_type = "dir";
         } else if self.is_symlink() {
             file_type = "symlink"
         } else if self.is_reg() {
-            file_type = "file";
+            if self.is_hardlink() {
+                file_type = "hardlink";
+            } else {
+                file_type = "file";
+            }
         }
 
         if file_type != "" {
             info!("building {} {}", file_type, self.path);
             self.build_inode()?;
-            self.dump_blob(f_blob)?;
+            self.dump_blob(f_blob, hardlink_node)?;
             self.dump_bootstrap(f_bootstrap)?;
         } else {
             info!("skip build {}", self.path);
         }
 
-        Ok(())
+        Ok(self.inode.i_ino)
     }
 
-    pub fn blob_offset(&self) -> u64 {
-        self.blob_offset
+    fn meta(&self) -> Box<dyn MetadataExt> {
+        let path = Path::new(self.path.as_str());
+        Box::new(path.metadata().unwrap())
     }
 
     fn is_dir(&mut self) -> bool {
-        return self.meta.st_mode() & libc::S_IFMT == libc::S_IFDIR;
+        return self.meta().st_mode() & libc::S_IFMT == libc::S_IFDIR;
     }
 
     fn is_symlink(&mut self) -> bool {
-        return self.meta.st_mode() & libc::S_IFMT == libc::S_IFLNK;
+        return self.meta().st_mode() & libc::S_IFMT == libc::S_IFLNK;
     }
 
     fn is_reg(&mut self) -> bool {
-        return self.meta.st_mode() & libc::S_IFMT == libc::S_IFREG;
+        return self.meta().st_mode() & libc::S_IFMT == libc::S_IFREG;
+    }
+
+    fn is_hardlink(&self) -> bool {
+        return self.meta().st_nlink() > 1;
     }
 
     fn build_inode_xattr(&mut self) -> Result<()> {
-        let filepath = CString::new(self.path)?;
+        let filepath = CString::new(self.path.as_str())?;
         // Safe because we are calling into C functions.
         let name_size =
             unsafe { libc::llistxattr(filepath.as_ptr() as *const i8, std::ptr::null_mut(), 0) };
@@ -194,23 +200,24 @@ impl<'a> Node<'a> {
             return Ok(());
         }
 
-        let file_name = Path::new(self.path).file_name().unwrap().to_str().unwrap();
+        let file_name = Path::new(self.path.as_str()).file_name().unwrap().to_str().unwrap();
         let parent = self.parent.as_ref().unwrap();
+        let meta = self.meta();
 
         self.inode.name = String::from(file_name);
         self.inode.i_parent = parent.inode.i_ino;
-        self.inode.i_ino = self.meta.st_ino();
-        self.inode.i_mode = self.meta.st_mode();
-        self.inode.i_uid = self.meta.st_uid();
-        self.inode.i_gid = self.meta.st_gid();
+        self.inode.i_ino = meta.st_ino();
+        self.inode.i_mode = meta.st_mode();
+        self.inode.i_uid = meta.st_uid();
+        self.inode.i_gid = meta.st_gid();
         self.inode.i_padding = 0;
-        self.inode.i_rdev = self.meta.st_rdev();
-        self.inode.i_size = self.meta.st_size();
-        self.inode.i_nlink = self.meta.st_nlink();
-        self.inode.i_blocks = self.meta.st_blocks();
-        self.inode.i_atime = self.meta.st_atime() as u64;
-        self.inode.i_mtime = self.meta.st_mtime() as u64;
-        self.inode.i_ctime = self.meta.st_ctime() as u64;
+        self.inode.i_rdev = meta.st_rdev();
+        self.inode.i_size = meta.st_size();
+        self.inode.i_nlink = meta.st_nlink();
+        self.inode.i_blocks = meta.st_blocks();
+        self.inode.i_atime = meta.st_atime() as u64;
+        self.inode.i_mtime = meta.st_mtime() as u64;
+        self.inode.i_ctime = meta.st_ctime() as u64;
 
         self.build_inode_xattr()?;
 
@@ -221,7 +228,7 @@ impl<'a> Node<'a> {
             self.inode.i_chunk_cnt = chunk_count;
         } else if self.is_symlink() {
             self.inode.i_flags |= INO_FLAG_SYMLINK;
-            let target_path = fs::read_link(self.path)?;
+            let target_path = fs::read_link(self.path.as_str())?;
             let target_path_str = target_path.to_str().unwrap();
             let chunk_info_count = (target_path_str.as_bytes().len() as f64
                 / RAFS_CHUNK_INFO_SIZE as f64)
@@ -232,13 +239,19 @@ impl<'a> Node<'a> {
         Ok(())
     }
 
-    fn dump_blob(&mut self, mut f_blob: &File) -> Result<()> {
+    fn dump_blob(&mut self, mut f_blob: &File, hardlink_node: Option<Box<Node>>) -> Result<()> {
         if self.is_dir() {
             return Ok(());
         }
 
+        if self.is_hardlink() && hardlink_node.is_some() {
+            let hardlink_node = hardlink_node.unwrap();
+            self.inode.digest = hardlink_node.inode.digest;
+            return Ok(());
+        }
+
         if self.is_symlink() {
-            let target_path = fs::read_link(self.path)?;
+            let target_path = fs::read_link(self.path.as_str())?;
             let target_path_str = target_path.to_str().unwrap();
             let mut chunk = RafsLinkDataInfo::new(self.inode.i_chunk_cnt as usize);
             chunk.target = String::from(target_path_str);
@@ -249,13 +262,13 @@ impl<'a> Node<'a> {
 
         let file_size = self.inode.i_size;
         let mut inode_hash = Sha256::new();
-        let mut file = File::open(self.path)?;
+        let mut file = File::open(self.path.as_str())?;
 
         for i in 0..self.inode.i_chunk_cnt {
             let mut chunk = RafsChunkInfo::new();
 
             // get chunk info
-            chunk.blobid = String::from(self.blob_id);
+            chunk.blobid = String::from(self.blob_id.as_str());
             chunk.pos = (i * DEFAULT_RAFS_BLOCK_SIZE as u64) as u64;
             if i == self.inode.i_chunk_cnt - 1 {
                 chunk.len = (file_size % DEFAULT_RAFS_BLOCK_SIZE as u64) as u32;

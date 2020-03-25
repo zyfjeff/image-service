@@ -7,14 +7,16 @@ use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Result;
 use std::path::Path;
+use std::collections::HashMap;
+use std::os::linux::fs::MetadataExt;
 
 use rafs::layout::*;
 
 use crate::node::*;
 
-pub struct Builder<'a> {
+pub struct Builder {
     /// source root path
-    root: &'a str,
+    root: String,
     /// blob file writer
     f_blob: File,
     /// bootstrap file writer
@@ -22,16 +24,18 @@ pub struct Builder<'a> {
     /// record current blob offset cursor
     blob_offset: u64,
     /// blob id (user specified)
-    blob_id: &'a str,
+    blob_id: String,
+    /// node chunks info cache, HashMap<i_ino, Node>
+    inode_map: HashMap<u64, Node>,
 }
 
-impl<'a> Builder<'a> {
+impl Builder {
     pub fn new(
-        root: &'a str,
-        blob_path: &'a str,
-        bootstrap_path: &'a str,
-        blob_id: &'a str,
-    ) -> Result<Builder<'a>> {
+        root: String,
+        blob_path: String,
+        bootstrap_path: String,
+        blob_id: String,
+    ) -> Result<Builder> {
         let f_blob = OpenOptions::new()
             .write(true)
             .create(true)
@@ -49,6 +53,7 @@ impl<'a> Builder<'a> {
             f_bootstrap,
             blob_offset: 0,
             blob_id,
+            inode_map: HashMap::new(),
         })
     }
 
@@ -71,26 +76,33 @@ impl<'a> Builder<'a> {
         Ok(sb)
     }
 
-    fn walk_dirs(&mut self, file: &Path, parent_node: &Option<Box<Node>>) -> Result<()> {
+    fn walk_dirs(&mut self, file: &Path, parent_node: Option<Box<Node>>) -> Result<()> {
         if file.is_dir() {
             for entry in fs::read_dir(file)? {
                 let entry = entry?;
                 let path = entry.path();
-                let meta = &entry.metadata()?;
+                let meta = entry.metadata()?;
 
                 let mut node = Node::new(
-                    self.blob_id,
+                    self.blob_id.clone(),
                     self.blob_offset,
-                    meta,
-                    path.to_str().unwrap(),
-                    parent_node,
+                    path.to_str().unwrap().to_string(),
+                    parent_node.clone(),
                 );
 
-                node.dump(&mut self.f_blob, &mut self.f_bootstrap)?;
-                self.blob_offset = node.blob_offset();
+                let ino = meta.st_ino();
+                let hardlink_node = self.inode_map.get(&ino);
+                if hardlink_node.is_some() {
+                    let hardlink_node = Box::new(hardlink_node.unwrap().clone());
+                    node.dump(&mut self.f_blob, &mut self.f_bootstrap, Some(hardlink_node))?;
+                } else {
+                    node.dump(&mut self.f_blob, &mut self.f_bootstrap, None)?;
+                    self.inode_map.insert(ino, node.clone());
+                }
+                self.blob_offset = node.clone().blob_offset;
 
                 if path.is_dir() {
-                    self.walk_dirs(&path, &Some(Box::new(node)))?;
+                    self.walk_dirs(&path, Some(Box::new(node)))?;
                 }
             }
         }
@@ -100,12 +112,12 @@ impl<'a> Builder<'a> {
     pub fn build(&mut self) -> Result<()> {
         self.dump_superblock()?;
 
-        let root_path = Path::new(self.root);
-        let root_meta = &root_path.metadata()?;
-        let mut root_node = Node::new(self.blob_id, self.blob_offset, root_meta, root_path.to_str().unwrap(), &None);
-        root_node.dump(&mut self.f_blob, &mut self.f_bootstrap)?;
+        let root = self.root.clone();
+        let root_path = Path::new(root.as_str());
+        let mut root_node = Node::new(self.blob_id.clone(), self.blob_offset, root_path.to_str().unwrap().to_string(), None);
+        root_node.dump(&mut self.f_blob, &mut self.f_bootstrap, None)?;
 
-        self.walk_dirs(root_path, &Some(Box::new(root_node)))?;
+        self.walk_dirs(root_path, Some(Box::new(root_node)))?;
 
         Ok(())
     }
