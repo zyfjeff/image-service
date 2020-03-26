@@ -251,7 +251,7 @@ impl Node {
         if self.is_hardlink() && hardlink_node.is_some() {
             let hardlink_node = hardlink_node.unwrap();
             self.inode.digest = hardlink_node.inode.digest;
-            self.chunks = hardlink_node.chunks;
+            self.inode.i_chunk_cnt = 0;
             return Ok(());
         }
 
