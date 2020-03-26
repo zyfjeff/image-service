@@ -140,16 +140,21 @@ impl RafsInode {
         let mut desc = RafsBioDesc::new();
         let end = offset + size as u64;
         for blk in self.i_data.iter() {
-            if blk.file_pos < offset {
+            if (blk.file_pos + blk.len as u64) < offset {
                 continue;
             } else if blk.file_pos > end {
                 break;
             }
-            let blk_start = cmp::max(blk.file_pos, offset) - blk.file_pos;
-            let blk_end = cmp::min(blk.file_pos + blk.len as u64, end);
-            let bio = RafsBio::new(&blk, blk_start as u32, (blk_end - blk_start) as usize);
+            let file_start = cmp::max(blk.file_pos, offset);
+            let file_end = cmp::min(blk.file_pos + blk.len as u64, end);
+            let bio = RafsBio::new(
+                &blk,
+                (file_start - blk.file_pos) as u32,
+                (file_end - file_start) as usize,
+            );
 
             desc.bi_vec.push(bio);
+            desc.bi_size += bio.size;
         }
         Ok(desc)
     }
@@ -596,6 +601,9 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         let inodes = self.sb.s_inodes.read().unwrap();
         let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
 
+        if offset >= rafs_inode.i_size {
+            return Ok(0);
+        }
         let desc = rafs_inode.alloc_bio_desc(size as usize, offset)?;
 
         self.device.read_to(w, desc)

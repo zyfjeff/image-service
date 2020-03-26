@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 use serde::{Deserialize, Serialize};
+use std::cmp;
 use std::collections::HashMap;
 use std::io;
 use std::io::{Error, Read, Write};
@@ -81,9 +82,8 @@ impl<B: BlobBackend> RafsDevice<B> {
         let mut count: usize = 0;
         for bio in desc.bi_vec.iter() {
             let mut f = RafsBioDevice::new(bio, &self)?;
-            let offset = bio.blkinfo.blob_offset + bio.offset as u64;
             debug!("reading bio desc {:?}", bio);
-            count += w.write_from(&mut f, bio.size, offset)?;
+            count += w.write_from(&mut f, bio.size, bio.offset as u64)?;
         }
         Ok(count)
     }
@@ -107,12 +107,17 @@ impl<B: BlobBackend> RafsDevice<B> {
 struct RafsBioDevice<'a, B: BlobBackend> {
     bio: &'a RafsBio<'a>,
     dev: &'a RafsDevice<B>,
+    buf: Vec<u8>,
 }
 
 impl<'a, B: BlobBackend> RafsBioDevice<'a, B> {
     fn new(bio: &'a RafsBio<'a>, b: &'a RafsDevice<B>) -> io::Result<Self> {
         // FIXME: make sure bio is valid
-        Ok(RafsBioDevice { bio: bio, dev: b })
+        Ok(RafsBioDevice {
+            bio: bio,
+            dev: b,
+            buf: Vec::new(),
+        })
     }
 
     fn blob_offset(&self) -> u64 {
@@ -133,21 +138,45 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
     }
 
     fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
-        let mut buf: Vec<u8> = Vec::new();
-        let len = self.dev.b.read(
-            &self.bio.blkinfo.blob_id,
-            &mut buf,
-            offset,
-            self.bio.blkinfo.compr_size,
-        )?;
-        debug_assert_eq!(len, buf.len());
-        let decompressed = utils::decompress_with_lz4(&buf)?;
-        let mut count = self.bio.size;
-        if slice.len() < count {
-            count = slice.len()
+        if self.buf.len() == 0 {
+            let mut buf = Vec::new();
+            let len = self.dev.b.read(
+                &self.bio.blkinfo.blob_id,
+                &mut buf,
+                self.bio.blkinfo.blob_offset,
+                self.bio.blkinfo.compr_size,
+            )?;
+            debug_assert_eq!(len, buf.len());
+            self.buf = utils::decompress_with_lz4(&buf)?;
         }
-        slice.copy_from(&decompressed[self.bio.offset as usize..self.bio.offset as usize + count]);
 
+        let count = cmp::min(
+            self.bio.offset as usize + self.bio.size - offset as usize,
+            slice.len(),
+        );
+        slice.copy_from(&self.buf[offset as usize..offset as usize + count]);
+        Ok(count)
+    }
+
+    // The default read_vectored_at_volatile only read to the first slice, so we have to overload it.
+    fn read_vectored_at_volatile(
+        &mut self,
+        bufs: &[VolatileSlice],
+        offset: u64,
+    ) -> Result<usize, Error> {
+        let mut f_offset: u64 = offset;
+        let mut count: usize = 0;
+        for buf in bufs.iter() {
+            let res = self.read_at_volatile(*buf, f_offset)?;
+            count += res;
+            f_offset += res as u64;
+            if res == 0
+                || count >= self.bio.size
+                || f_offset >= self.bio.offset as u64 + self.bio.size as u64
+            {
+                break;
+            }
+        }
         Ok(count)
     }
 
