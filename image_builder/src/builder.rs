@@ -86,6 +86,7 @@ impl Builder {
                 let mut node = Node::new(
                     self.blob_id.clone(),
                     self.blob_offset,
+                    self.root.clone(),
                     path.to_str().unwrap().to_string(),
                     parent_node.clone(),
                 );
@@ -114,7 +115,8 @@ impl Builder {
 
         let root = self.root.clone();
         let root_path = Path::new(root.as_str());
-        let mut root_node = Node::new(self.blob_id.clone(), self.blob_offset, root_path.to_str().unwrap().to_string(), None);
+        let root_path_str = root_path.to_str().unwrap().to_string();
+        let mut root_node = Node::new(self.blob_id.clone(), self.blob_offset, root_path_str.clone(), root_path_str, None);
         root_node.dump(&mut self.f_blob, &mut self.f_bootstrap, None)?;
 
         self.walk_dirs(root_path, Some(Box::new(root_node)))?;

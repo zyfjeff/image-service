@@ -23,6 +23,8 @@ pub struct Node {
     blob_id: String,
     /// offset of blob file
     pub blob_offset: u64,
+    /// source path
+    root: String,
     /// file path
     path: String,
     /// parent dir of file
@@ -38,10 +40,11 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new(blob_id: String, blob_offset: u64, path: String, parent: Option<Box<Node>>) -> Node {
+    pub fn new(blob_id: String, blob_offset: u64, root: String, path: String, parent: Option<Box<Node>>) -> Node {
         Node {
             blob_id,
             blob_offset,
+            root,
             path,
             parent,
             inode: RafsInodeInfo::new(),
@@ -70,10 +73,12 @@ impl Node {
             }
         }
 
+        let path = Path::new(self.path.as_str());
+        let path = path.strip_prefix(self.root.as_str()).unwrap();
         if file_type != "" {
-            info!("building {} {}", file_type, self.path);
-            self.build_inode()?;
-            self.dump_blob(f_blob, hardlink_node)?;
+            info!("building {} {}", file_type, Path::new("/").join(path).to_str().unwrap());
+            self.build_inode(hardlink_node)?;
+            self.dump_blob(f_blob)?;
             self.dump_bootstrap(f_bootstrap)?;
         } else {
             info!("skip build {}", self.path);
@@ -191,7 +196,7 @@ impl Node {
         Ok(())
     }
 
-    fn build_inode(&mut self) -> Result<()> {
+    fn build_inode(&mut self, hardlink_node: Option<Box<Node>>) -> Result<()> {
         if self.parent.is_none() {
             self.inode.name = String::from("/");
             self.inode.i_parent = 0;
@@ -227,9 +232,15 @@ impl Node {
 
         if self.is_reg() {
             self.inode.i_flags |= INO_FLAG_HARDLINK;
-            let file_size = self.inode.i_size;
-            let chunk_count = (file_size as f64 / DEFAULT_RAFS_BLOCK_SIZE as f64).ceil() as u64;
-            self.inode.i_chunk_cnt = chunk_count;
+            if self.is_hardlink() && hardlink_node.is_some() {
+                let hardlink_node = hardlink_node.unwrap();
+                self.inode.digest = hardlink_node.inode.digest;
+                self.inode.i_chunk_cnt = 0;
+            } else {
+                let file_size = self.inode.i_size;
+                let chunk_count = (file_size as f64 / DEFAULT_RAFS_BLOCK_SIZE as f64).ceil() as u64;
+                self.inode.i_chunk_cnt = chunk_count;
+            }
         } else if self.is_symlink() {
             self.inode.i_flags |= INO_FLAG_SYMLINK;
             let target_path = fs::read_link(self.path.as_str())?;
@@ -243,15 +254,8 @@ impl Node {
         Ok(())
     }
 
-    fn dump_blob(&mut self, mut f_blob: &File, hardlink_node: Option<Box<Node>>) -> Result<()> {
+    fn dump_blob(&mut self, mut f_blob: &File) -> Result<()> {
         if self.is_dir() {
-            return Ok(());
-        }
-
-        if self.is_hardlink() && hardlink_node.is_some() {
-            let hardlink_node = hardlink_node.unwrap();
-            self.inode.digest = hardlink_node.inode.digest;
-            self.inode.i_chunk_cnt = 0;
             return Ok(());
         }
 
