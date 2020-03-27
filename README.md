@@ -42,15 +42,6 @@ Or simply below if you are running newer guest kernel:
 mount -t virtiofs nydus /mnt
 ```
 
-# Howto build nydus image?
+# Build nydus image
 
-```
-nydus-image create \
-            --blob_id $BLOB_ID \
-            --bootstrap $BOOTSTRAP_PATH \
-            --oss_endpoint $OSS_ENDPOINT \
-            --oss_access_key_id $OSS_ACCESS_KEY_ID \
-            --oss_access_key_secret $OSS_ACCESS_KEY_SECRET \
-            --oss_bucket_name $OSS_BUCKET_NAME \
-            $SOURCE
-```
+See [Nydus Image Builder](./docs/image-builder.md) 
