@@ -2,12 +2,12 @@
 
 Nydus image contains two parts, `bootstrap` and `blob`:
 
-- `boostrap` records the file inode and the index of data chunk in rootfs;
+- `bootstrap` records the file inode and the index of data chunk in rootfs;
 - `blob` packs all compressed file data chunk in rootfs;
 
-Nydus image builder is used to build the existing container rootfs directory into the `bootstrap` and `blob` file required by nydusd.
+Nydus image builder is used to building the existing container rootfs directory into the `bootstrap` and `blob` file required by nydusd.
 
-[Buildkitd](https://gitlab.alibaba-inc.com/kata-containers/buildkit) provide a script tool to convert oci image to nydus format image using `bootstrap`, and upload `blob` file to storage backend (for example aliyun OSS).
+[Buildkitd](https://gitlab.alibaba-inc.com/kata-containers/buildkit) provides a script tool to convert oci image to nydus format image using `bootstrap` and upload `blob` file to storage backend (for example aliyun OSS).
 
 ## Compile nydus image builder
 
