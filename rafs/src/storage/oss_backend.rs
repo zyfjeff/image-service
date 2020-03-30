@@ -5,7 +5,8 @@
 use base64;
 use crypto::{hmac::Hmac, mac::Mac, sha1::Sha1};
 use httpdate;
-use reqwest::{self, header::HeaderMap, StatusCode};
+use reqwest::{self, header::HeaderMap, StatusCode, Method};
+use reqwest::blocking::{Client, Body, Response};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
@@ -47,14 +48,14 @@ impl Read for Progress {
     }
 }
 
-enum Body {
+enum FileBody {
     File(Progress, u64),
     Buf(Vec<u8>),
 }
 
 #[derive(Debug)]
 pub struct OSS {
-    client: reqwest::Client,
+    client: Client,
     access_key_id: String,
     access_key_secret: String,
     endpoint: String,
@@ -68,8 +69,7 @@ impl OSS {
         access_key_secret: &str,
         bucket_name: &str,
     ) -> OSS {
-        let client = reqwest::Client::builder()
-            .gzip(true)
+        let client = Client::builder()
             .timeout(None)
             .build()
             .unwrap();
@@ -88,7 +88,7 @@ impl OSS {
         let body = Progress::new(file, size, callback);
         self.request(
             "PUT",
-            Body::File(body, size),
+            FileBody::File(body, size),
             self.bucket_name.as_str(),
             blob_id,
             headers,
@@ -135,12 +135,12 @@ impl OSS {
     fn request(
         &self,
         method: &str,
-        data: Body,
+        data: FileBody,
         bucket_name: &str,
         object_key: &str,
         headers: HeaderMap,
         query: &[&str],
-    ) -> Result<reqwest::Response, Error> {
+    ) -> Result<Response, Error> {
         let date = httpdate::fmt_http_date(SystemTime::now());
         let mut new_headers = HeaderMap::new();
         new_headers.extend(headers);
@@ -172,7 +172,7 @@ impl OSS {
             HEADER_AUTHORIZATION,
             authorization.as_str().parse().unwrap(),
         );
-        let method = reqwest::Method::from_bytes(method.as_bytes()).unwrap();
+        let method = Method::from_bytes(method.as_bytes()).unwrap();
 
         let rb = self
             .client
@@ -181,17 +181,17 @@ impl OSS {
 
         let ret;
         match data {
-            Body::File(body, total) => {
-                let body = reqwest::Body::sized(body, total);
+            FileBody::File(body, total) => {
+                let body = Body::sized(body, total);
                 ret = rb.body(body).send();
             }
-            Body::Buf(buf) => {
+            FileBody::Buf(buf) => {
                 ret = rb.body(buf).send();
             }
         }
 
         match ret {
-            Ok(mut resp) => {
+            Ok(resp) => {
                 let status = resp.status();
                 if status >= StatusCode::OK && status < StatusCode::MULTIPLE_CHOICES {
                     return Ok(resp);
@@ -207,7 +207,7 @@ impl OSS {
         let headers = HeaderMap::new();
         self.request(
             "PUT",
-            Body::Buf("".as_bytes().to_vec()),
+            FileBody::Buf("".as_bytes().to_vec()),
             self.bucket_name.as_str(),
             "",
             headers,
@@ -219,7 +219,7 @@ impl OSS {
 
 pub fn new() -> OSS {
     OSS {
-        client: reqwest::Client::new(),
+        client: Client::new(),
         access_key_id: String::new(),
         access_key_secret: String::new(),
         endpoint: String::new(),
@@ -254,7 +254,7 @@ impl BlobBackend for OSS {
         let mut resp = self
             .request(
                 "GET",
-                Body::Buf("".as_bytes().to_vec()),
+                FileBody::Buf("".as_bytes().to_vec()),
                 self.bucket_name.as_str(),
                 blob_id,
                 headers,
@@ -278,7 +278,7 @@ impl BlobBackend for OSS {
         let position = format!("position={}", offset);
         self.request(
             "POST",
-            Body::Buf(buf.to_vec()),
+            FileBody::Buf(buf.to_vec()),
             self.bucket_name.as_str(),
             blob_id,
             headers,
