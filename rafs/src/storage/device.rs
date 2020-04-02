@@ -18,6 +18,8 @@ use crate::storage::backend::*;
 
 use utils;
 
+static ZEROS: &'static [u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
+
 // A rafs storage device config
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -169,6 +171,9 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
     ) -> Result<usize, Error> {
         let mut f_offset: u64 = offset;
         let mut count: usize = 0;
+        if self.bio.blkinfo.compr_size == 0 {
+            return self.fill_hole(bufs);
+        }
         for buf in bufs.iter() {
             let res = self.read_at_volatile(*buf, f_offset)?;
             count += res;
@@ -192,6 +197,20 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
             .write(&self.bio.blkinfo.blob_id, &compressed, offset)?;
         // Need to return slice length because that's what upper layer asks to write
         Ok(slice.len())
+    }
+}
+
+impl<B: BlobBackend> RafsBioDevice<'_, B> {
+    fn fill_hole(&self, bufs: &[VolatileSlice]) -> Result<usize, Error> {
+        let mut count: usize = 0;
+        let mut remain: usize = self.bio.size;
+        for &buf in bufs.iter() {
+            let cnt = cmp::min(remain, buf.len());
+            buf.copy_from(&ZEROS[ZEROS.len() - cnt..]);
+            count += cnt;
+            remain -= cnt;
+        }
+        Ok(count)
     }
 }
 
