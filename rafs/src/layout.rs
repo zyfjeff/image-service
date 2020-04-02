@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fmt;
-use std::io::{Error, Read, Result, Write};
+use std::io::{Error, ErrorKind, Read, Result, Write};
 use std::mem::size_of;
 use std::str;
 
@@ -22,10 +22,11 @@ pub const MAX_RAFS_NAME: usize = 255;
 pub const RAFS_SHA256_LENGTH: usize = 32;
 pub const RAFS_BLOB_ID_MAX_LENGTH: usize = 72;
 
-pub const RAFS_SUPER_VERSION: usize = 0x2;
+pub const RAFS_SUPER_VERSION: usize = 0x400;
+pub const RAFS_SUPER_MIN_VERSION: usize = 0x400;
 pub const RAFS_SUPERBLOCK_SIZE: usize = 8192;
 pub const RAFS_INODE_INFO_SIZE: usize = 512;
-pub const RAFS_CHUNK_INFO_SIZE: usize = 136;
+pub const RAFS_CHUNK_INFO_SIZE: usize = 128;
 
 pub const DEFAULT_RAFS_BLOCK_SIZE: usize = 1024 * 1024;
 pub const RAFS_SUPER_MAGIC: u32 = 0x52414653;
@@ -51,12 +52,10 @@ pub struct RafsInodeInfo {
     pub i_parent: u64,
     /// from fs stat()
     pub i_ino: u64,
+    pub i_projid: u32,
     pub i_mode: u32,
     pub i_uid: u32,
     pub i_gid: u32,
-    /// bytes alignment
-    pub i_padding: u32,
-    /// from fs stat()
     pub i_rdev: u64,
     pub i_size: u64,
     pub i_nlink: u64,
@@ -64,10 +63,10 @@ pub struct RafsInodeInfo {
     pub i_atime: u64,
     pub i_mtime: u64,
     pub i_ctime: u64,
-    /// chunks count
-    pub i_chunk_cnt: u64,
     /// HARDLINK | SYMLINK | PREFETCH_HINT
     pub i_flags: u64,
+    /// chunks count
+    pub i_chunk_cnt: u64,
 }
 
 impl RafsInodeInfo {
@@ -143,10 +142,10 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
         self.digest = read_rafs_digest(&mut p)?;
         self.i_parent = read_le_u64(&mut p);
         self.i_ino = read_le_u64(&mut p);
+        self.i_projid = read_le_u32(&mut p);
         self.i_mode = read_le_u32(&mut p);
         self.i_uid = read_le_u32(&mut p);
         self.i_gid = read_le_u32(&mut p);
-        self.i_padding = read_le_u32(&mut p);
         self.i_rdev = read_le_u64(&mut p);
         self.i_size = read_le_u64(&mut p);
         self.i_nlink = read_le_u64(&mut p);
@@ -154,8 +153,8 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
         self.i_atime = read_le_u64(&mut p);
         self.i_mtime = read_le_u64(&mut p);
         self.i_ctime = read_le_u64(&mut p);
-        self.i_chunk_cnt = read_le_u64(&mut p);
         self.i_flags = read_le_u64(&mut p);
+        self.i_chunk_cnt = read_le_u64(&mut p);
         trace!("loaded inode: {}", &self);
 
         Ok(RAFS_INODE_INFO_SIZE)
@@ -170,10 +169,10 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
         count += w.write(&self.digest.data[..])?;
         count += w.write(&u64::to_le_bytes(self.i_parent))?;
         count += w.write(&u64::to_le_bytes(self.i_ino))?;
+        count += w.write(&u32::to_le_bytes(self.i_projid))?;
         count += w.write(&u32::to_le_bytes(self.i_mode))?;
         count += w.write(&u32::to_le_bytes(self.i_uid))?;
         count += w.write(&u32::to_le_bytes(self.i_gid))?;
-        count += w.write(&u32::to_le_bytes(self.i_padding))?;
         count += w.write(&u64::to_le_bytes(self.i_rdev))?;
         count += w.write(&u64::to_le_bytes(self.i_size))?;
         count += w.write(&u64::to_le_bytes(self.i_nlink))?;
@@ -181,8 +180,8 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
         count += w.write(&u64::to_le_bytes(self.i_atime))?;
         count += w.write(&u64::to_le_bytes(self.i_mtime))?;
         count += w.write(&u64::to_le_bytes(self.i_ctime))?;
-        count += w.write(&u64::to_le_bytes(self.i_chunk_cnt))?;
         count += w.write(&u64::to_le_bytes(self.i_flags))?;
+        count += w.write(&u64::to_le_bytes(self.i_chunk_cnt))?;
         w.write(&vec![0; RAFS_INODE_INFO_SIZE - count])?;
         trace!("written inode: {}", &self);
         Ok(RAFS_INODE_INFO_SIZE)
@@ -192,27 +191,31 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
 // Ondisk rafs superblock, 8192 bytes
 #[derive(Copy, Clone, Default, Debug)]
 pub struct RafsSuperBlockInfo {
-    /// inode count
-    pub s_inodes_count: u64,
-    /// blocks count
-    pub s_blocks_count: u64,
-    /// inode size
-    pub s_inode_size: u16,
-    /// bytes alignment
-    pub s_padding1: u16,
-    /// block size
-    pub s_block_size: u32,
-    /// RAFS version
-    pub s_fs_version: u16,
-    /// bytes alignment
-    pub s_padding2: u16,
     /// RAFS super magic
     pub s_magic: u32,
+    /// RAFS version
+    pub s_fs_version: u32,
+    /// superblock on disk size
+    pub s_sb_size: u32,
+    /// inode size
+    pub s_inode_size: u32,
+    /// block size
+    pub s_block_size: u32,
+    /// chunk info metadata size
+    pub s_chunkinfo_size: u32,
+    /// superblock flags
+    pub s_flags: u64,
 }
 
 impl RafsSuperBlockInfo {
     pub fn new() -> Self {
         RafsSuperBlockInfo {
+            s_magic: RAFS_SUPER_MAGIC as u32,
+            s_fs_version: RAFS_SUPER_VERSION as u32,
+            s_sb_size: RAFS_SUPERBLOCK_SIZE as u32,
+            s_inode_size: RAFS_INODE_INFO_SIZE as u32,
+            s_block_size: DEFAULT_RAFS_BLOCK_SIZE as u32,
+            s_chunkinfo_size: RAFS_CHUNK_INFO_SIZE as u32,
             ..Default::default()
         }
     }
@@ -220,16 +223,7 @@ impl RafsSuperBlockInfo {
 
 impl fmt::Display for RafsSuperBlockInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "superblock magic: {}, version: {}, {} {} {} {}",
-            &self.s_magic,
-            self.s_fs_version,
-            self.s_inodes_count,
-            self.s_blocks_count,
-            self.s_inode_size,
-            self.s_block_size
-        )
+        write!(f, "superblock {:?}", self)
     }
 }
 
@@ -240,26 +234,31 @@ impl RafsLayoutLoadStore for RafsSuperBlockInfo {
         let mut p = &input[..];
 
         // Now we know input has enough bytes to load RafsSuperBlockInfo
-        self.s_inodes_count = read_le_u64(&mut p);
-        self.s_blocks_count = read_le_u64(&mut p);
-        self.s_inode_size = read_le_u16(&mut p);
-        read_le_u16(&mut p);
-        self.s_block_size = read_le_u32(&mut p);
-        self.s_fs_version = read_le_u16(&mut p);
-        read_le_u16(&mut p);
         self.s_magic = read_le_u32(&mut p);
+        self.s_fs_version = read_le_u32(&mut p);
+        self.s_sb_size = read_le_u32(&mut p);
+        self.s_inode_size = read_le_u32(&mut p);
+        self.s_block_size = read_le_u32(&mut p);
+        self.s_chunkinfo_size = read_le_u32(&mut p);
+        self.s_flags = read_le_u64(&mut p);
         trace!("loaded superblock: {}", &self);
+        if self.s_magic != RAFS_SUPER_MAGIC
+            || self.s_fs_version < RAFS_SUPER_MIN_VERSION as u32
+            || self.s_fs_version > RAFS_SUPER_VERSION as u32
+            || self.s_sb_size != RAFS_SUPERBLOCK_SIZE as u32
+        {
+            return Err(Error::new(ErrorKind::InvalidData, "Invalid superblock"));
+        }
         Ok(RAFS_SUPERBLOCK_SIZE)
     }
 
     fn store<W: Write>(&self, mut w: W) -> Result<usize> {
-        let mut count = w.write(&u64::to_le_bytes(self.s_inodes_count))?;
-        count += w.write(&u64::to_le_bytes(self.s_blocks_count))?;
-        count += w.write(&u16::to_le_bytes(self.s_inode_size))?;
-        count += w.write(&u16::to_le_bytes(0))?;
+        let mut count = w.write(&u32::to_le_bytes(self.s_magic))?;
+        count += w.write(&u32::to_le_bytes(self.s_fs_version))?;
+        count += w.write(&u32::to_le_bytes(self.s_sb_size))?;
+        count += w.write(&u32::to_le_bytes(self.s_inode_size))?;
         count += w.write(&u32::to_le_bytes(self.s_block_size))?;
-        count += w.write(&u16::to_le_bytes(self.s_fs_version))?;
-        count += w.write(&u16::to_le_bytes(0))?;
+        count += w.write(&u32::to_le_bytes(self.s_chunkinfo_size))?;
         count += w.write(&u32::to_le_bytes(self.s_magic))?;
         w.write(&vec![0; RAFS_SUPERBLOCK_SIZE - count])?;
         trace!("written superblock: {}", &self);
@@ -275,15 +274,13 @@ pub struct RafsChunkInfo {
     /// random string, [char; RAFS_BLOB_ID_MAX_LENGTH]
     pub blobid: String,
     /// file position of block, with fixed block length
-    pub pos: u64,
-    /// block valid data length
-    pub len: u32,
+    pub file_offset: u64,
     /// blob offset
-    pub offset: u64,
-    /// blob size
-    pub size: u32,
+    pub blob_offset: u64,
+    /// compressed size
+    pub compress_size: u32,
     /// reserved
-    reserved: u64,
+    reserved: u32,
 }
 
 impl RafsChunkInfo {
@@ -298,8 +295,8 @@ impl fmt::Display for RafsChunkInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "chunkinfo blockid: {}, blobid: {} pos: {}, len: {}, offset: {}, size: {}",
-            &self.blockid, &self.blobid, self.pos, self.len, self.offset, self.size
+            "chunkinfo blockid: {}, blobid: {} file offset: {}, blob offset: {}, compressed size: {}",
+            &self.blockid, &self.blobid, self.file_offset, self.blob_offset, self.compress_size
         )
     }
 }
@@ -314,10 +311,9 @@ impl RafsLayoutLoadStore for RafsChunkInfo {
         // Now we know there is enough bytes to fill RafsChunkInfo
         self.blockid = read_rafs_digest(&mut p)?;
         self.blobid = read_string(&mut p, RAFS_BLOB_ID_MAX_LENGTH)?;
-        self.pos = read_le_u64(&mut p);
-        self.len = read_le_u32(&mut p);
-        self.offset = read_le_u64(&mut p);
-        self.size = read_le_u32(&mut p);
+        self.file_offset = read_le_u64(&mut p);
+        self.blob_offset = read_le_u64(&mut p);
+        self.compress_size = read_le_u32(&mut p);
         trace!("loaded chunk: {}", &self);
 
         Ok(RAFS_CHUNK_INFO_SIZE)
@@ -331,11 +327,10 @@ impl RafsLayoutLoadStore for RafsChunkInfo {
         w.write(blobid)?;
         w.write(blobid_padding.as_slice())?;
 
-        w.write(&u64::to_le_bytes(self.pos))?;
-        w.write(&u32::to_le_bytes(self.len))?;
-        w.write(&u64::to_le_bytes(self.offset))?;
-        w.write(&u32::to_le_bytes(self.size))?;
-        w.write(&u64::to_le_bytes(0))?;
+        w.write(&u64::to_le_bytes(self.file_offset))?;
+        w.write(&u64::to_le_bytes(self.blob_offset))?;
+        w.write(&u32::to_le_bytes(self.compress_size))?;
+        w.write(&u32::to_le_bytes(self.reserved))?; // padding
         trace!("written chunk: {}", &self);
         Ok(RAFS_CHUNK_INFO_SIZE)
     }

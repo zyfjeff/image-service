@@ -2,13 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Result;
-use std::path::Path;
-use std::collections::HashMap;
 use std::os::linux::fs::MetadataExt;
+use std::path::Path;
 
 use rafs::layout::*;
 
@@ -60,15 +60,8 @@ impl Builder {
     fn dump_superblock(&mut self) -> Result<RafsSuperBlockInfo> {
         info!("building superblock");
         let mut sb = RafsSuperBlockInfo::new();
-
-        sb.s_inodes_count = 0;
-        sb.s_blocks_count = 0;
-        sb.s_inode_size = RAFS_INODE_INFO_SIZE as u16;
-        sb.s_padding1 = 0;
-        sb.s_block_size = DEFAULT_RAFS_BLOCK_SIZE as u32;
-        sb.s_fs_version = RAFS_SUPER_VERSION as u16;
-        sb.s_padding2 = 0;
-        sb.s_magic = RAFS_SUPER_MAGIC;
+        // all fields are initilized by RafsSuperBlockInfo::new()
+        sb.s_flags = 0;
 
         // dump superblock to bootstrap
         sb.store(&mut self.f_bootstrap)?;
@@ -116,7 +109,13 @@ impl Builder {
         let root = self.root.clone();
         let root_path = Path::new(root.as_str());
         let root_path_str = root_path.to_str().unwrap().to_string();
-        let mut root_node = Node::new(self.blob_id.clone(), self.blob_offset, root_path_str.clone(), root_path_str, None);
+        let mut root_node = Node::new(
+            self.blob_id.clone(),
+            self.blob_offset,
+            root_path_str.clone(),
+            root_path_str,
+            None,
+        );
         root_node.dump(&mut self.f_blob, &mut self.f_bootstrap, None)?;
 
         self.walk_dirs(root_path, Some(Box::new(root_node)))?;

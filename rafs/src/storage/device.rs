@@ -151,8 +151,11 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
         }
 
         let count = cmp::min(
-            self.bio.offset as usize + self.bio.size - offset as usize,
-            slice.len(),
+            cmp::min(
+                self.bio.offset as usize + self.bio.size - offset as usize,
+                slice.len(),
+            ),
+            self.buf.len() - offset as usize,
         );
         slice.copy_from(&self.buf[offset as usize..offset as usize + count]);
         Ok(count)

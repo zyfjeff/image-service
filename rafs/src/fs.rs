@@ -19,13 +19,6 @@ use crate::layout::*;
 use crate::storage::device::*;
 use crate::storage::*;
 
-// rafs superblock magic number
-const RAFS_SUPER_MAGIC: u32 = 0x52414653;
-// rafs version number
-const RAFS_CURR_VERSION: u16 = 0;
-// minimal supported version
-const RAFS_MIN_VERSION: u16 = RAFS_CURR_VERSION;
-
 const RAFS_INODE_BLOCKSIZE: u32 = 4096;
 const RAFS_DEFAULT_ATTR_TIMEOUT: u64 = 1 << 32;
 const RAFS_DEFAULT_ENTRY_TIMEOUT: u64 = RAFS_DEFAULT_ATTR_TIMEOUT;
@@ -136,17 +129,17 @@ impl RafsInode {
         }
     }
 
-    fn alloc_bio_desc(&self, size: usize, offset: u64) -> Result<RafsBioDesc> {
+    fn alloc_bio_desc(&self, blksize: u32, size: usize, offset: u64) -> Result<RafsBioDesc> {
         let mut desc = RafsBioDesc::new();
         let end = offset + size as u64;
         for blk in self.i_data.iter() {
-            if (blk.file_pos + blk.len as u64) < offset {
+            if (blk.file_pos + blksize as u64) < offset {
                 continue;
             } else if blk.file_pos > end {
                 break;
             }
             let file_start = cmp::max(blk.file_pos, offset);
-            let file_end = cmp::min(blk.file_pos + blk.len as u64, end);
+            let file_end = cmp::min(blk.file_pos + blksize as u64, end);
             let bio = RafsBio::new(
                 &blk,
                 (file_start - blk.file_pos) as u32,
@@ -169,9 +162,6 @@ pub struct RafsBlk {
     pub blob_id: String,
     // position of the block within the file
     pub file_pos: u64,
-    // valid data length of the block, uncompressed
-    // zero means hole block
-    pub len: usize,
     // offset of the block within the blob
     pub blob_offset: u64,
     // size of the block, compressed
@@ -191,22 +181,21 @@ impl From<RafsChunkInfo> for RafsBlk {
         RafsBlk {
             block_id: info.blockid,
             blob_id: String::from(&info.blobid),
-            file_pos: info.pos,
-            len: info.len as usize,
-            blob_offset: info.offset,
-            compr_size: info.size as usize,
+            file_pos: info.file_offset,
+            blob_offset: info.blob_offset,
+            compr_size: info.compress_size as usize,
         }
     }
 }
 
 struct RafsSuper {
     s_magic: u32,
-    s_version: u16,
-    s_inode_size: u16,
-    s_inodes_count: u64,
+    s_version: u32,
+    s_inode_size: u32,
     s_root_inode: Inode,
     s_block_size: u32,
     s_blocks_count: u64,
+    s_inodes_count: u64,
     s_attr_timeout: Duration,
     s_entry_timeout: Duration,
     s_inodes: RwLock<BTreeMap<Inode, Arc<RafsInode>>>,
@@ -229,21 +218,13 @@ impl RafsSuper {
     }
 
     fn init(&mut self, info: RafsSuperBlockInfo) -> Result<()> {
-        if info.s_magic != RAFS_SUPER_MAGIC || info.s_fs_version < RAFS_MIN_VERSION {
-            warn!(
-                "invalid superblock, magic {}, version {}",
-                &info.s_magic, info.s_fs_version
-            );
-            Err(Error::new(ErrorKind::InvalidData, "Invalid super block"))
-        } else {
-            self.s_magic = info.s_magic;
-            self.s_version = info.s_fs_version;
-            self.s_block_size = info.s_block_size;
-            self.s_blocks_count = info.s_blocks_count;
-            self.s_inode_size = info.s_inode_size;
-            self.s_inodes_count = info.s_inodes_count;
-            Ok(())
-        }
+        self.s_magic = info.s_magic;
+        self.s_version = info.s_fs_version;
+        self.s_block_size = info.s_block_size;
+        self.s_blocks_count = 0;
+        self.s_inode_size = info.s_inode_size;
+        self.s_inodes_count = 0;
+        Ok(())
     }
 
     fn hash_inode(&self, ino: RafsInode) -> Result<()> {
@@ -604,7 +585,7 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         if offset >= rafs_inode.i_size {
             return Ok(0);
         }
-        let desc = rafs_inode.alloc_bio_desc(size as usize, offset)?;
+        let desc = rafs_inode.alloc_bio_desc(self.sb.s_block_size, size as usize, offset)?;
 
         self.device.read_to(w, desc)
     }
@@ -625,7 +606,7 @@ impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
         let inodes = self.sb.s_inodes.read().unwrap();
         let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
 
-        let desc = rafs_inode.alloc_bio_desc(size as usize, offset)?;
+        let desc = rafs_inode.alloc_bio_desc(self.sb.s_block_size, size as usize, offset)?;
         self.device.write_from(r, desc)
     }
 

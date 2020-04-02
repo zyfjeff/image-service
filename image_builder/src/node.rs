@@ -40,7 +40,13 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new(blob_id: String, blob_offset: u64, root: String, path: String, parent: Option<Box<Node>>) -> Node {
+    pub fn new(
+        blob_id: String,
+        blob_offset: u64,
+        root: String,
+        path: String,
+        parent: Option<Box<Node>>,
+    ) -> Node {
         Node {
             blob_id,
             blob_offset,
@@ -76,7 +82,11 @@ impl Node {
         let path = Path::new(self.path.as_str());
         let path = path.strip_prefix(self.root.as_str()).unwrap();
         if file_type != "" {
-            info!("building {} {}", file_type, Path::new("/").join(path).to_str().unwrap());
+            info!(
+                "building {} {}",
+                file_type,
+                Path::new("/").join(path).to_str().unwrap()
+            );
             self.build_inode(hardlink_node)?;
             self.dump_blob(f_blob)?;
             self.dump_bootstrap(f_bootstrap)?;
@@ -219,7 +229,7 @@ impl Node {
         self.inode.i_mode = meta.st_mode();
         self.inode.i_uid = meta.st_uid();
         self.inode.i_gid = meta.st_gid();
-        self.inode.i_padding = 0;
+        self.inode.i_projid = 0;
         self.inode.i_rdev = meta.st_rdev();
         self.inode.i_size = meta.st_size();
         self.inode.i_nlink = meta.st_nlink();
@@ -278,16 +288,17 @@ impl Node {
 
             // get chunk info
             chunk.blobid = String::from(self.blob_id.as_str());
-            chunk.pos = (i * DEFAULT_RAFS_BLOCK_SIZE as u64) as u64;
+            chunk.file_offset = (i * DEFAULT_RAFS_BLOCK_SIZE as u64) as u64;
+            let len: usize;
             if i == self.inode.i_chunk_cnt - 1 {
-                chunk.len = (file_size % DEFAULT_RAFS_BLOCK_SIZE as u64) as u32;
+                len = (file_size % DEFAULT_RAFS_BLOCK_SIZE as u64) as usize;
             } else {
-                chunk.len = DEFAULT_RAFS_BLOCK_SIZE as u32;
+                len = DEFAULT_RAFS_BLOCK_SIZE;
             }
 
             // get chunk data
-            file.seek(SeekFrom::Start(chunk.pos))?;
-            let mut chunk_data = vec![0; chunk.len as usize];
+            file.seek(SeekFrom::Start(chunk.file_offset))?;
+            let mut chunk_data = vec![0; len];
             file.read_exact(&mut chunk_data)?;
 
             // calc chunk digest
@@ -296,18 +307,17 @@ impl Node {
             // compress chunk data
             let compressed = utils::compress_with_lz4(&chunk_data)?;
             let compressed_size = compressed.len();
-            chunk.offset = self.blob_offset;
-            chunk.size = compressed_size as u32;
+            chunk.blob_offset = self.blob_offset;
+            chunk.compress_size = compressed_size as u32;
 
             // move cursor to offset of next chunk
             self.blob_offset = self.blob_offset + compressed_size as u64;
 
             trace!(
-                "\tbuilding chunk: pos {}, len {}, offset {}, size {}",
-                chunk.pos,
-                chunk.len,
-                chunk.offset,
-                chunk.size,
+                "\tbuilding chunk: file offset {}, blob offset {}, size {}",
+                chunk.file_offset,
+                chunk.blob_offset,
+                chunk.compress_size,
             );
 
             // dump compressed chunk data to blob
