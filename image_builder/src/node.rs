@@ -20,23 +20,23 @@ use utils;
 #[derive(Default, Clone, Debug)]
 pub struct Node {
     /// image blob id
-    blob_id: String,
+    pub blob_id: String,
     /// offset of blob file
     pub blob_offset: u64,
     /// source path
-    root: String,
+    pub root: String,
     /// file path
-    path: String,
+    pub path: String,
     /// parent dir of file
-    parent: Option<Box<Node>>,
+    pub parent: Option<Box<Node>>,
     /// file inode info
-    inode: RafsInodeInfo,
+    pub inode: RafsInodeInfo,
     /// chunks info of file
-    chunks: Vec<RafsChunkInfo>,
+    pub chunks: Vec<RafsChunkInfo>,
     /// chunks info of symlink file
-    link_chunks: Vec<RafsLinkDataInfo>,
+    pub link_chunks: Vec<RafsLinkDataInfo>,
     /// xattr info of file
-    xattr_chunks: RafsInodeXattrInfos,
+    pub xattr_chunks: RafsInodeXattrInfos,
 }
 
 impl Node {
@@ -66,24 +66,13 @@ impl Node {
         f_bootstrap: &File,
         hardlink_node: Option<Box<Node>>,
     ) -> Result<u64> {
-        let mut file_type = "";
-        if self.is_dir() {
-            file_type = "dir";
-        } else if self.is_symlink() {
-            file_type = "symlink"
-        } else if self.is_reg() {
-            if self.is_hardlink() {
-                file_type = "hardlink";
-            } else {
-                file_type = "file";
-            }
-        }
+        let file_type = self.get_type();
 
         let path = Path::new(self.path.as_str());
         let path = path.strip_prefix(self.root.as_str()).unwrap();
         if file_type != "" {
             info!(
-                "building {} {}",
+                "upper building\t{}\t{}",
                 file_type,
                 Path::new("/").join(path).to_str().unwrap()
             );
@@ -97,20 +86,38 @@ impl Node {
         Ok(self.inode.i_ino)
     }
 
+    pub fn get_type(&self) -> &str {
+        let mut file_type = "";
+
+        if self.is_dir() {
+            file_type = "dir";
+        } else if self.is_symlink() {
+            file_type = "symlink"
+        } else if self.is_reg() {
+            if self.is_hardlink() {
+                file_type = "hardlink";
+            } else {
+                file_type = "file";
+            }
+        }
+
+        file_type
+    }
+
     fn meta(&self) -> Box<dyn MetadataExt> {
         let path = Path::new(self.path.as_str());
         Box::new(path.symlink_metadata().unwrap())
     }
 
-    fn is_dir(&mut self) -> bool {
+    fn is_dir(&self) -> bool {
         return self.meta().st_mode() & libc::S_IFMT == libc::S_IFDIR;
     }
 
-    fn is_symlink(&mut self) -> bool {
+    fn is_symlink(&self) -> bool {
         return self.meta().st_mode() & libc::S_IFMT == libc::S_IFLNK;
     }
 
-    fn is_reg(&mut self) -> bool {
+    fn is_reg(&self) -> bool {
         return self.meta().st_mode() & libc::S_IFMT == libc::S_IFREG;
     }
 
@@ -349,7 +356,7 @@ impl Node {
         Ok(())
     }
 
-    fn dump_bootstrap(&self, mut f_bootstrap: &File) -> Result<()> {
+    pub fn dump_bootstrap(&self, mut f_bootstrap: &File) -> Result<()> {
         // dump inode info to bootstrap
         self.inode.store(&mut f_bootstrap)?;
 

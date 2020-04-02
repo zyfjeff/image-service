@@ -62,6 +62,13 @@ fn main() -> Result<()> {
                         .takes_value(true)
                 )
                 .arg(
+                    Arg::with_name("parent_bootstrap")
+                        .long("parent_bootstrap")
+                        .help("bootstrap file path of parent (optional)")
+                        .takes_value(true)
+                        .required(false)
+                )
+                .arg(
                     Arg::with_name("oss_endpoint")
                         .long("oss_endpoint")
                         .help("oss endpoint (enable oss upload if specified)")
@@ -109,8 +116,13 @@ fn main() -> Result<()> {
             real_blob_path = blob_path.unwrap();
         }
 
+        let mut parent_bootstrap = String::new();
+        if let Some(_parent_bootstrap) = matches.value_of("parent_bootstrap") {
+            parent_bootstrap = _parent_bootstrap.to_owned();
+        }
+
         let mut ib =
-            builder::Builder::new(source_path.to_owned(), real_blob_path.to_owned(), bootstrap_path.to_owned(), blob_id.clone())?;
+            builder::Builder::new(source_path.to_owned(), real_blob_path.to_owned(), bootstrap_path.to_owned(), parent_bootstrap, blob_id.clone())?;
         ib.build()?;
 
         if let Some(oss_endpoint) = matches.value_of("oss_endpoint") {

@@ -75,6 +75,26 @@ impl RafsInodeInfo {
             ..Default::default()
         }
     }
+
+    pub fn is_dir(&self) -> bool {
+        self.i_mode & libc::S_IFMT == libc::S_IFDIR
+    }
+
+    pub fn is_symlink(&self) -> bool {
+        self.i_mode & libc::S_IFMT == libc::S_IFLNK
+    }
+
+    pub fn has_xattr(&self) -> bool {
+        self.i_flags & INO_FLAG_XATTR == INO_FLAG_XATTR
+    }
+
+    pub fn is_reg(&self) -> bool {
+        self.i_mode & libc::S_IFMT == libc::S_IFREG
+    }
+
+    pub fn is_hardlink(&self) -> bool {
+        self.i_nlink > 1
+    }
 }
 
 impl fmt::Display for RafsInodeInfo {
