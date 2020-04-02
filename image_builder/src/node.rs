@@ -7,7 +7,7 @@ use std::fs::{self, File};
 use std::io::prelude::*;
 use std::io::{Error, Result, SeekFrom};
 use std::os::linux::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str;
 
 use crypto::digest::Digest;
@@ -60,27 +60,39 @@ impl Node {
         }
     }
 
-    pub fn dump(
-        &mut self,
-        f_blob: &File,
-        f_bootstrap: &File,
-        hardlink_node: Option<Box<Node>>,
-    ) -> Result<u64> {
+    pub fn build(&mut self, hardlink_node: Option<Box<Node>>) -> Result<()> {
+        self.build_inode(hardlink_node)?;
         let file_type = self.get_type();
-
-        let path = Path::new(self.path.as_str());
-        let path = path.strip_prefix(self.root.as_str()).unwrap();
         if file_type != "" {
             info!(
                 "upper building\t{}\t{}",
                 file_type,
-                Path::new("/").join(path).to_str().unwrap()
+                self.rootfs_path().to_str().unwrap()
             );
-            self.build_inode(hardlink_node)?;
-            self.dump_blob(f_blob)?;
-            self.dump_bootstrap(f_bootstrap)?;
         } else {
-            info!("skip build {}", self.path);
+            info!("skip build\t{}", self.rootfs_path().to_str().unwrap());
+        }
+        Ok(())
+    }
+
+    pub fn dump(&mut self, f_blob: Option<&File>, f_bootstrap: Option<&File>) -> Result<u64> {
+        let file_type = self.get_type();
+
+        if file_type != "" {
+            if f_blob.is_some() {
+                // info!("dump blob\t{}", self.rootfs_path().to_str().unwrap());
+                let digest = self.dump_blob(f_blob.unwrap())?;
+                self.inode.digest = digest;
+            }
+
+            if f_bootstrap.is_some() {
+                // info!(
+                //     "dump bootstrap\t{}\t{:?}",
+                //     self.rootfs_path().to_str().unwrap(),
+                //     self.inode
+                // );
+                self.dump_bootstrap(f_bootstrap.unwrap())?;
+            }
         }
 
         Ok(self.inode.i_ino)
@@ -104,25 +116,34 @@ impl Node {
         file_type
     }
 
+    pub fn rootfs_path(&self) -> PathBuf {
+        let rootfs_path = Path::new("/").join(
+            Path::new(self.path.as_str())
+                .strip_prefix(self.root.as_str())
+                .unwrap(),
+        );
+        return rootfs_path;
+    }
+
     fn meta(&self) -> Box<dyn MetadataExt> {
         let path = Path::new(self.path.as_str());
         Box::new(path.symlink_metadata().unwrap())
     }
 
     fn is_dir(&self) -> bool {
-        return self.meta().st_mode() & libc::S_IFMT == libc::S_IFDIR;
+        return self.inode.i_mode & libc::S_IFMT == libc::S_IFDIR;
     }
 
     fn is_symlink(&self) -> bool {
-        return self.meta().st_mode() & libc::S_IFMT == libc::S_IFLNK;
+        return self.inode.i_mode & libc::S_IFMT == libc::S_IFLNK;
     }
 
     fn is_reg(&self) -> bool {
-        return self.meta().st_mode() & libc::S_IFMT == libc::S_IFREG;
+        return self.inode.i_mode & libc::S_IFMT == libc::S_IFREG;
     }
 
     fn is_hardlink(&self) -> bool {
-        return self.meta().st_nlink() > 1;
+        return self.inode.i_nlink > 1;
     }
 
     fn build_inode_xattr(&mut self) -> Result<()> {
@@ -271,9 +292,11 @@ impl Node {
         Ok(())
     }
 
-    fn dump_blob(&mut self, mut f_blob: &File) -> Result<()> {
+    fn dump_blob(&mut self, mut f_blob: &File) -> Result<RafsDigest> {
+        let mut inode_digest = RafsDigest::new();
+
         if self.is_dir() {
-            return Ok(());
+            return Ok(inode_digest);
         }
 
         if self.is_symlink() {
@@ -283,7 +306,7 @@ impl Node {
             chunk.target = String::from(target_path_str);
             // stash symlink chunk
             self.link_chunks.push(chunk);
-            return Ok(());
+            return Ok(inode_digest);
         }
 
         let file_size = self.inode.i_size;
@@ -340,9 +363,7 @@ impl Node {
         // finish calc inode digest
         let mut inode_hash_buf = [0; RAFS_SHA256_LENGTH];
         inode_hash.result(&mut inode_hash_buf);
-        let mut inode_digest = RafsDigest::new();
         inode_digest.data.clone_from_slice(&inode_hash_buf);
-        self.inode.digest = inode_digest;
 
         trace!(
             "\tbuilding inode: name {}, ino {}, digest {}, parent {}, chunk_cnt {}",
@@ -353,7 +374,7 @@ impl Node {
             self.inode.i_chunk_cnt,
         );
 
-        Ok(())
+        Ok(inode_digest)
     }
 
     pub fn dump_bootstrap(&self, mut f_bootstrap: &File) -> Result<()> {

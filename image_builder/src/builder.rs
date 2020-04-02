@@ -90,6 +90,7 @@ impl Builder {
         sb.load(&mut bootstrap)?;
 
         let mut inodes: HashMap<u64, String> = HashMap::new();
+        let mut dir_inodes: HashMap<String, u64> = HashMap::new();
 
         loop {
             let mut inode = RafsInodeInfo::new();
@@ -117,6 +118,7 @@ impl Builder {
             if inode.is_dir() {
                 file_type = "dir";
                 inodes.insert(inode.i_ino, path.to_owned());
+                dir_inodes.insert(path.to_owned(), inode.i_ino);
             }
 
             let mut chunks = Vec::new();
@@ -151,12 +153,14 @@ impl Builder {
                 continue;
             }
 
+            let absolute_path = Path::new(self.root.as_str()).join(Path::new(&path[1..]));
+
             if self.removals.get(&path.to_owned()).is_none() {
                 let node = Node {
                     blob_id: self.blob_id.to_owned(),
                     blob_offset: self.blob_offset,
                     root: self.root.to_owned(),
-                    path: path.to_owned(),
+                    path: absolute_path.to_str().unwrap().to_owned(),
                     parent: None,
                     inode,
                     chunks,
@@ -167,19 +171,35 @@ impl Builder {
                 if updated.is_some() {
                     self.finals.push(updated.unwrap().clone());
                     self.additions.remove(&path.to_owned());
-                    info!("upper updated\t{} {}", file_type, path);
+                    info!("upper updated\t{}\t{}", file_type, path);
                 } else {
                     self.finals.push(node);
-                    info!("lower added\t{} {}", file_type, path);
+                    info!("lower added\t{}\t{}", file_type, path);
                 }
             } else {
-                info!("upper deleted\t{} {}", file_type, path);
+                info!("upper deleted\t{}\t{}", file_type, path);
             }
         }
 
         for (path, node) in &mut self.additions {
             self.finals.push(node.clone());
             info!("upper added\t{}\t{}", node.get_type(), path);
+        }
+
+        for node in &mut self.finals {
+            let path = node.rootfs_path();
+            let parent = path.parent();
+            if parent.is_some() {
+                let dir_ino = dir_inodes.get(parent.unwrap().to_str().unwrap());
+                if dir_ino.is_some() {
+                    node.inode.i_parent = *dir_ino.unwrap();
+                }
+            }
+            let dir_ino = dir_inodes.get(path.to_str().unwrap());
+            if dir_ino.is_some() {
+                node.inode.i_ino = *dir_ino.unwrap();
+            }
+            node.dump(None, Some(&mut self.f_bootstrap))?;
         }
 
         Ok(())
@@ -234,13 +254,20 @@ impl Builder {
                     continue;
                 }
 
+                let mut f_bootstrap = Some(&self.f_bootstrap);
+                if self.f_parent_bootstrap.is_some() {
+                    f_bootstrap = None;
+                }
+
                 let ino = meta.st_ino();
                 let hardlink_node = self.inode_map.get(&ino);
                 if hardlink_node.is_some() {
                     let hardlink_node = Box::new(hardlink_node.unwrap().clone());
-                    node.dump(&mut self.f_blob, &mut self.f_bootstrap, Some(hardlink_node))?;
+                    node.build(Some(hardlink_node))?;
+                    node.dump(Some(&mut self.f_blob), f_bootstrap)?;
                 } else {
-                    node.dump(&mut self.f_blob, &mut self.f_bootstrap, None)?;
+                    node.build(None)?;
+                    node.dump(Some(&mut self.f_blob), f_bootstrap)?;
                     self.inode_map.insert(ino, node.clone());
                 }
                 self.blob_offset = node.blob_offset;
@@ -269,7 +296,13 @@ impl Builder {
             root_path_str,
             None,
         );
-        root_node.dump(&mut self.f_blob, &mut self.f_bootstrap, None)?;
+
+        let mut f_bootstrap = Some(&self.f_bootstrap);
+        if self.f_parent_bootstrap.is_some() {
+            f_bootstrap = None;
+        }
+        root_node.build(None)?;
+        root_node.dump(Some(&mut self.f_blob), f_bootstrap)?;
 
         self.walk_dirs(root_path, Some(Box::new(root_node)))?;
 
