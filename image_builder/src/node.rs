@@ -91,12 +91,12 @@ impl Node {
         let file_type = self.get_type();
         if file_type != "" {
             info!(
-                "upper building\t{}\t{}",
+                "upper building {} {}",
                 file_type,
                 self.rootfs_path().to_str().unwrap()
             );
         } else {
-            info!("skip build\t{}", self.rootfs_path().to_str().unwrap());
+            info!("skip build {}", self.rootfs_path().to_str().unwrap());
         }
         Ok(())
     }
@@ -106,17 +106,11 @@ impl Node {
 
         if file_type != "" {
             if f_blob.is_some() {
-                // info!("dump blob\t{}", self.rootfs_path().to_str().unwrap());
                 let digest = self.dump_blob(f_blob.unwrap())?;
                 self.inode.digest = digest;
             }
 
             if f_bootstrap.is_some() {
-                // info!(
-                //     "dump bootstrap\t{}\t{:?}",
-                //     self.rootfs_path().to_str().unwrap(),
-                //     self.inode
-                // );
                 self.dump_bootstrap(f_bootstrap.unwrap())?;
             }
         }

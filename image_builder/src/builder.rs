@@ -167,10 +167,11 @@ impl Builder {
                 xattr_chunks,
             };
 
-            if self.removals.get(&path.to_owned()).is_none() {
-                if let Some(updated) = self.additions.get_mut(&path.to_owned()) {
+            if self.removals.get(path).is_none() {
+                if let Some(updated) = self.additions.get_mut(path) {
                     updated.overlay = Overlay::UpperModification;
                     node = updated.clone();
+                    self.additions.remove(path);
                 } else {
                     if node.overlay != Overlay::UpperOpaque {
                         node.overlay = Overlay::LowerAddition;
@@ -181,6 +182,10 @@ impl Builder {
             }
 
             self.finals.push(node);
+        }
+
+        for (_, node) in &mut self.additions {
+            self.finals.push(node.clone());
         }
 
         for node in &mut self.finals {
@@ -194,7 +199,7 @@ impl Builder {
                 node.inode.i_ino = *i_ino;
             }
             info!(
-                "{}\t{}\t{}",
+                "{} {} {}",
                 node.overlay,
                 node.get_type(),
                 node.rootfs_path().to_str().unwrap(),
@@ -212,7 +217,7 @@ impl Builder {
     }
 
     fn dump_superblock(&mut self) -> Result<RafsSuperBlockInfo> {
-        info!("upper building\tsuperblock");
+        info!("upper building superblock");
         let mut sb = RafsSuperBlockInfo::new();
         // all fields are initilized by RafsSuperBlockInfo::new()
         sb.s_flags = 0;
