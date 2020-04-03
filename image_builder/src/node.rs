@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 use std::ffi::{c_void, CString};
+use std::fmt;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::io::{Error, Result, SeekFrom};
@@ -17,8 +18,31 @@ use rafs::layout::*;
 
 use utils;
 
-#[derive(Default, Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
+pub enum Overlay {
+    LowerAddition,
+    UpperAddition,
+    UpperOpaque,
+    UpperRemoval,
+    UpperModification,
+}
+
+impl fmt::Display for Overlay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Overlay::LowerAddition => write!(f, "lower added"),
+            Overlay::UpperAddition => write!(f, "upper added"),
+            Overlay::UpperOpaque => write!(f, "upper opaqued"),
+            Overlay::UpperRemoval => write!(f, "upper removed"),
+            Overlay::UpperModification => write!(f, "upper modified"),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub struct Node {
+    /// type
+    pub overlay: Overlay,
     /// image blob id
     pub blob_id: String,
     /// offset of blob file
@@ -46,6 +70,7 @@ impl Node {
         root: String,
         path: String,
         parent: Option<Box<Node>>,
+        overlay: Overlay,
     ) -> Node {
         Node {
             blob_id,
@@ -53,6 +78,7 @@ impl Node {
             root,
             path,
             parent,
+            overlay,
             inode: RafsInodeInfo::new(),
             chunks: Vec::new(),
             link_chunks: Vec::new(),
@@ -101,10 +127,10 @@ impl Node {
     pub fn get_type(&self) -> &str {
         let mut file_type = "";
 
-        if self.is_dir() {
-            file_type = "dir";
-        } else if self.is_symlink() {
-            file_type = "symlink"
+        if self.is_symlink() {
+            file_type = "symlink";
+        } else if self.is_dir() {
+            file_type = "dir"
         } else if self.is_reg() {
             if self.is_hardlink() {
                 file_type = "hardlink";
@@ -295,10 +321,6 @@ impl Node {
     fn dump_blob(&mut self, mut f_blob: &File) -> Result<RafsDigest> {
         let mut inode_digest = RafsDigest::new();
 
-        if self.is_dir() {
-            return Ok(inode_digest);
-        }
-
         if self.is_symlink() {
             let target_path = fs::read_link(self.path.as_str())?;
             let target_path_str = target_path.to_str().unwrap();
@@ -306,6 +328,10 @@ impl Node {
             chunk.target = String::from(target_path_str);
             // stash symlink chunk
             self.link_chunks.push(chunk);
+            return Ok(inode_digest);
+        }
+
+        if self.is_dir() {
             return Ok(inode_digest);
         }
 

@@ -89,8 +89,8 @@ impl Builder {
         let mut sb = RafsSuperBlockInfo::new();
         sb.load(&mut bootstrap)?;
 
-        let mut inodes: HashMap<u64, String> = HashMap::new();
-        let mut dir_inodes: HashMap<String, u64> = HashMap::new();
+        let mut dir_ino_paths: HashMap<u64, String> = HashMap::new();
+        let mut dir_path_inos: HashMap<String, u64> = HashMap::new();
 
         loop {
             let mut inode = RafsInodeInfo::new();
@@ -99,11 +99,19 @@ impl Builder {
                 break;
             }
 
-            let mut path = Path::new(&inode.name).to_path_buf();
+            let path;
 
-            let parent_path = inodes.get(&inode.i_parent);
+            let parent_path = dir_ino_paths.get(&inode.i_parent);
             if parent_path.is_some() {
-                path = Path::new(parent_path.unwrap()).join(&inode.name);
+                path = Path::new(self.root.as_str())
+                    .join(parent_path.unwrap())
+                    .join(&inode.name);
+            } else {
+                if inode.name == "/" {
+                    path = Path::new(self.root.as_str()).to_path_buf();
+                } else {
+                    path = Path::new(self.root.as_str()).join(&inode.name);
+                }
             }
 
             let path = path.to_str().unwrap();
@@ -113,20 +121,13 @@ impl Builder {
                 xattr_chunks.load(&mut bootstrap)?;
             }
 
-            let mut file_type = "unknown";
-
             if inode.is_dir() {
-                file_type = "dir";
-                inodes.insert(inode.i_ino, path.to_owned());
-                dir_inodes.insert(path.to_owned(), inode.i_ino);
+                dir_ino_paths.insert(inode.i_ino, path.to_owned());
+                dir_path_inos.insert(path.to_owned(), inode.i_ino);
             }
 
             let mut chunks = Vec::new();
             if inode.is_reg() {
-                file_type = "file";
-                if inode.is_hardlink() {
-                    file_type = "hardlink";
-                }
                 for _ in 0..inode.i_chunk_cnt {
                     let mut chunk = RafsChunkInfo::new();
                     chunk.load(&mut bootstrap)?;
@@ -136,70 +137,75 @@ impl Builder {
 
             let mut link_chunks = Vec::new();
             if inode.is_symlink() {
-                file_type = "symlink";
                 let mut link_chunk = RafsLinkDataInfo::new(inode.i_chunk_cnt as usize);
                 link_chunk.load(&mut bootstrap)?;
                 link_chunks.push(link_chunk);
             }
 
-            let mut dir = Path::new(path).to_path_buf();
-            dir.pop();
-            if self
-                .opaques
-                .get(&dir.to_str().unwrap().to_owned())
-                .is_some()
-            {
-                info!("upper opaqued\t{} {}", file_type, path);
-                continue;
+            let mut overlay = Overlay::LowerAddition;
+
+            if let Some(dir) = Path::new(path).parent() {
+                if self
+                    .opaques
+                    .get(&dir.to_str().unwrap().to_owned())
+                    .is_some()
+                {
+                    overlay = Overlay::UpperOpaque;
+                }
             }
 
-            let absolute_path = Path::new(self.root.as_str()).join(Path::new(&path[1..]));
+            let mut node = Node {
+                blob_id: self.blob_id.to_owned(),
+                blob_offset: self.blob_offset,
+                root: self.root.to_owned(),
+                path: path.to_owned(),
+                parent: None,
+                overlay,
+                inode,
+                chunks,
+                link_chunks,
+                xattr_chunks,
+            };
 
             if self.removals.get(&path.to_owned()).is_none() {
-                let node = Node {
-                    blob_id: self.blob_id.to_owned(),
-                    blob_offset: self.blob_offset,
-                    root: self.root.to_owned(),
-                    path: absolute_path.to_str().unwrap().to_owned(),
-                    parent: None,
-                    inode,
-                    chunks,
-                    link_chunks,
-                    xattr_chunks,
-                };
-                let updated = self.additions.get(&path.to_owned());
-                if updated.is_some() {
-                    self.finals.push(updated.unwrap().clone());
-                    self.additions.remove(&path.to_owned());
-                    info!("upper updated\t{}\t{}", file_type, path);
+                if let Some(updated) = self.additions.get_mut(&path.to_owned()) {
+                    updated.overlay = Overlay::UpperModification;
+                    node = updated.clone();
                 } else {
-                    self.finals.push(node);
-                    info!("lower added\t{}\t{}", file_type, path);
+                    if node.overlay != Overlay::UpperOpaque {
+                        node.overlay = Overlay::LowerAddition;
+                    }
                 }
             } else {
-                info!("upper deleted\t{}\t{}", file_type, path);
+                node.overlay = Overlay::UpperRemoval;
             }
-        }
 
-        for (path, node) in &mut self.additions {
-            self.finals.push(node.clone());
-            info!("upper added\t{}\t{}", node.get_type(), path);
+            self.finals.push(node);
         }
 
         for node in &mut self.finals {
-            let path = node.rootfs_path();
-            let parent = path.parent();
-            if parent.is_some() {
-                let dir_ino = dir_inodes.get(parent.unwrap().to_str().unwrap());
-                if dir_ino.is_some() {
-                    node.inode.i_parent = *dir_ino.unwrap();
+            let parent_path = Path::new(&node.path).parent();
+            if let Some(path) = parent_path {
+                if let Some(i_parent) = dir_path_inos.get(path.to_str().unwrap()) {
+                    node.inode.i_parent = *i_parent;
                 }
             }
-            let dir_ino = dir_inodes.get(path.to_str().unwrap());
-            if dir_ino.is_some() {
-                node.inode.i_ino = *dir_ino.unwrap();
+            if let Some(i_ino) = dir_path_inos.get(node.path.as_str()) {
+                node.inode.i_ino = *i_ino;
             }
-            node.dump(None, Some(&mut self.f_bootstrap))?;
+            info!(
+                "{}\t{}\t{}",
+                node.overlay,
+                node.get_type(),
+                node.rootfs_path().to_str().unwrap(),
+            );
+            match node.overlay {
+                Overlay::UpperOpaque => {}
+                Overlay::UpperRemoval => {}
+                _ => {
+                    node.dump(None, Some(&mut self.f_bootstrap))?;
+                }
+            }
         }
 
         Ok(())
@@ -218,13 +224,14 @@ impl Builder {
     }
 
     fn walk_dirs(&mut self, file: &Path, parent_node: Option<Box<Node>>) -> Result<()> {
-        if file.is_dir() {
+        let meta = file.symlink_metadata()?;
+
+        let is_symlink = meta.st_mode() & libc::S_IFMT == libc::S_IFLNK;
+
+        if file.is_dir() && !is_symlink {
             let opaque_path = file.join(OCISPEC_WHITEOUT_OPAQUE);
             if opaque_path.metadata().is_ok() {
-                let relative_path =
-                    Path::new("/").join(file.strip_prefix(self.root.as_str()).unwrap());
-                let path = relative_path.to_str().unwrap();
-                self.opaques.insert(path.to_owned(), true);
+                self.opaques.insert(file.to_str().unwrap().to_owned(), true);
                 return Ok(());
             }
 
@@ -237,21 +244,20 @@ impl Builder {
                     self.blob_id.clone(),
                     self.blob_offset,
                     self.root.clone(),
-                    path.to_str().unwrap().to_string(),
+                    path.to_str().unwrap().to_owned(),
                     parent_node.clone(),
+                    Overlay::UpperAddition,
                 );
 
-                let mut relative_path =
-                    Path::new("/").join(path.strip_prefix(self.root.as_str()).unwrap());
-                let mut name = relative_path.file_name().unwrap().to_str().unwrap();
+                let mut name = path.file_name().unwrap().to_str().unwrap();
                 if name.starts_with(OCISPEC_WHITEOUT_PREFIX) {
-                    let mut _relative_path = relative_path.to_owned();
-                    _relative_path.pop();
                     name = &name[OCISPEC_WHITEOUT_PREFIX.len()..];
-                    relative_path = _relative_path.join(name);
-                    let relative_path_str = relative_path.to_str().unwrap();
-                    self.removals.insert(relative_path_str.to_owned(), true);
-                    continue;
+                    if let Some(parent_dir) = path.parent() {
+                        let path = parent_dir.join(name);
+                        self.removals
+                            .insert(path.to_str().unwrap().to_owned(), true);
+                        continue;
+                    }
                 }
 
                 let mut f_bootstrap = Some(&self.f_bootstrap);
@@ -273,7 +279,7 @@ impl Builder {
                 self.blob_offset = node.blob_offset;
 
                 self.additions
-                    .insert(relative_path.to_str().unwrap().to_owned(), node.clone());
+                    .insert(path.to_str().unwrap().to_owned(), node.clone());
 
                 if path.is_dir() {
                     self.walk_dirs(&path, Some(Box::new(node)))?;
@@ -295,6 +301,7 @@ impl Builder {
             root_path_str.clone(),
             root_path_str,
             None,
+            Overlay::LowerAddition,
         );
 
         let mut f_bootstrap = Some(&self.f_bootstrap);
