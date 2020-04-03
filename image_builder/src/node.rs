@@ -105,13 +105,13 @@ impl Node {
         let file_type = self.get_type();
 
         if file_type != "" {
-            if f_blob.is_some() {
-                let digest = self.dump_blob(f_blob.unwrap())?;
+            if let Some(f_blob) = f_blob {
+                let digest = self.dump_blob(f_blob)?;
                 self.inode.digest = digest;
             }
 
-            if f_bootstrap.is_some() {
-                self.dump_bootstrap(f_bootstrap.unwrap())?;
+            if let Some(f_bootstrap) = f_bootstrap {
+                self.dump_bootstrap(f_bootstrap)?;
             }
         }
 

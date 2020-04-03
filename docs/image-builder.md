@@ -21,6 +21,7 @@ cargo build --release
 # $BLOB_PATH: blob file path, optional
 # $BLOB_ID: blob id for storage backend
 # $BOOTSTRAP_PATH: bootstrap file path
+# $PARENT_BOOTSTRAP_PATH: parent bootstrap file path, optional
 # $SOURCE: rootfs source directory
 # $OSS_*: aliyun oss config
 
@@ -28,6 +29,7 @@ cargo build --release
             --blob $BLOB_PATH \
             --blob_id $BLOB_ID \
             --bootstrap $BOOTSTRAP_PATH \
+            --parent_bootstrap $PARENT_BOOTSTRAP_PATH \
             --oss_endpoint $OSS_ENDPOINT \
             --oss_access_key_id $OSS_ACCESS_KEY_ID \
             --oss_access_key_secret $OSS_ACCESS_KEY_SECRET \

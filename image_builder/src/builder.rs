@@ -272,8 +272,8 @@ impl Builder {
 
                 let ino = meta.st_ino();
                 let hardlink_node = self.inode_map.get(&ino);
-                if hardlink_node.is_some() {
-                    let hardlink_node = Box::new(hardlink_node.unwrap().clone());
+                if let Some(hardlink_node) = hardlink_node {
+                    let hardlink_node = Box::new(hardlink_node.clone());
                     node.build(Some(hardlink_node))?;
                     node.dump(Some(&mut self.f_blob), f_bootstrap)?;
                 } else {
