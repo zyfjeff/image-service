@@ -31,13 +31,11 @@ pub struct Builder {
     /// blob id (user specified)
     blob_id: String,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
-    inode_map: HashMap<u64, Node>,
+    inode_map: HashMap<u64, Box<Node>>,
     /// mutilple layers build: source nodes
-    additions: HashMap<String, Node>,
+    additions: Vec<Box<Node>>,
     removals: HashMap<String, bool>,
     opaques: HashMap<String, bool>,
-    /// mutilple layers build: parent + source nodes
-    finals: Vec<Node>,
 }
 
 impl Builder {
@@ -77,11 +75,21 @@ impl Builder {
             blob_offset: 0,
             blob_id,
             inode_map: HashMap::new(),
-            additions: HashMap::new(),
+            additions: Vec::new(),
             removals: HashMap::new(),
             opaques: HashMap::new(),
-            finals: Vec::new(),
         })
+    }
+
+    fn get_lower_idx(&self, lowers: &Vec<Box<Node>>, path: String) -> Option<usize> {
+        let mut idx: usize = 0;
+        for lower in lowers {
+            if lower.path == path {
+                return Some(idx);
+            }
+            idx = idx + 1;
+        }
+        None
     }
 
     fn apply(&mut self) -> Result<()> {
@@ -89,8 +97,8 @@ impl Builder {
         let mut sb = RafsSuperBlockInfo::new();
         sb.load(&mut bootstrap)?;
 
-        let mut dir_ino_paths: HashMap<u64, String> = HashMap::new();
-        let mut dir_path_inos: HashMap<String, u64> = HashMap::new();
+        let mut nodes: HashMap<u64, Box<Node>> = HashMap::new();
+        let mut lowers: Vec<Box<Node>> = Vec::new();
 
         loop {
             let mut inode = RafsInodeInfo::new();
@@ -99,31 +107,9 @@ impl Builder {
                 break;
             }
 
-            let path;
-
-            let parent_path = dir_ino_paths.get(&inode.i_parent);
-            if parent_path.is_some() {
-                path = Path::new(self.root.as_str())
-                    .join(parent_path.unwrap())
-                    .join(&inode.name);
-            } else {
-                if inode.name == "/" {
-                    path = Path::new(self.root.as_str()).to_path_buf();
-                } else {
-                    path = Path::new(self.root.as_str()).join(&inode.name);
-                }
-            }
-
-            let path = path.to_str().unwrap();
-
             let mut xattr_chunks = RafsInodeXattrInfos::new();
             if inode.has_xattr() {
                 xattr_chunks.load(&mut bootstrap)?;
-            }
-
-            if inode.is_dir() {
-                dir_ino_paths.insert(inode.i_ino, path.to_owned());
-                dir_path_inos.insert(path.to_owned(), inode.i_ino);
             }
 
             let mut chunks = Vec::new();
@@ -142,74 +128,79 @@ impl Builder {
                 link_chunks.push(link_chunk);
             }
 
-            let mut overlay = Overlay::LowerAddition;
+            let mut path = inode.name.to_owned();
 
-            if let Some(dir) = Path::new(path).parent() {
-                if self
-                    .opaques
-                    .get(&dir.to_str().unwrap().to_owned())
-                    .is_some()
-                {
-                    overlay = Overlay::UpperOpaque;
-                }
+            let mut parent = None;
+            if let Some(parent_node) = nodes.get_mut(&inode.i_parent) {
+                parent = Some(parent_node.clone());
+                let _path = Path::new(parent_node.path.as_str()).join(inode.name.to_owned());
+                path = _path.to_str().unwrap().to_owned();
             }
 
-            let mut node = Node {
+            let node = Box::new(Node {
                 blob_id: self.blob_id.to_owned(),
                 blob_offset: self.blob_offset,
                 root: self.root.to_owned(),
-                path: path.to_owned(),
-                parent: None,
-                overlay,
-                inode,
+                path: path.clone(),
+                parent,
+                overlay: Overlay::LowerAddition,
+                inode: inode.clone(),
                 chunks,
                 link_chunks,
                 xattr_chunks,
-            };
+            });
 
-            if self.removals.get(path).is_none() {
-                if let Some(updated) = self.additions.get_mut(path) {
-                    updated.overlay = Overlay::UpperModification;
-                    node = updated.clone();
-                    self.additions.remove(path);
-                } else {
-                    if node.overlay != Overlay::UpperOpaque {
-                        node.overlay = Overlay::LowerAddition;
+            nodes.insert(inode.i_ino, node.clone());
+            lowers.push(node.clone());
+        }
+
+        for addition in &self.additions {
+            let addition_path = addition.rootfs_path();
+            let mut _addition = addition.clone();
+            _addition.path = addition_path.to_str().unwrap().to_owned();
+            if let Some(idx) = self.get_lower_idx(&lowers, _addition.path.clone()) {
+                _addition.inode.i_ino = lowers[idx].inode.i_ino;
+                _addition.inode.i_parent = lowers[idx].inode.i_parent;
+                _addition.overlay = Overlay::UpperModification;
+                lowers[idx] = _addition;
+            } else {
+                if let Some(parent_path) = addition_path.parent() {
+                    if let Some(idx) =
+                        self.get_lower_idx(&lowers, parent_path.to_str().unwrap().to_owned())
+                    {
+                        _addition.inode.i_parent = lowers[idx].inode.i_ino;
+                        _addition.overlay = Overlay::UpperAddition;
+                        lowers.insert(idx + 1, _addition);
+                    } else {
+                        _addition.overlay = Overlay::UpperAddition;
+                        lowers.push(_addition);
                     }
                 }
-            } else {
-                node.overlay = Overlay::UpperRemoval;
             }
-
-            self.finals.push(node);
         }
 
-        for (_, node) in &mut self.additions {
-            self.finals.push(node.clone());
-        }
-
-        for node in &mut self.finals {
-            let parent_path = Path::new(&node.path).parent();
-            if let Some(path) = parent_path {
-                if let Some(i_parent) = dir_path_inos.get(path.to_str().unwrap()) {
-                    node.inode.i_parent = *i_parent;
+        for lower in &mut lowers {
+            let mut dump = true;
+            if self.removals.get(&lower.path).is_some() {
+                lower.overlay = Overlay::UpperRemoval;
+                dump = false;
+            }
+            if let Some(parent) = &lower.parent {
+                if self.opaques.get(&parent.path).is_some() {
+                    lower.overlay = Overlay::UpperOpaque;
+                    dump = false;
                 }
-            }
-            if let Some(i_ino) = dir_path_inos.get(node.path.as_str()) {
-                node.inode.i_ino = *i_ino;
             }
             info!(
-                "{} {} {}",
-                node.overlay,
-                node.get_type(),
-                node.rootfs_path().to_str().unwrap(),
+                "{} {} {} inode {}, parent {}",
+                lower.overlay,
+                lower.get_type(),
+                lower.path,
+                lower.inode.i_ino,
+                lower.inode.i_parent
             );
-            match node.overlay {
-                Overlay::UpperOpaque => {}
-                Overlay::UpperRemoval => {}
-                _ => {
-                    node.dump(None, Some(&mut self.f_bootstrap))?;
-                }
+            if dump {
+                lower.dump(None, Some(&mut self.f_bootstrap))?;
             }
         }
 
@@ -234,9 +225,12 @@ impl Builder {
         let is_symlink = meta.st_mode() & libc::S_IFMT == libc::S_IFLNK;
 
         if file.is_dir() && !is_symlink {
+            let rootfs_path = Path::new("/").join(file.strip_prefix(self.root.as_str()).unwrap());
+            let rootfs_path = rootfs_path.to_str().unwrap();
+
             let opaque_path = file.join(OCISPEC_WHITEOUT_OPAQUE);
             if opaque_path.metadata().is_ok() {
-                self.opaques.insert(file.to_str().unwrap().to_owned(), true);
+                self.opaques.insert(rootfs_path.to_owned(), true);
                 return Ok(());
             }
 
@@ -259,8 +253,10 @@ impl Builder {
                     name = &name[OCISPEC_WHITEOUT_PREFIX.len()..];
                     if let Some(parent_dir) = path.parent() {
                         let path = parent_dir.join(name);
-                        self.removals
-                            .insert(path.to_str().unwrap().to_owned(), true);
+                        let rootfs_path =
+                            Path::new("/").join(path.strip_prefix(self.root.as_str()).unwrap());
+                        let rootfs_path = rootfs_path.to_str().unwrap();
+                        self.removals.insert(rootfs_path.to_owned(), true);
                         continue;
                     }
                 }
@@ -273,18 +269,16 @@ impl Builder {
                 let ino = meta.st_ino();
                 let hardlink_node = self.inode_map.get(&ino);
                 if let Some(hardlink_node) = hardlink_node {
-                    let hardlink_node = Box::new(hardlink_node.clone());
-                    node.build(Some(hardlink_node))?;
+                    node.build(Some(hardlink_node.clone()))?;
                     node.dump(Some(&mut self.f_blob), f_bootstrap)?;
                 } else {
                     node.build(None)?;
                     node.dump(Some(&mut self.f_blob), f_bootstrap)?;
-                    self.inode_map.insert(ino, node.clone());
+                    self.inode_map.insert(ino, Box::new(node.clone()));
                 }
                 self.blob_offset = node.blob_offset;
 
-                self.additions
-                    .insert(path.to_str().unwrap().to_owned(), node.clone());
+                self.additions.push(Box::new(node.clone()));
 
                 if path.is_dir() {
                     self.walk_dirs(&path, Some(Box::new(node)))?;
