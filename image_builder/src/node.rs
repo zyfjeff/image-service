@@ -305,7 +305,7 @@ impl Node {
             chunk.blockid = RafsDigest::from_buf(chunk_data.as_slice());
 
             // compress chunk data
-            let compressed = utils::compress_with_lz4(&chunk_data)?;
+            let compressed = utils::compress(&chunk_data)?;
             let compressed_size = compressed.len();
             chunk.blob_offset = self.blob_offset;
             chunk.compress_size = compressed_size as u32;

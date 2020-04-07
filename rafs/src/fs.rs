@@ -144,6 +144,7 @@ impl RafsInode {
                 &blk,
                 (file_start - blk.file_pos) as u32,
                 (file_end - file_start) as usize,
+                blksize,
             );
 
             desc.bi_vec.push(bio);

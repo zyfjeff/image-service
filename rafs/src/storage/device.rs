@@ -149,7 +149,7 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
                 self.bio.blkinfo.compr_size,
             )?;
             debug_assert_eq!(len, buf.len());
-            self.buf = utils::decompress_with_lz4(&buf)?;
+            self.buf = utils::decompress(&buf, self.bio.blksize)?;
         }
 
         let count = cmp::min(
@@ -191,7 +191,7 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
     fn write_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
         let mut buf = vec![0u8; slice.len()];
         slice.copy_to(&mut buf);
-        let compressed = utils::compress_with_lz4(&buf)?;
+        let compressed = utils::compress(&buf)?;
         self.dev
             .b
             .write(&self.bio.blkinfo.blob_id, &compressed, offset)?;
@@ -242,14 +242,17 @@ pub struct RafsBio<'a> {
     pub offset: u32,
     // size of data to transfer
     pub size: usize,
+    // block size to read in one shot
+    pub blksize: u32,
 }
 
 impl<'a> RafsBio<'a> {
-    pub fn new(b: &'a RafsBlk, offset: u32, size: usize) -> Self {
+    pub fn new(b: &'a RafsBlk, offset: u32, size: usize, blksize: u32) -> Self {
         RafsBio {
             blkinfo: b,
             offset: offset,
             size: size,
+            blksize: blksize,
         }
     }
 }

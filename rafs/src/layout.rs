@@ -399,7 +399,7 @@ impl RafsDigest {
 impl fmt::Display for RafsDigest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for c in self.data[..].iter() {
-            write!(f, "{}", c)?;
+            write!(f, "{:02x}", c)?;
         }
         Ok(())
     }
