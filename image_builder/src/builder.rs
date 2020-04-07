@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::Result;
+use std::io::{ErrorKind, Result};
 use std::os::linux::fs::MetadataExt;
 use std::path::Path;
 
@@ -102,9 +102,14 @@ impl Builder {
 
         loop {
             let mut inode = RafsInodeInfo::new();
-            let ret = inode.load(&mut bootstrap);
-            if ret.is_err() {
-                break;
+
+            match inode.load(&mut bootstrap) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => break,
+                Err(e) => {
+                    return Err(e);
+                }
             }
 
             let mut xattr_chunks = RafsInodeXattrInfos::new();
@@ -137,13 +142,25 @@ impl Builder {
                 path = _path.to_str().unwrap().to_owned();
             }
 
+            let mut overlay = Overlay::LowerAddition;
+
+            if self.removals.get(&path).is_some() {
+                overlay = Overlay::UpperRemoval;
+            }
+
+            if let Some(parent) = &parent {
+                if self.opaques.get(&parent.path).is_some() {
+                    overlay = Overlay::UpperOpaque;
+                }
+            }
+
             let node = Box::new(Node {
                 blob_id: self.blob_id.to_owned(),
                 blob_offset: self.blob_offset,
                 root: self.root.to_owned(),
                 path: path.clone(),
                 parent,
-                overlay: Overlay::LowerAddition,
+                overlay,
                 inode: inode.clone(),
                 chunks,
                 link_chunks,
@@ -180,17 +197,6 @@ impl Builder {
         }
 
         for lower in &mut lowers {
-            let mut dump = true;
-            if self.removals.get(&lower.path).is_some() {
-                lower.overlay = Overlay::UpperRemoval;
-                dump = false;
-            }
-            if let Some(parent) = &lower.parent {
-                if self.opaques.get(&parent.path).is_some() {
-                    lower.overlay = Overlay::UpperOpaque;
-                    dump = false;
-                }
-            }
             info!(
                 "{} {} {} inode {}, parent {}",
                 lower.overlay,
@@ -199,7 +205,7 @@ impl Builder {
                 lower.inode.i_ino,
                 lower.inode.i_parent
             );
-            if dump {
+            if lower.overlay != Overlay::UpperRemoval && lower.overlay != Overlay::UpperOpaque {
                 lower.dump(None, Some(&mut self.f_bootstrap))?;
             }
         }
@@ -231,7 +237,6 @@ impl Builder {
             let opaque_path = file.join(OCISPEC_WHITEOUT_OPAQUE);
             if opaque_path.metadata().is_ok() {
                 self.opaques.insert(rootfs_path.to_owned(), true);
-                return Ok(());
             }
 
             for entry in fs::read_dir(file)? {
@@ -249,6 +254,11 @@ impl Builder {
                 );
 
                 let mut name = path.file_name().unwrap().to_str().unwrap();
+
+                if name == OCISPEC_WHITEOUT_OPAQUE {
+                    continue;
+                }
+
                 if name.starts_with(OCISPEC_WHITEOUT_PREFIX) {
                     name = &name[OCISPEC_WHITEOUT_PREFIX.len()..];
                     if let Some(parent_dir) = path.parent() {
