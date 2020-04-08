@@ -168,6 +168,29 @@ impl<F: FileSystem> Vfs<F> {
         );
         Ok(ino)
     }
+
+    fn get_real_rootfs(
+        &self,
+        inode: u64,
+    ) -> Result<(Option<&PseudoFs>, Option<Arc<F>>, InodeData)> {
+        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
+            Some(data) => data.clone(),
+            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
+        };
+
+        if idata.is_pseudo() {
+            Ok((Some(&self.root), None, idata))
+        } else {
+            let fs = self
+                .superblocks
+                .read()
+                .unwrap()
+                .get(&idata.super_index)
+                .map(Arc::clone)
+                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            Ok((None, Some(fs), idata))
+        }
+    }
 }
 
 impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
@@ -185,14 +208,9 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     }
 
     fn lookup(&self, ctx: Context, parent: u64, name: &CStr) -> Result<Entry> {
-        let pidata = match self.inodes.read().unwrap().get_by_left(&parent) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        let mut entry: Entry;
-        if pidata.is_pseudo() {
-            entry = self.root.lookup(ctx, pidata.ino, name)?;
+        let (first, last, idata) = self.get_real_rootfs(parent)?;
+        if first.is_some() {
+            let mut entry = first.unwrap().lookup(ctx, idata.ino, name)?;
             // check mountpoints
             let mnt = match self
                 .mountpoints
@@ -203,7 +221,7 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
             {
                 Some(mnt) => mnt,
                 None => {
-                    entry.inode = self.hash_inode(pidata.super_index, entry.inode)?;
+                    entry.inode = self.hash_inode(idata.super_index, entry.inode)?;
                     return Ok(entry);
                 }
             };
@@ -217,22 +235,13 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
                 entry.inode
             );
             return Ok(entry);
+        } else {
+            // parent is in an underlying rootfs
+            let mut entry = last.unwrap().lookup(ctx, idata.ino, name)?;
+            // lookup succees, hash it to a real fuse inode
+            entry.inode = self.hash_inode(idata.super_index, entry.inode)?;
+            Ok(entry)
         }
-
-        // parent is in an underlying rootfs
-        let fs = self
-            .superblocks
-            .read()
-            .unwrap()
-            .get(&pidata.super_index)
-            .map(Arc::clone)
-            .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-        entry = fs.lookup(ctx, pidata.ino, name)?;
-
-        // lookup succees, hash it to a real fuse inode
-        entry.inode = self.hash_inode(pidata.super_index, entry.inode)?;
-
-        Ok(entry)
     }
 
     fn getattr(
@@ -241,22 +250,11 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         inode: u64,
         handle: Option<u64>,
     ) -> Result<(libc::stat64, Duration)> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.getattr(ctx, idata.ino, handle)
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().getattr(ctx, idata.ino, handle)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.getattr(ctx, idata.ino, handle)
+            last.unwrap().getattr(ctx, idata.ino, handle)
         }
     }
 
@@ -268,62 +266,29 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         handle: Option<u64>,
         valid: SetattrValid,
     ) -> Result<(libc::stat64, Duration)> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.setattr(ctx, idata.ino, attr, handle, valid)
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().setattr(ctx, idata.ino, attr, handle, valid)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.setattr(ctx, idata.ino, attr, handle, valid)
+            last.unwrap().setattr(ctx, idata.ino, attr, handle, valid)
         }
     }
 
     fn readlink(&self, ctx: Context, inode: u64) -> Result<Vec<u8>> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.readlink(ctx, idata.ino)
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().readlink(ctx, idata.ino)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.readlink(ctx, idata.ino)
+            last.unwrap().readlink(ctx, idata.ino)
         }
     }
 
     fn symlink(&self, ctx: Context, linkname: &CStr, parent: u64, name: &CStr) -> Result<Entry> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&parent) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.symlink(ctx, linkname, idata.ino, name)
+        let (first, last, idata) = self.get_real_rootfs(parent)?;
+        if first.is_some() {
+            first.unwrap().symlink(ctx, linkname, idata.ino, name)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.symlink(ctx, linkname, idata.ino, name)
+            last.unwrap().symlink(ctx, linkname, idata.ino, name)
         }
     }
 
@@ -336,22 +301,13 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         rdev: u32,
         umask: u32,
     ) -> Result<Entry> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.mknod(ctx, idata.ino, name, mode, rdev, umask)
-        } else {
-            let fs = self
-                .superblocks
-                .read()
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first
                 .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.mknod(ctx, idata.ino, name, mode, rdev, umask)
+                .mknod(ctx, idata.ino, name, mode, rdev, umask)
+        } else {
+            last.unwrap().mknod(ctx, idata.ino, name, mode, rdev, umask)
         }
     }
 
@@ -363,62 +319,29 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         mode: u32,
         umask: u32,
     ) -> Result<Entry> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&parent) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.mkdir(ctx, idata.ino, name, mode, umask)
+        let (first, last, idata) = self.get_real_rootfs(parent)?;
+        if first.is_some() {
+            first.unwrap().mkdir(ctx, idata.ino, name, mode, umask)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.mkdir(ctx, idata.ino, name, mode, umask)
+            last.unwrap().mkdir(ctx, idata.ino, name, mode, umask)
         }
     }
 
     fn unlink(&self, ctx: Context, parent: u64, name: &CStr) -> Result<()> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&parent) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.unlink(ctx, idata.ino, name)
+        let (first, last, idata) = self.get_real_rootfs(parent)?;
+        if first.is_some() {
+            first.unwrap().unlink(ctx, idata.ino, name)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.unlink(ctx, idata.ino, name)
+            last.unwrap().unlink(ctx, idata.ino, name)
         }
     }
 
     fn rmdir(&self, ctx: Context, parent: u64, name: &CStr) -> Result<()> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&parent) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.rmdir(ctx, idata.ino, name)
+        let (first, last, idata) = self.get_real_rootfs(parent)?;
+        if first.is_some() {
+            first.unwrap().rmdir(ctx, idata.ino, name)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.rmdir(ctx, idata.ino, name)
+            last.unwrap().rmdir(ctx, idata.ino, name)
         }
     }
 
@@ -431,61 +354,36 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         newname: &CStr,
         flags: u32,
     ) -> Result<()> {
-        let idata_old = match self.inodes.read().unwrap().get_by_left(&olddir) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        let idata_new = match self.inodes.read().unwrap().get_by_left(&newdir) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
+        let (first, last, idata_old) = self.get_real_rootfs(olddir)?;
+        let (_, _, idata_new) = self.get_real_rootfs(newdir)?;
 
         if idata_old.super_index != idata_new.super_index {
             return Err(Error::from_raw_os_error(libc::EINVAL));
         }
-
-        if idata_old.is_pseudo() && idata_new.is_pseudo() {
-            self.root
+        if first.is_some() {
+            first
+                .unwrap()
                 .rename(ctx, idata_old.ino, oldname, idata_new.ino, newname, flags)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata_old.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.rename(ctx, idata_old.ino, oldname, idata_new.ino, newname, flags)
+            last.unwrap()
+                .rename(ctx, idata_old.ino, oldname, idata_new.ino, newname, flags)
         }
     }
 
     fn link(&self, ctx: Context, inode: u64, newparent: u64, newname: &CStr) -> Result<Entry> {
-        let idata_old = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        let idata_new = match self.inodes.read().unwrap().get_by_left(&newparent) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
+        let (first, last, idata_old) = self.get_real_rootfs(inode)?;
+        let (_, _, idata_new) = self.get_real_rootfs(newparent)?;
 
         if idata_old.super_index != idata_new.super_index {
             return Err(Error::from_raw_os_error(libc::EINVAL));
         }
-
-        if idata_old.is_pseudo() && idata_new.is_pseudo() {
-            self.root.link(ctx, idata_old.ino, idata_new.ino, newname)
-        } else {
-            let fs = self
-                .superblocks
-                .read()
+        if first.is_some() {
+            first
                 .unwrap()
-                .get(&idata_old.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.link(ctx, idata_old.ino, idata_new.ino, newname)
+                .link(ctx, idata_old.ino, idata_new.ino, newname)
+        } else {
+            last.unwrap()
+                .link(ctx, idata_old.ino, idata_new.ino, newname)
         }
     }
 
@@ -507,22 +405,14 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         flags: u32,
         umask: u32,
     ) -> Result<(Entry, Option<u64>, OpenOptions)> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&parent) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.create(ctx, idata.ino, name, mode, flags, umask)
-        } else {
-            let fs = self
-                .superblocks
-                .read()
+        let (first, last, idata) = self.get_real_rootfs(parent)?;
+        if first.is_some() {
+            first
                 .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.create(ctx, idata.ino, name, mode, flags, umask)
+                .create(ctx, idata.ino, name, mode, flags, umask)
+        } else {
+            last.unwrap()
+                .create(ctx, idata.ino, name, mode, flags, umask)
         }
     }
 
@@ -537,23 +427,14 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         lock_owner: Option<u64>,
         flags: u32,
     ) -> Result<usize> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first
+                .unwrap()
                 .read(ctx, idata.ino, handle, w, size, offset, lock_owner, flags)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.read(ctx, idata.ino, handle, w, size, offset, lock_owner, flags)
+            last.unwrap()
+                .read(ctx, idata.ino, handle, w, size, offset, lock_owner, flags)
         }
     }
 
@@ -569,13 +450,9 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         delayed_write: bool,
         flags: u32,
     ) -> Result<usize> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.write(
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().write(
                 ctx,
                 idata.ino,
                 handle,
@@ -587,14 +464,7 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
                 flags,
             )
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.write(
+            last.unwrap().write(
                 ctx,
                 idata.ino,
                 handle,
@@ -609,42 +479,20 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     }
 
     fn flush(&self, ctx: Context, inode: u64, handle: u64, lock_owner: u64) -> Result<()> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.flush(ctx, idata.ino, handle, lock_owner)
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().flush(ctx, idata.ino, handle, lock_owner)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.flush(ctx, idata.ino, handle, lock_owner)
+            last.unwrap().flush(ctx, idata.ino, handle, lock_owner)
         }
     }
 
     fn fsync(&self, ctx: Context, inode: u64, datasync: bool, handle: u64) -> Result<()> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.fsync(ctx, idata.ino, datasync, handle)
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().fsync(ctx, idata.ino, datasync, handle)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.fsync(ctx, idata.ino, datasync, handle)
+            last.unwrap().fsync(ctx, idata.ino, datasync, handle)
         }
     }
 
@@ -657,23 +505,14 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         offset: u64,
         length: u64,
     ) -> Result<()> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root
-                .fallocate(ctx, inode, handle, mode, offset, length)
-        } else {
-            let fs = self
-                .superblocks
-                .read()
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first
                 .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.fallocate(ctx, inode, handle, mode, offset, length)
+                .fallocate(ctx, idata.ino, handle, mode, offset, length)
+        } else {
+            last.unwrap()
+                .fallocate(ctx, idata.ino, handle, mode, offset, length)
         }
     }
 
@@ -687,13 +526,9 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         flock_release: bool,
         lock_owner: Option<u64>,
     ) -> Result<()> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.release(
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().release(
                 ctx,
                 idata.ino,
                 flags,
@@ -703,14 +538,7 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
                 lock_owner,
             )
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.release(
+            last.unwrap().release(
                 ctx,
                 idata.ino,
                 flags,
@@ -723,22 +551,11 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     }
 
     fn statfs(&self, ctx: Context, inode: u64) -> Result<libc::statvfs64> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.statfs(ctx, idata.ino)
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().statfs(ctx, idata.ino)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.statfs(ctx, idata.ino)
+            last.unwrap().statfs(ctx, idata.ino)
         }
     }
 
@@ -750,82 +567,38 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         value: &[u8],
         flags: u32,
     ) -> Result<()> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.setxattr(ctx, idata.ino, name, value, flags)
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().setxattr(ctx, idata.ino, name, value, flags)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.setxattr(ctx, idata.ino, name, value, flags)
+            last.unwrap().setxattr(ctx, idata.ino, name, value, flags)
         }
     }
 
     fn getxattr(&self, ctx: Context, inode: u64, name: &CStr, size: u32) -> Result<GetxattrReply> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.getxattr(ctx, idata.ino, name, size)
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().getxattr(ctx, idata.ino, name, size)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.getxattr(ctx, idata.ino, name, size)
+            last.unwrap().getxattr(ctx, idata.ino, name, size)
         }
     }
 
     fn listxattr(&self, ctx: Context, inode: u64, size: u32) -> Result<ListxattrReply> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.listxattr(ctx, idata.ino, size)
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().listxattr(ctx, idata.ino, size)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.listxattr(ctx, idata.ino, size)
+            last.unwrap().listxattr(ctx, idata.ino, size)
         }
     }
 
     fn removexattr(&self, ctx: Context, inode: u64, name: &CStr) -> Result<()> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.removexattr(ctx, idata.ino, name)
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().removexattr(ctx, idata.ino, name)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.removexattr(ctx, idata.ino, name)
+            last.unwrap().removexattr(ctx, idata.ino, name)
         }
     }
 
@@ -855,13 +628,10 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     where
         FF: FnMut(DirEntry) -> Result<usize>,
     {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first
+                .unwrap()
                 .readdir(ctx, idata.ino, handle, size, offset, |mut dir_entry| {
                     let mnt = match self
                         .mountpoints
@@ -882,17 +652,11 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
                     add_entry(dir_entry)
                 })
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.readdir(ctx, idata.ino, handle, size, offset, |mut dir_entry| {
-                dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino)?;
-                add_entry(dir_entry)
-            })
+            last.unwrap()
+                .readdir(ctx, idata.ino, handle, size, offset, |mut dir_entry| {
+                    dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino)?;
+                    add_entry(dir_entry)
+                })
         }
     }
 
@@ -908,13 +672,9 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     where
         FF: FnMut(DirEntry, Entry) -> Result<usize>,
     {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.readdirplus(
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().readdirplus(
                 ctx,
                 idata.ino,
                 handle,
@@ -943,14 +703,7 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
                 },
             )
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.readdirplus(
+            last.unwrap().readdirplus(
                 ctx,
                 idata.ino,
                 handle,
@@ -966,22 +719,11 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     }
 
     fn fsyncdir(&self, ctx: Context, inode: u64, datasync: bool, handle: u64) -> Result<()> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.fsyncdir(ctx, idata.ino, datasync, handle)
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().fsyncdir(ctx, idata.ino, datasync, handle)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.fsyncdir(ctx, idata.ino, datasync, handle)
+            last.unwrap().fsyncdir(ctx, idata.ino, datasync, handle)
         }
     }
 
@@ -990,22 +732,11 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     }
 
     fn access(&self, ctx: Context, inode: u64, mask: u32) -> Result<()> {
-        let idata = match self.inodes.read().unwrap().get_by_left(&inode) {
-            Some(data) => data.clone(),
-            None => return Err(Error::from_raw_os_error(libc::ENOENT)),
-        };
-
-        if idata.is_pseudo() {
-            self.root.access(ctx, idata.ino, mask)
+        let (first, last, idata) = self.get_real_rootfs(inode)?;
+        if first.is_some() {
+            first.unwrap().access(ctx, idata.ino, mask)
         } else {
-            let fs = self
-                .superblocks
-                .read()
-                .unwrap()
-                .get(&idata.super_index)
-                .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
-            fs.access(ctx, idata.ino, mask)
+            last.unwrap().access(ctx, idata.ino, mask)
         }
     }
 }
