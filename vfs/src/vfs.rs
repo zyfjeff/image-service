@@ -14,10 +14,17 @@ use std::time::Duration;
 
 use bimap::hash::BiHashMap;
 use fuse::filesystem::*;
-use futures::future::Either;
-use futures::future::Either::*;
 
 use crate::pseudo_fs::PseudoFs;
+
+#[derive(Debug, Clone)]
+pub enum Either<A, B> {
+    /// First branch of the type
+    Left(A),
+    /// Second branch of the type
+    Right(B),
+}
+use Either::*;
 
 const PSEUDO_FS_SUPER: u64 = 1;
 
