@@ -86,7 +86,7 @@ impl Node {
         }
     }
 
-    pub fn build(&mut self, hardlink_node: Option<Box<Node>>) -> Result<()> {
+    pub fn build(&mut self, hardlink_node: Option<Node>) -> Result<()> {
         self.build_inode(hardlink_node)?;
         let file_type = self.get_type();
         if file_type != "" {
@@ -254,7 +254,7 @@ impl Node {
         Ok(())
     }
 
-    fn build_inode(&mut self, hardlink_node: Option<Box<Node>>) -> Result<()> {
+    fn build_inode(&mut self, hardlink_node: Option<Node>) -> Result<()> {
         if self.parent.is_none() {
             self.inode.name = String::from("/");
             self.inode.i_parent = 0;

@@ -31,9 +31,9 @@ pub struct Builder {
     /// blob id (user specified)
     blob_id: String,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
-    inode_map: HashMap<u64, Box<Node>>,
+    inode_map: HashMap<u64, Node>,
     /// mutilple layers build: source nodes
-    additions: Vec<Box<Node>>,
+    additions: Vec<Node>,
     removals: HashMap<String, bool>,
     opaques: HashMap<String, bool>,
 }
@@ -81,7 +81,7 @@ impl Builder {
         })
     }
 
-    fn get_lower_idx(&self, lowers: &Vec<Box<Node>>, path: String) -> Option<usize> {
+    fn get_lower_idx(&self, lowers: &Vec<Node>, path: String) -> Option<usize> {
         let mut idx: usize = 0;
         for lower in lowers {
             if lower.path == path {
@@ -97,8 +97,8 @@ impl Builder {
         let mut sb = RafsSuperBlockInfo::new();
         sb.load(&mut bootstrap)?;
 
-        let mut nodes: HashMap<u64, Box<Node>> = HashMap::new();
-        let mut lowers: Vec<Box<Node>> = Vec::new();
+        let mut nodes: HashMap<u64, Node> = HashMap::new();
+        let mut lowers: Vec<Node> = Vec::new();
 
         loop {
             let mut inode = RafsInodeInfo::new();
@@ -137,7 +137,7 @@ impl Builder {
 
             let mut parent = None;
             if let Some(parent_node) = nodes.get_mut(&inode.i_parent) {
-                parent = Some(parent_node.clone());
+                parent = Some(Box::new(parent_node.clone()));
                 let _path = Path::new(parent_node.path.as_str()).join(inode.name.to_owned());
                 path = _path.to_str().unwrap().to_owned();
             }
@@ -154,7 +154,7 @@ impl Builder {
                 }
             }
 
-            let node = Box::new(Node {
+            let node = Node {
                 blob_id: self.blob_id.to_owned(),
                 blob_offset: self.blob_offset,
                 root: self.root.to_owned(),
@@ -165,7 +165,7 @@ impl Builder {
                 chunks,
                 link_chunks,
                 xattr_chunks,
-            });
+            };
 
             nodes.insert(inode.i_ino, node.clone());
             lowers.push(node.clone());
@@ -284,11 +284,11 @@ impl Builder {
                 } else {
                     node.build(None)?;
                     node.dump(Some(&mut self.f_blob), f_bootstrap)?;
-                    self.inode_map.insert(ino, Box::new(node.clone()));
+                    self.inode_map.insert(ino, node.clone());
                 }
                 self.blob_offset = node.blob_offset;
 
-                self.additions.push(Box::new(node.clone()));
+                self.additions.push(node.clone());
 
                 if path.is_dir() {
                     self.walk_dirs(&path, Some(Box::new(node)))?;
