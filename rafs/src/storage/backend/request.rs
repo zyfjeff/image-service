@@ -8,7 +8,6 @@ use std::fs::File;
 use std::io::Read;
 use std::io::Result as IOResult;
 use std::io::{Error, ErrorKind};
-use url::Url;
 
 pub struct Progress {
   inner: File,
@@ -18,7 +17,7 @@ pub struct Progress {
 }
 
 impl Progress {
-  fn new(file: File, total: u64, callback: fn((u64, u64))) -> Progress {
+  pub fn new(file: File, total: u64, callback: fn((u64, u64))) -> Progress {
     Progress {
       inner: file,
       current: 0,
@@ -43,41 +42,29 @@ pub enum FileBody {
   Buf(Vec<u8>),
 }
 
+#[derive(Debug)]
 pub struct Request {
-  scheme: String,
-  endpoint: String,
   client: Client,
 }
 
-pub fn new(scheme: &str, endpoint: &str) -> Request {
-  Request {
-    scheme: String::from(scheme),
-    endpoint: String::from(endpoint),
-    client: Client::new(),
-  }
-}
-
 impl Request {
-  pub fn request(
+  pub fn new() -> Request {
+    let client = Client::builder().timeout(None).build().unwrap();
+    Request { client }
+  }
+
+  pub fn call(
     &self,
     method: &str,
+    url: &str,
     data: FileBody,
     headers: HeaderMap,
-    query: &[&str],
   ) -> Result<Response, Error> {
-    let url = format!("{}://{}", self.scheme, self.endpoint);
-    let url = Url::parse(url.as_str()).unwrap();
-
-    let mut query_str = String::new();
-    if query.len() > 0 {
-      query_str = format!("?{}", query.join("&"));
-    }
-
-    let url = format!("{}{}", url.as_str(), query_str);
     debug!("request {:?} method {:?} url {:?}", headers, method, url);
 
     let method = Method::from_bytes(method.as_bytes()).unwrap();
-    let rb = self.client.request(method, url.as_str()).headers(headers);
+
+    let rb = self.client.request(method, url).headers(headers);
 
     let ret;
     match data {
@@ -93,13 +80,10 @@ impl Request {
     match ret {
       Ok(resp) => {
         let status = resp.status();
-
         if status >= StatusCode::OK && status < StatusCode::MULTIPLE_CHOICES {
           return Ok(resp);
         }
-
         let message = resp.text().unwrap();
-
         Err(Error::new(ErrorKind::Other, message))
       }
       Err(err) => Err(Error::new(ErrorKind::Other, format!("{}", err))),

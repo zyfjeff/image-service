@@ -5,57 +5,23 @@
 use base64;
 use crypto::{hmac::Hmac, mac::Mac, sha1::Sha1};
 use httpdate;
-use reqwest::{self, header::HeaderMap, StatusCode, Method};
-use reqwest::blocking::{Client, Body, Response};
+use reqwest::{self, header::HeaderMap};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::Read;
 use std::io::Result as IOResult;
 use std::io::{Error, ErrorKind};
 use std::time::SystemTime;
 use url::Url;
 
+use crate::storage::backend::request::{FileBody, Progress, Request};
 use crate::storage::backend::BlobBackend;
 
 const HEADER_DATE: &str = "Date";
 const HEADER_AUTHORIZATION: &str = "Authorization";
 
-struct Progress {
-    inner: File,
-    current: u64,
-    total: u64,
-    callback: fn((u64, u64)),
-}
-
-impl Progress {
-    fn new(file: File, total: u64, callback: fn((u64, u64))) -> Progress {
-        Progress {
-            inner: file,
-            current: 0,
-            total,
-            callback,
-        }
-    }
-}
-
-impl Read for Progress {
-    fn read(&mut self, buf: &mut [u8]) -> IOResult<usize> {
-        self.inner.read(buf).map(|count| {
-            self.current += count as u64;
-            (self.callback)((self.current, self.total));
-            count
-        })
-    }
-}
-
-enum FileBody {
-    File(Progress, u64),
-    Buf(Vec<u8>),
-}
-
 #[derive(Debug)]
 pub struct OSS {
-    client: Client,
+    request: Request,
     access_key_id: String,
     access_key_secret: String,
     endpoint: String,
@@ -69,12 +35,8 @@ impl OSS {
         access_key_secret: &str,
         bucket_name: &str,
     ) -> OSS {
-        let client = Client::builder()
-            .timeout(None)
-            .build()
-            .unwrap();
         OSS {
-            client,
+            request: Request::new(),
             endpoint: String::from(endpoint),
             access_key_id: String::from(access_key_id),
             access_key_secret: String::from(access_key_secret),
@@ -83,36 +45,37 @@ impl OSS {
     }
 
     pub fn put_object(&self, blob_id: &str, file: File, callback: fn((u64, u64))) -> IOResult<()> {
-        let headers = HeaderMap::new();
+        let method = "PUT";
+        let query = &[];
+        let (resource, url) = self.url(blob_id, query);
+        let headers = self.sign(method, HeaderMap::new(), resource.as_str());
+
         let size = file.metadata().unwrap().len();
         let body = Progress::new(file, size, callback);
-        self.request(
-            "PUT",
-            FileBody::File(body, size),
-            self.bucket_name.as_str(),
-            blob_id,
-            headers,
-            &[],
-        )?;
+
+        self.request
+            .call(method, url.as_str(), FileBody::File(body, size), headers)?;
+
         Ok(())
     }
 
     /// generate oss request signature
-    fn sign(&self, verb: &str, headers: &HeaderMap, canonicalized_resource: &str) -> String {
+    fn sign(&self, verb: &str, headers: HeaderMap, canonicalized_resource: &str) -> HeaderMap {
         let content_md5 = "";
         let content_type = "";
         let mut canonicalized_oss_headers = vec![];
-        let date = headers.get(HEADER_DATE).unwrap().to_str().unwrap();
+
+        let date = httpdate::fmt_http_date(SystemTime::now());
 
         let mut data = vec![
             verb,
             content_md5,
             content_type,
-            date,
+            date.as_str(),
             // canonicalized_oss_headers,
             canonicalized_resource,
         ];
-        for (name, value) in headers.into_iter() {
+        for (name, value) in &headers {
             let name = name.as_str();
             if name.starts_with("x-oss-") {
                 let header = format!("{}:{}", name.to_lowercase(), value.to_str().unwrap());
@@ -128,98 +91,68 @@ impl OSS {
         mac.input(data.as_bytes());
         let signature = format!("{}", base64::encode(mac.result().code()));
 
-        format!("OSS {}:{}", self.access_key_id, signature)
-    }
+        let authorization = format!("OSS {}:{}", self.access_key_id, signature);
 
-    /// generic oss api request
-    fn request(
-        &self,
-        method: &str,
-        data: FileBody,
-        bucket_name: &str,
-        object_key: &str,
-        headers: HeaderMap,
-        query: &[&str],
-    ) -> Result<Response, Error> {
-        let date = httpdate::fmt_http_date(SystemTime::now());
         let mut new_headers = HeaderMap::new();
         new_headers.extend(headers);
         new_headers.insert(HEADER_DATE, date.as_str().parse().unwrap());
-        let mut host_prefix = String::new();
-        if bucket_name != "" {
-            host_prefix = format!("{}.", bucket_name);
-        }
-        let url = format!("https://{}{}", host_prefix, self.endpoint);
-        let mut url = Url::parse(url.as_str()).unwrap();
-        url.path_segments_mut().unwrap().push(object_key);
-        let mut query_str = String::new();
-        if query.len() > 0 {
-            query_str = format!("?{}", query.join("&"));
-        }
-        let mut prefix = String::new();
-        if bucket_name != "" {
-            prefix = format!("/{}", bucket_name);
-        }
-        let resource = format!("{}/{}{}", prefix, object_key, query_str);
-        let url = format!("{}{}", url.as_str(), query_str);
-        debug!(
-            "oss request {:?} method {:?} url {:?}",
-            new_headers, method, url
-        );
-
-        let authorization = self.sign(method, &new_headers, resource.as_str());
         new_headers.insert(
             HEADER_AUTHORIZATION,
             authorization.as_str().parse().unwrap(),
         );
-        let method = Method::from_bytes(method.as_bytes()).unwrap();
 
-        let rb = self
-            .client
-            .request(method, url.as_str())
-            .headers(new_headers);
+        new_headers
+    }
 
-        let ret;
-        match data {
-            FileBody::File(body, total) => {
-                let body = Body::sized(body, total);
-                ret = rb.body(body).send();
-            }
-            FileBody::Buf(buf) => {
-                ret = rb.body(buf).send();
-            }
+    fn resource(&self, object_key: &str, query_str: &str) -> String {
+        let mut prefix = String::new();
+        if self.bucket_name != "" {
+            prefix = format!("/{}", self.bucket_name);
+        }
+        format!("{}/{}{}", prefix, object_key, query_str)
+    }
+
+    fn url(&self, object_key: &str, query: &[&str]) -> (String, String) {
+        let mut host_prefix = String::new();
+        if self.bucket_name != "" {
+            host_prefix = format!("{}.", self.bucket_name);
         }
 
-        match ret {
-            Ok(resp) => {
-                let status = resp.status();
-                if status >= StatusCode::OK && status < StatusCode::MULTIPLE_CHOICES {
-                    return Ok(resp);
-                }
-                let message = resp.text().unwrap();
-                Err(Error::new(ErrorKind::Other, message))
-            }
-            Err(err) => Err(Error::new(ErrorKind::Other, format!("{}", err))),
+        let url = format!("https://{}{}", host_prefix, self.endpoint);
+        let mut url = Url::parse(url.as_str()).unwrap();
+        url.path_segments_mut().unwrap().push(object_key);
+
+        let mut query_str = String::new();
+        if query.len() > 0 {
+            query_str = format!("?{}", query.join("&"));
         }
+
+        let resource = self.resource(object_key, query_str.as_str());
+        let url = format!("{}{}", url.as_str(), query_str);
+
+        (resource, url)
     }
 
     fn create_bucket(&self) -> IOResult<()> {
-        let headers = HeaderMap::new();
-        self.request(
-            "PUT",
+        let method = "PUT";
+        let query = &[];
+        let (resource, url) = self.url("", query);
+        let headers = self.sign(method, HeaderMap::new(), resource.as_str());
+
+        self.request.call(
+            method,
+            url.as_str(),
             FileBody::Buf("".as_bytes().to_vec()),
-            self.bucket_name.as_str(),
-            "",
             headers,
-            &[],
         )?;
+
         Ok(())
     }
 }
 
 pub fn new() -> OSS {
     OSS {
-        client: Client::new(),
+        request: Request::new(),
         access_key_id: String::new(),
         access_key_secret: String::new(),
         endpoint: String::new(),
@@ -241,29 +174,36 @@ impl BlobBackend for OSS {
         self.access_key_id = (*access_key_id).to_owned();
         self.access_key_secret = (*access_key_secret).to_owned();
         self.bucket_name = (*bucket_name).to_owned();
+        self.request = Request::new();
         // self.create_bucket()?;
         Ok(())
     }
 
     /// read ranged data from oss object
     fn read(&self, blob_id: &str, buf: &mut Vec<u8>, offset: u64, count: usize) -> IOResult<usize> {
+        let method = "GET";
+        let query = &[];
+        let (resource, url) = self.url(blob_id, query);
+
         let mut headers = HeaderMap::new();
         let end_at = offset + count as u64 - 1;
         let range = format!("bytes={}-{}", offset, end_at);
         headers.insert("Range", range.as_str().parse().unwrap());
+        let headers = self.sign(method, headers, resource.as_str());
+
         let mut resp = self
-            .request(
-                "GET",
+            .request
+            .call(
+                method,
+                url.as_str(),
                 FileBody::Buf("".as_bytes().to_vec()),
-                self.bucket_name.as_str(),
-                blob_id,
                 headers,
-                &[],
             )
             .or_else(|e| {
                 error!("oss req failed {:?}", e);
                 Err(e)
             })?;
+
         resp.copy_to(buf)
             .or_else(|err| {
                 error!("oss read failed {:?}", err);
@@ -274,16 +214,14 @@ impl BlobBackend for OSS {
 
     /// append data to oss object
     fn write(&self, blob_id: &str, buf: &Vec<u8>, offset: u64) -> IOResult<usize> {
-        let headers = HeaderMap::new();
+        let method = "POST";
         let position = format!("position={}", offset);
-        self.request(
-            "POST",
-            FileBody::Buf(buf.to_vec()),
-            self.bucket_name.as_str(),
-            blob_id,
-            headers,
-            &["append", position.as_str()],
-        )?;
+        let query = &["append", position.as_str()];
+        let (resource, url) = self.url(blob_id, query);
+        let headers = self.sign(method, HeaderMap::new(), resource.as_str());
+
+        self.request
+            .call(method, url.as_str(), FileBody::Buf(buf.to_vec()), headers)?;
         Ok(buf.len())
     }
 
