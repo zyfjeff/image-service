@@ -6,8 +6,25 @@ use reqwest::blocking::{Body, Client, Response};
 use reqwest::{self, header::HeaderMap, Method, StatusCode};
 use std::fs::File;
 use std::io::Read;
-use std::io::Result as IOResult;
+use std::io::Result;
 use std::io::{Error, ErrorKind};
+
+pub struct ReqErr {}
+
+impl ReqErr {
+  pub fn inv_input<E: std::fmt::Debug>(err: E) -> Error {
+    Error::new(ErrorKind::InvalidInput, format!("{:?}", err))
+  }
+  pub fn inv_data<E: std::fmt::Debug>(err: E) -> Error {
+    Error::new(ErrorKind::InvalidData, format!("{:?}", err))
+  }
+  pub fn other<E: std::fmt::Debug>(err: E) -> Error {
+    Error::new(ErrorKind::Other, format!("{:?}", err))
+  }
+  pub fn broken_pipe<E: std::fmt::Debug>(err: E) -> Error {
+    Error::new(ErrorKind::BrokenPipe, format!("{:?}", err))
+  }
+}
 
 pub struct Progress {
   inner: File,
@@ -28,7 +45,7 @@ impl Progress {
 }
 
 impl Read for Progress {
-  fn read(&mut self, buf: &mut [u8]) -> IOResult<usize> {
+  fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
     self.inner.read(buf).map(|count| {
       self.current += count as u64;
       (self.callback)((self.current, self.total));
@@ -59,10 +76,10 @@ impl Request {
     url: &str,
     data: FileBody,
     headers: HeaderMap,
-  ) -> Result<Response, Error> {
+  ) -> Result<Response> {
     debug!("request {:?} method {:?} url {:?}", headers, method, url);
 
-    let method = Method::from_bytes(method.as_bytes()).unwrap();
+    let method = Method::from_bytes(method.as_bytes()).map_err(ReqErr::inv_input)?;
 
     let rb = self.client.request(method, url).headers(headers);
 
@@ -83,7 +100,7 @@ impl Request {
         if status >= StatusCode::OK && status < StatusCode::MULTIPLE_CHOICES {
           return Ok(resp);
         }
-        let message = resp.text().unwrap();
+        let message = resp.text().map_err(ReqErr::broken_pipe)?;
         Err(Error::new(ErrorKind::Other, message))
       }
       Err(err) => Err(Error::new(ErrorKind::Other, format!("{}", err))),

@@ -8,12 +8,12 @@ use httpdate;
 use reqwest::{self, header::HeaderMap};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::Result as IOResult;
+use std::io::Result;
 use std::io::{Error, ErrorKind};
 use std::time::SystemTime;
 use url::Url;
 
-use crate::storage::backend::request::{FileBody, Progress, Request};
+use crate::storage::backend::request::{FileBody, Progress, ReqErr, Request};
 use crate::storage::backend::BlobBackend;
 
 const HEADER_DATE: &str = "Date";
@@ -44,13 +44,13 @@ impl OSS {
         }
     }
 
-    pub fn put_object(&self, blob_id: &str, file: File, callback: fn((u64, u64))) -> IOResult<()> {
+    pub fn put_object(&self, blob_id: &str, file: File, callback: fn((u64, u64))) -> Result<()> {
         let method = "PUT";
         let query = &[];
-        let (resource, url) = self.url(blob_id, query);
-        let headers = self.sign(method, HeaderMap::new(), resource.as_str());
+        let (resource, url) = self.url(blob_id, query)?;
+        let headers = self.sign(method, HeaderMap::new(), resource.as_str())?;
 
-        let size = file.metadata().unwrap().len();
+        let size = file.metadata()?.len();
         let body = Progress::new(file, size, callback);
 
         self.request
@@ -60,7 +60,12 @@ impl OSS {
     }
 
     /// generate oss request signature
-    fn sign(&self, verb: &str, headers: HeaderMap, canonicalized_resource: &str) -> HeaderMap {
+    fn sign(
+        &self,
+        verb: &str,
+        headers: HeaderMap,
+        canonicalized_resource: &str,
+    ) -> Result<HeaderMap> {
         let content_md5 = "";
         let content_type = "";
         let mut canonicalized_oss_headers = vec![];
@@ -77,8 +82,9 @@ impl OSS {
         ];
         for (name, value) in &headers {
             let name = name.as_str();
+            let value = value.to_str().map_err(ReqErr::inv_input)?;
             if name.starts_with("x-oss-") {
-                let header = format!("{}:{}", name.to_lowercase(), value.to_str().unwrap());
+                let header = format!("{}:{}", name.to_lowercase(), value);
                 canonicalized_oss_headers.push(header);
             }
         }
@@ -95,13 +101,16 @@ impl OSS {
 
         let mut new_headers = HeaderMap::new();
         new_headers.extend(headers);
-        new_headers.insert(HEADER_DATE, date.as_str().parse().unwrap());
+        new_headers.insert(
+            HEADER_DATE,
+            date.as_str().parse().map_err(ReqErr::inv_data)?,
+        );
         new_headers.insert(
             HEADER_AUTHORIZATION,
-            authorization.as_str().parse().unwrap(),
+            authorization.as_str().parse().map_err(ReqErr::inv_data)?,
         );
 
-        new_headers
+        Ok(new_headers)
     }
 
     fn resource(&self, object_key: &str, query_str: &str) -> String {
@@ -112,15 +121,17 @@ impl OSS {
         format!("{}/{}{}", prefix, object_key, query_str)
     }
 
-    fn url(&self, object_key: &str, query: &[&str]) -> (String, String) {
+    fn url(&self, object_key: &str, query: &[&str]) -> Result<(String, String)> {
         let mut host_prefix = String::new();
         if self.bucket_name != "" {
             host_prefix = format!("{}.", self.bucket_name);
         }
 
         let url = format!("https://{}{}", host_prefix, self.endpoint);
-        let mut url = Url::parse(url.as_str()).unwrap();
-        url.path_segments_mut().unwrap().push(object_key);
+        let mut url = Url::parse(url.as_str()).map_err(ReqErr::inv_data)?;
+        url.path_segments_mut()
+            .map_err(ReqErr::inv_data)?
+            .push(object_key);
 
         let mut query_str = String::new();
         if query.len() > 0 {
@@ -130,14 +141,14 @@ impl OSS {
         let resource = self.resource(object_key, query_str.as_str());
         let url = format!("{}{}", url.as_str(), query_str);
 
-        (resource, url)
+        Ok((resource, url))
     }
 
-    fn create_bucket(&self) -> IOResult<()> {
+    fn create_bucket(&self) -> Result<()> {
         let method = "PUT";
         let query = &[];
-        let (resource, url) = self.url("", query);
-        let headers = self.sign(method, HeaderMap::new(), resource.as_str());
+        let (resource, url) = self.url("", query)?;
+        let headers = self.sign(method, HeaderMap::new(), resource.as_str())?;
 
         self.request.call(
             method,
@@ -165,7 +176,7 @@ fn einval() -> Error {
 }
 
 impl BlobBackend for OSS {
-    fn init(&mut self, config: HashMap<&str, &str>) -> IOResult<()> {
+    fn init(&mut self, config: HashMap<&str, &str>) -> Result<()> {
         let endpoint = config.get("endpoint").ok_or(einval())?;
         let access_key_id = config.get("access_key_id").ok_or(einval())?;
         let access_key_secret = config.get("access_key_secret").ok_or(einval())?;
@@ -180,16 +191,16 @@ impl BlobBackend for OSS {
     }
 
     /// read ranged data from oss object
-    fn read(&self, blob_id: &str, buf: &mut Vec<u8>, offset: u64, count: usize) -> IOResult<usize> {
+    fn read(&self, blob_id: &str, buf: &mut Vec<u8>, offset: u64, count: usize) -> Result<usize> {
         let method = "GET";
         let query = &[];
-        let (resource, url) = self.url(blob_id, query);
+        let (resource, url) = self.url(blob_id, query)?;
 
         let mut headers = HeaderMap::new();
         let end_at = offset + count as u64 - 1;
         let range = format!("bytes={}-{}", offset, end_at);
-        headers.insert("Range", range.as_str().parse().unwrap());
-        let headers = self.sign(method, headers, resource.as_str());
+        headers.insert("Range", range.as_str().parse().map_err(ReqErr::inv_data)?);
+        let headers = self.sign(method, headers, resource.as_str())?;
 
         let mut resp = self
             .request
@@ -213,12 +224,12 @@ impl BlobBackend for OSS {
     }
 
     /// append data to oss object
-    fn write(&self, blob_id: &str, buf: &Vec<u8>, offset: u64) -> IOResult<usize> {
+    fn write(&self, blob_id: &str, buf: &Vec<u8>, offset: u64) -> Result<usize> {
         let method = "POST";
         let position = format!("position={}", offset);
         let query = &["append", position.as_str()];
-        let (resource, url) = self.url(blob_id, query);
-        let headers = self.sign(method, HeaderMap::new(), resource.as_str());
+        let (resource, url) = self.url(blob_id, query)?;
+        let headers = self.sign(method, HeaderMap::new(), resource.as_str())?;
 
         self.request
             .call(method, url.as_str(), FileBody::Buf(buf.to_vec()), headers)?;
