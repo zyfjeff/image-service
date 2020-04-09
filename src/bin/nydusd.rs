@@ -25,20 +25,21 @@ use std::{convert, error, fmt, io, process};
 use libc::EFD_NONBLOCK;
 
 use clap::{App, Arg};
+use fuse_rs::api::filesystem::FileSystem;
+use fuse_rs::api::server::Server;
+use fuse_rs::transport::{Reader, Writer};
+use fuse_rs::Error as VhostUserFsError;
+use vhost_rs::vhost_user::message::*;
+use vhost_rs::vhost_user::SlaveFsCacheReq;
+use vhost_user_backend::{VhostUserBackend, VhostUserDaemon, Vring};
 use vm_memory::GuestMemoryMmap;
 use vmm_sys_util::eventfd::EventFd;
 
-use fuse::filesystem::FileSystem;
-use fuse::server::Server;
-use fuse::Error as VhostUserFsError;
 use nydus_api::http::start_http_thread;
 use nydus_api::http_endpoint::{ApiError, ApiRequest, ApiResponsePayload, DaemonInfo, MountInfo};
 use rafs::fs::{Rafs, RafsConfig};
 use rafs::storage::backend;
 use vfs::vfs::Vfs;
-use vhost_rs::descriptor_utils::{Reader, Writer};
-use vhost_rs::vhost_user::message::*;
-use vhost_rs::vring::{VhostUserBackend, VhostUserDaemon, Vring};
 
 const VIRTIO_F_VERSION_1: u32 = 32;
 
@@ -144,7 +145,9 @@ struct VhostUserFsBackend<F: FileSystem + Send + Sync + 'static> {
     mem: Option<GuestMemoryMmap>,
     kill_evt: EventFd,
     vfs: Arc<Vfs<F>>,
-    server: Arc<Server<Vfs<F>>>,
+    server: Arc<Server<Arc<Vfs<F>>>>,
+    // handle request from slave to master
+    vu_req: Option<SlaveFsCacheReq>,
 }
 
 struct ApiServer {
@@ -283,8 +286,9 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserFsBackend<F> {
         Ok(VhostUserFsBackend {
             mem: None,
             kill_evt: EventFd::new(EFD_NONBLOCK).map_err(Error::Epoll)?,
-            server: Arc::new(Server::new(Arc::clone(&fs))),
-            vfs: Arc::clone(&fs),
+            server: Arc::new(Server::new(fs.clone())),
+            vfs: fs,
+            vu_req: None,
         })
     }
 
@@ -293,14 +297,14 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserFsBackend<F> {
 
         let mut used_desc_heads = [(0, 0); QUEUE_SIZE];
         let mut used_count = 0;
-        while let Some(avail_desc) = vring.mut_queue().iter(&mem).next() {
+        while let Some(avail_desc) = vring.mut_queue().iter(mem).next() {
             let head_index = avail_desc.index;
-            let reader = Reader::new(&mem, avail_desc.clone()).unwrap();
-            let writer = Writer::new(&mem, avail_desc.clone()).unwrap();
+            let reader = Reader::new(mem, avail_desc.clone()).unwrap();
+            let writer = Writer::new(mem, avail_desc.clone()).unwrap();
 
             let total = self
                 .server
-                .handle_message(reader, writer)
+                .handle_message(reader, writer, self.vu_req.as_mut())
                 .map_err(Error::ProcessQueue)?;
 
             used_desc_heads[used_count] = (head_index, total);
@@ -309,7 +313,7 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserFsBackend<F> {
 
         if used_count > 0 {
             for &(desc_index, _) in &used_desc_heads[..used_count] {
-                vring.mut_queue().add_used(&mem, desc_index, 0);
+                vring.mut_queue().add_used(mem, desc_index, 0);
             }
             vring.signal_used_queue().unwrap();
         }
@@ -335,6 +339,8 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserBackend for VhostUserFsBack
         // liubo: we haven't supported slave req in rafs.
         VhostUserProtocolFeatures::MQ
     }
+
+    fn set_event_idx(&mut self, _enabled: bool) {}
 
     fn update_memory(&mut self, mem: GuestMemoryMmap) -> VhostUserBackendResult<()> {
         self.mem = Some(mem);

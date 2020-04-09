@@ -8,10 +8,9 @@ use std::collections::HashMap;
 use std::io;
 use std::io::{Error, Read, Write};
 
+use fuse_rs::api::filesystem::{ZeroCopyReader, ZeroCopyWriter};
+use fuse_rs::transport::FileReadWriteVolatile;
 use vm_memory::VolatileSlice;
-
-use fuse::filesystem::{ZeroCopyReader, ZeroCopyWriter};
-use vhost_rs::descriptor_utils::FileReadWriteVolatile;
 
 use crate::fs::RafsBlk;
 use crate::storage::backend::*;

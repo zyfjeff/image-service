@@ -7,30 +7,30 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-log = "0.4.8"
+log = "0.4"
 epoll = ">=4.0.1"
-libc = "0.2.66"
+libc = "0.2"
 vmm-sys-util = ">=0.3.1"
 clap = "2.33"
 config = "0.10"
 stderrlog = "0.4"
 mktemp = "0.4.0"
 uuid = { version = "0.8", features = ["serde", "v4"] }
-vm-memory = { git = "https://github.com/rust-vmm/vm-memory", branch = "master", features = ["backend-mmap"] }
-vhost_rs = { path = "vhost_rs", features = ["vhost-user-slave"] }
 rafs = { path = "rafs" }
-fuse = { path = "fuse" }
 vfs = { path = "vfs" }
 utils = { path = "utils" }
 image_builder = { path = "image_builder" }
 nydus-api = { path = "api" }
+vm-memory = { version = ">=0.2.0", features = ["backend-mmap"] }
+fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git", branch = "bergwolf/types", features = ["vhost-user-fs"] }
+vhost-rs = { git = "https://github.com/cloud-hypervisor/vhost.git", branch = "dragonball", package = "vhost", features = ["vhost-user-slave"] }
+vhost-user-backend = { git = "ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git" }
+vm-virtio = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-virtio.git", branch = "fuse" }
 
 [workspace]
 members = [
     "utils",
     "rafs",
-    "fuse",
-    "vhost_rs",
     "image_builder",
     "vfs",
     "api",

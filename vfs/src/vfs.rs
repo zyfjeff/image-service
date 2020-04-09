@@ -13,7 +13,8 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use bimap::hash::BiHashMap;
-use fuse::filesystem::*;
+use fuse_rs::abi::linux_abi::*;
+use fuse_rs::api::filesystem::*;
 
 use crate::pseudo_fs::PseudoFs;
 
@@ -29,6 +30,7 @@ use Either::*;
 const PSEUDO_FS_SUPER: u64 = 1;
 
 type Inode = u64;
+type Handle = u64;
 type SuperIndex = u64;
 
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
@@ -62,7 +64,7 @@ impl Default for VfsOptions {
         VfsOptions {
             no_open: true,
             no_opendir: true,
-            in_opts: FsOptions::NONE,
+            in_opts: FsOptions::ASYNC_READ,
             out_opts: FsOptions::ASYNC_READ
                 | FsOptions::PARALLEL_DIROPS
                 | FsOptions::BIG_WRITES
@@ -114,7 +116,15 @@ impl<F: FileSystem> Vfs<F> {
     }
 
     pub fn mount(&self, fs: F, path: &str) -> Result<()> {
-        let entry = fs.lookup(Context::new(), ROOT_ID, &CString::new(".").unwrap())?;
+        let entry = fs.lookup(
+            Context {
+                uid: 0,
+                gid: 0,
+                pid: 0,
+            },
+            ROOT_ID.into(),
+            &CString::new(".").unwrap(),
+        )?;
         let inode = self.root.mount(path)?;
         let index = self.next_super.fetch_add(1, Ordering::Relaxed);
         // TODO: handle over mount on the same mountpoint
@@ -201,7 +211,10 @@ impl<F: FileSystem> Vfs<F> {
     }
 }
 
-impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
+impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
+    type Inode = Inode;
+    type Handle = Handle;
+
     fn init(&self, opts: FsOptions) -> Result<FsOptions> {
         self.opts.write().unwrap().no_open =
             (opts & FsOptions::ZERO_MESSAGE_OPEN).is_empty() == false;
@@ -217,7 +230,7 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
         self.root.destroy();
     }
 
-    fn lookup(&self, ctx: Context, parent: u64, name: &CStr) -> Result<Entry> {
+    fn lookup(&self, ctx: Context, parent: Inode, name: &CStr) -> Result<Entry> {
         match self.get_real_rootfs(parent)? {
             (Left(fs), idata) => {
                 let mut entry = fs.lookup(ctx, idata.ino, name)?;
@@ -248,7 +261,7 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
             }
             (Right(fs), idata) => {
                 // parent is in an underlying rootfs
-                let mut entry = fs.lookup(ctx, idata.ino, name)?;
+                let mut entry = fs.lookup(ctx, idata.ino.into(), name)?;
                 // lookup succees, hash it to a real fuse inode
                 entry.inode = self.hash_inode(idata.super_index, entry.inode)?;
                 Ok(entry)
@@ -259,12 +272,12 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     fn getattr(
         &self,
         ctx: Context,
-        inode: u64,
-        handle: Option<u64>,
+        inode: Inode,
+        handle: Option<Handle>,
     ) -> Result<(libc::stat64, Duration)> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.getattr(ctx, idata.ino, handle),
-            (Right(fs), idata) => fs.getattr(ctx, idata.ino, handle),
+            (Right(fs), idata) => fs.getattr(ctx, idata.ino.into(), handle.map(|h| h.into())),
         }
     }
 
@@ -278,21 +291,23 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     ) -> Result<(libc::stat64, Duration)> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.setattr(ctx, idata.ino, attr, handle, valid),
-            (Right(fs), idata) => fs.setattr(ctx, idata.ino, attr, handle, valid),
+            (Right(fs), idata) => {
+                fs.setattr(ctx, idata.ino.into(), attr, handle.map(|h| h.into()), valid)
+            }
         }
     }
 
     fn readlink(&self, ctx: Context, inode: u64) -> Result<Vec<u8>> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.readlink(ctx, idata.ino),
-            (Right(fs), idata) => fs.readlink(ctx, idata.ino),
+            (Right(fs), idata) => fs.readlink(ctx, idata.ino.into()),
         }
     }
 
     fn symlink(&self, ctx: Context, linkname: &CStr, parent: u64, name: &CStr) -> Result<Entry> {
         match self.get_real_rootfs(parent)? {
             (Left(fs), idata) => fs.symlink(ctx, linkname, idata.ino, name),
-            (Right(fs), idata) => fs.symlink(ctx, linkname, idata.ino, name),
+            (Right(fs), idata) => fs.symlink(ctx, linkname, idata.ino.into(), name),
         }
     }
 
@@ -307,7 +322,7 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     ) -> Result<Entry> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.mknod(ctx, idata.ino, name, mode, rdev, umask),
-            (Right(fs), idata) => fs.mknod(ctx, idata.ino, name, mode, rdev, umask),
+            (Right(fs), idata) => fs.mknod(ctx, idata.ino.into(), name, mode, rdev, umask),
         }
     }
 
@@ -321,21 +336,21 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     ) -> Result<Entry> {
         match self.get_real_rootfs(parent)? {
             (Left(fs), idata) => fs.mkdir(ctx, idata.ino, name, mode, umask),
-            (Right(fs), idata) => fs.mkdir(ctx, idata.ino, name, mode, umask),
+            (Right(fs), idata) => fs.mkdir(ctx, idata.ino.into(), name, mode, umask),
         }
     }
 
     fn unlink(&self, ctx: Context, parent: u64, name: &CStr) -> Result<()> {
         match self.get_real_rootfs(parent)? {
             (Left(fs), idata) => fs.unlink(ctx, idata.ino, name),
-            (Right(fs), idata) => fs.unlink(ctx, idata.ino, name),
+            (Right(fs), idata) => fs.unlink(ctx, idata.ino.into(), name),
         }
     }
 
     fn rmdir(&self, ctx: Context, parent: u64, name: &CStr) -> Result<()> {
         match self.get_real_rootfs(parent)? {
             (Left(fs), idata) => fs.rmdir(ctx, idata.ino, name),
-            (Right(fs), idata) => fs.rmdir(ctx, idata.ino, name),
+            (Right(fs), idata) => fs.rmdir(ctx, idata.ino.into(), name),
         }
     }
 
@@ -357,7 +372,14 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
 
         match root {
             Left(fs) => fs.rename(ctx, idata_old.ino, oldname, idata_new.ino, newname, flags),
-            Right(fs) => fs.rename(ctx, idata_old.ino, oldname, idata_new.ino, newname, flags),
+            Right(fs) => fs.rename(
+                ctx,
+                idata_old.ino.into(),
+                oldname,
+                idata_new.ino.into(),
+                newname,
+                flags,
+            ),
         }
     }
 
@@ -371,7 +393,7 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
 
         match root {
             Left(fs) => fs.link(ctx, idata_old.ino, idata_new.ino, newname),
-            Right(fs) => fs.link(ctx, idata_old.ino, idata_new.ino, newname),
+            Right(fs) => fs.link(ctx, idata_old.ino.into(), idata_new.ino.into(), newname),
         }
     }
 
@@ -395,7 +417,9 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     ) -> Result<(Entry, Option<u64>, OpenOptions)> {
         match self.get_real_rootfs(parent)? {
             (Left(fs), idata) => fs.create(ctx, idata.ino, name, mode, flags, umask),
-            (Right(fs), idata) => fs.create(ctx, idata.ino, name, mode, flags, umask),
+            (Right(fs), idata) => fs
+                .create(ctx, idata.ino.into(), name, mode, flags, umask)
+                .map(|(a, b, c)| (a, b.map(|h| h.into()), c)),
         }
     }
 
@@ -414,9 +438,16 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
             (Left(fs), idata) => {
                 fs.read(ctx, idata.ino, handle, w, size, offset, lock_owner, flags)
             }
-            (Right(fs), idata) => {
-                fs.read(ctx, idata.ino, handle, w, size, offset, lock_owner, flags)
-            }
+            (Right(fs), idata) => fs.read(
+                ctx,
+                idata.ino.into(),
+                handle.into(),
+                w,
+                size,
+                offset,
+                lock_owner,
+                flags,
+            ),
         }
     }
 
@@ -446,8 +477,8 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
             ),
             (Right(fs), idata) => fs.write(
                 ctx,
-                idata.ino,
-                handle,
+                idata.ino.into(),
+                handle.into(),
                 r,
                 size,
                 offset,
@@ -461,14 +492,14 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     fn flush(&self, ctx: Context, inode: u64, handle: u64, lock_owner: u64) -> Result<()> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.flush(ctx, idata.ino, handle, lock_owner),
-            (Right(fs), idata) => fs.flush(ctx, idata.ino, handle, lock_owner),
+            (Right(fs), idata) => fs.flush(ctx, idata.ino.into(), handle.into(), lock_owner),
         }
     }
 
     fn fsync(&self, ctx: Context, inode: u64, datasync: bool, handle: u64) -> Result<()> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.fsync(ctx, idata.ino, datasync, handle),
-            (Right(fs), idata) => fs.fsync(ctx, idata.ino, datasync, handle),
+            (Right(fs), idata) => fs.fsync(ctx, idata.ino.into(), datasync, handle.into()),
         }
     }
 
@@ -483,7 +514,9 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     ) -> Result<()> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.fallocate(ctx, idata.ino, handle, mode, offset, length),
-            (Right(fs), idata) => fs.fallocate(ctx, idata.ino, handle, mode, offset, length),
+            (Right(fs), idata) => {
+                fs.fallocate(ctx, idata.ino.into(), handle.into(), mode, offset, length)
+            }
         }
     }
 
@@ -509,9 +542,9 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
             ),
             (Right(fs), idata) => fs.release(
                 ctx,
-                idata.ino,
+                idata.ino.into(),
                 flags,
-                handle,
+                handle.into(),
                 flush,
                 flock_release,
                 lock_owner,
@@ -522,7 +555,7 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     fn statfs(&self, ctx: Context, inode: u64) -> Result<libc::statvfs64> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.statfs(ctx, idata.ino),
-            (Right(fs), idata) => fs.statfs(ctx, idata.ino),
+            (Right(fs), idata) => fs.statfs(ctx, idata.ino.into()),
         }
     }
 
@@ -536,28 +569,28 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     ) -> Result<()> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.setxattr(ctx, idata.ino, name, value, flags),
-            (Right(fs), idata) => fs.setxattr(ctx, idata.ino, name, value, flags),
+            (Right(fs), idata) => fs.setxattr(ctx, idata.ino.into(), name, value, flags),
         }
     }
 
     fn getxattr(&self, ctx: Context, inode: u64, name: &CStr, size: u32) -> Result<GetxattrReply> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.getxattr(ctx, idata.ino, name, size),
-            (Right(fs), idata) => fs.getxattr(ctx, idata.ino, name, size),
+            (Right(fs), idata) => fs.getxattr(ctx, idata.ino.into(), name, size),
         }
     }
 
     fn listxattr(&self, ctx: Context, inode: u64, size: u32) -> Result<ListxattrReply> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.listxattr(ctx, idata.ino, size),
-            (Right(fs), idata) => fs.listxattr(ctx, idata.ino, size),
+            (Right(fs), idata) => fs.listxattr(ctx, idata.ino.into(), size),
         }
     }
 
     fn removexattr(&self, ctx: Context, inode: u64, name: &CStr) -> Result<()> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.removexattr(ctx, idata.ino, name),
-            (Right(fs), idata) => fs.removexattr(ctx, idata.ino, name),
+            (Right(fs), idata) => fs.removexattr(ctx, idata.ino.into(), name),
         }
     }
 
@@ -609,12 +642,17 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
                     add_entry(dir_entry)
                 })
             }
-            (Right(fs), idata) => {
-                fs.readdir(ctx, idata.ino, handle, size, offset, |mut dir_entry| {
+            (Right(fs), idata) => fs.readdir(
+                ctx,
+                idata.ino.into(),
+                handle.into(),
+                size,
+                offset,
+                |mut dir_entry| {
                     dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino)?;
                     add_entry(dir_entry)
-                })
-            }
+                },
+            ),
         }
     }
 
@@ -661,8 +699,8 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
             ),
             (Right(fs), idata) => fs.readdirplus(
                 ctx,
-                idata.ino,
-                handle,
+                idata.ino.into(),
+                handle.into(),
                 size,
                 offset,
                 |mut dir_entry, mut entry| {
@@ -677,7 +715,7 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     fn fsyncdir(&self, ctx: Context, inode: u64, datasync: bool, handle: u64) -> Result<()> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.fsyncdir(ctx, idata.ino, datasync, handle),
-            (Right(fs), idata) => fs.fsyncdir(ctx, idata.ino, datasync, handle),
+            (Right(fs), idata) => fs.fsyncdir(ctx, idata.ino.into(), datasync, handle.into()),
         }
     }
 
@@ -688,7 +726,7 @@ impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     fn access(&self, ctx: Context, inode: u64, mask: u32) -> Result<()> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.access(ctx, idata.ino, mask),
-            (Right(fs), idata) => fs.access(ctx, idata.ino, mask),
+            (Right(fs), idata) => fs.access(ctx, idata.ino.into(), mask),
         }
     }
 }

@@ -12,8 +12,8 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::{cmp, mem};
 
-use fuse::filesystem::*;
-use fuse::protocol::*;
+use fuse_rs::abi::linux_abi::*;
+use fuse_rs::api::filesystem::*;
 
 use crate::layout::*;
 use crate::storage::device::*;
@@ -325,7 +325,7 @@ impl RafsConfig {
     }
 }
 
-pub struct Rafs<B: backend::BlobBackend + 'static> {
+pub struct Rafs<B: backend::BlobBackend> {
     conf: RafsConfig,
 
     sb: RafsSuper,
@@ -333,7 +333,7 @@ pub struct Rafs<B: backend::BlobBackend + 'static> {
     initialized: bool,
 }
 
-impl<B: backend::BlobBackend + 'static> Rafs<B> {
+impl<B: backend::BlobBackend> Rafs<B> {
     pub fn new(conf: RafsConfig, b: B) -> Self {
         Rafs {
             sb: RafsSuper::new(),
@@ -495,7 +495,10 @@ fn enoattr() -> Error {
     Error::from_raw_os_error(libc::ENODATA)
 }
 
-impl<'a, B: backend::BlobBackend + 'static> FileSystem for Rafs<B> {
+impl<B: backend::BlobBackend> FileSystem for Rafs<B> {
+    type Inode = Inode;
+    type Handle = Handle;
+
     fn init(&self, opts: FsOptions) -> Result<FsOptions> {
         Ok(
             // These fuse features are supported by rafs by default.

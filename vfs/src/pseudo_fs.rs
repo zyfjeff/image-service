@@ -12,12 +12,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime};
 
-use fuse::filesystem::*;
-use fuse::protocol::Attr;
+use fuse_rs::abi::linux_abi::Attr;
+use fuse_rs::api::filesystem::*;
 
 const PSEUDOFS_NEXT_INODE: u64 = 2;
 const PSEUDOFS_DEFAULT_ATTR_TIMEOUT: u64 = 1 << 32;
 const PSEUDOFS_DEFAULT_ENTRY_TIMEOUT: u64 = PSEUDOFS_DEFAULT_ATTR_TIMEOUT;
+
+type Inode = u64;
+type Handle = u64;
 
 struct PseudoInode {
     ino: u64,
@@ -202,6 +205,9 @@ impl PseudoFs {
 }
 
 impl FileSystem for PseudoFs {
+    type Inode = Inode;
+    type Handle = Handle;
+
     fn lookup(&self, _: Context, parent: u64, name: &CStr) -> Result<Entry> {
         let pinode = self
             .inodes
