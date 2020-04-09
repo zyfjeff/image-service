@@ -51,9 +51,9 @@ struct MountPointData {
 }
 
 #[derive(Debug, Copy, Clone)]
-struct VfsOptions {
-    no_open: bool,
-    no_opendir: bool,
+pub struct VfsOptions {
+    pub no_open: bool,
+    pub no_opendir: bool,
     in_opts: FsOptions,
     out_opts: FsOptions,
 }
@@ -96,12 +96,12 @@ pub struct Vfs<F: FileSystem> {
 
 impl<F: FileSystem> Default for Vfs<F> {
     fn default() -> Self {
-        Self::new()
+        Self::new(VfsOptions::default())
     }
 }
 
 impl<F: FileSystem> Vfs<F> {
-    pub fn new() -> Self {
+    pub fn new(opts: VfsOptions) -> Self {
         let vfs = Vfs {
             next_inode: AtomicU64::new(ROOT_ID + 1),
             next_super: AtomicU64::new(PSEUDO_FS_SUPER + 1),
@@ -109,7 +109,7 @@ impl<F: FileSystem> Vfs<F> {
             mountpoints: RwLock::new(HashMap::new()),
             superblocks: RwLock::new(HashMap::new()),
             root: PseudoFs::new(PSEUDO_FS_SUPER),
-            opts: RwLock::new(VfsOptions::default()),
+            opts: RwLock::new(opts),
         };
         vfs.inodes.write().unwrap().insert(
             ROOT_ID,
@@ -222,7 +222,9 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
     type Handle = Handle;
 
     fn init(&self, opts: FsOptions) -> Result<FsOptions> {
-        self.opts.write().unwrap().no_open = !(opts & FsOptions::ZERO_MESSAGE_OPEN).is_empty();
+        if self.opts.read().unwrap().no_open {
+            self.opts.write().unwrap().no_open = !(opts & FsOptions::ZERO_MESSAGE_OPEN).is_empty();
+        }
         self.opts.write().unwrap().no_opendir =
             !(opts & FsOptions::ZERO_MESSAGE_OPENDIR).is_empty();
         self.opts.write().unwrap().in_opts = opts;

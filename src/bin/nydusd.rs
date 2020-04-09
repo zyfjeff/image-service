@@ -27,6 +27,8 @@ use libc::EFD_NONBLOCK;
 use clap::{App, Arg};
 use fuse_rs::api::filesystem::FileSystem;
 use fuse_rs::api::server::Server;
+use fuse_rs::passthrough::passthrough;
+use fuse_rs::passthrough::passthrough::PassthroughFs;
 use fuse_rs::transport::{Error as FuseTransportError, Reader, Writer};
 use fuse_rs::Error as VhostUserFsError;
 use vhost_rs::vhost_user::message::*;
@@ -38,7 +40,7 @@ use vmm_sys_util::eventfd::EventFd;
 use nydus_api::http::start_http_thread;
 use nydus_api::http_endpoint::{ApiError, ApiRequest, ApiResponsePayload, DaemonInfo, MountInfo};
 use rafs::fs::{Rafs, RafsConfig};
-use vfs::vfs::Vfs;
+use vfs::vfs::{Vfs, VfsOptions};
 
 const VIRTIO_F_VERSION_1: u32 = 32;
 
@@ -424,17 +426,14 @@ fn main() -> Result<()> {
                 .takes_value(true)
                 .min_values(1),
         )
+        .arg(
+            Arg::with_name("shared-dir")
+                .long("shared-dir")
+                .help("Shared directory path")
+                .takes_value(true)
+                .min_values(1),
+        )
         .get_matches();
-
-    // Retrieve arguments
-    let config_file = cmd_arguments
-        .value_of("config")
-        .expect("config file must be provided");
-    let sock = cmd_arguments
-        .value_of("sock")
-        .expect("Failed to retrieve vhost-user socket path");
-    let metadata = cmd_arguments.value_of("metadata").unwrap_or_default();
-    let apisock = cmd_arguments.value_of("apisock").unwrap_or_default();
 
     stderrlog::new()
         .quiet(false)
@@ -443,71 +442,130 @@ fn main() -> Result<()> {
         .init()
         .unwrap();
 
-    let mut settings = config::Config::new();
-    settings
-        .merge(config::File::from(Path::new(config_file)))
-        .expect("failed to open config file");
-    let rafs_conf: RafsConfig = settings.try_into().expect("Invalid config");
+    // Retrieve arguments
+    let sock = cmd_arguments
+        .value_of("sock")
+        .expect("Failed to retrieve vhost-user socket path");
 
-    let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(Vfs::new()).unwrap()));
+    match cmd_arguments.value_of("shared-dir") {
+        Some(shared_dir) => {
+            let fs_cfg = passthrough::Config {
+                root_dir: shared_dir.to_string(),
+                do_import: false,
+                ..Default::default()
+            };
+            let mut vfs_opts = VfsOptions::default();
+            vfs_opts.no_open = false;
 
-    if metadata != "" {
-        let mut rafs = Rafs::new(rafs_conf.clone());
-        let mut file = File::open(metadata)?;
-        rafs.import(&mut file)?;
-        info!("rafs mounted");
-        let fs = Arc::clone(&fs_backend.write().unwrap().vfs);
-        fs.mount(rafs, "/").unwrap();
-        info!("vfs mounted");
-    }
+            let passthrough_fs = PassthroughFs::new(fs_cfg).unwrap();
+            let fs_backend = Arc::new(RwLock::new(
+                VhostUserFsBackend::new(Vfs::new(vfs_opts)).unwrap(),
+            ));
 
-    if apisock != "" {
-        let backend = Arc::clone(&fs_backend);
-        start_api_server(
-            "nydusd".to_string(),
-            env!("CARGO_PKG_VERSION").to_string(),
-            apisock.to_string(),
-            move |info| {
+            let fs = Arc::clone(&fs_backend.write().unwrap().vfs);
+
+            passthrough_fs.import()?;
+            fs.mount(passthrough_fs, "/").unwrap();
+            info!("vfs mounted");
+
+            let mut daemon = VhostUserDaemon::new(
+                String::from("vhost-user-fs-backend"),
+                String::from(sock),
+                fs_backend.clone(),
+            )
+            .unwrap();
+
+            info!("starting fuse daemon");
+            if let Err(e) = daemon.start() {
+                error!("Failed to start daemon: {:?}", e);
+                process::exit(1);
+            }
+
+            if let Err(e) = daemon.wait() {
+                error!("Waiting for daemon failed: {:?}", e);
+            }
+
+            let kill_evt = &fs_backend.read().unwrap().kill_evt;
+            if let Err(e) = kill_evt.write(1) {
+                error!("Error shutting down worker thread: {:?}", e)
+            }
+        }
+        None => {
+            let config_file = cmd_arguments
+                .value_of("config")
+                .expect("config file must be provided");
+            let metadata = cmd_arguments.value_of("metadata").unwrap_or_default();
+            let apisock = cmd_arguments.value_of("apisock").unwrap_or_default();
+
+            let mut settings = config::Config::new();
+            settings
+                .merge(config::File::from(Path::new(config_file)))
+                .expect("failed to open config file");
+            let rafs_conf: RafsConfig = settings.try_into().expect("Invalid config");
+
+            let fs_backend = Arc::new(RwLock::new(
+                VhostUserFsBackend::new(Vfs::new(VfsOptions::default())).unwrap(),
+            ));
+
+            if metadata != "" {
                 let mut rafs = Rafs::new(rafs_conf.clone());
-                let mut file = File::open(&info.source).map_err(ApiError::MountFailure)?;
-                rafs.import(&mut file).map_err(ApiError::MountFailure)?;
+                let mut file = File::open(metadata)?;
+                rafs.import(&mut file)?;
                 info!("rafs mounted");
-                let vfs = Arc::clone(&backend.write().unwrap().vfs);
+                let fs = Arc::clone(&fs_backend.write().unwrap().vfs);
+                fs.mount(rafs, "/").unwrap();
+                info!("vfs mounted");
+            }
 
-                match vfs.mount(rafs, &info.mountpoint) {
-                    Ok(()) => Ok(ApiResponsePayload::Mount),
-                    Err(e) => {
-                        error!("mount {:?} failed {}", info, e);
-                        Err(ApiError::MountFailure(io::Error::from(
-                            io::ErrorKind::InvalidData,
-                        )))
-                    }
-                }
-            },
-        )?;
-        info!("api server running at {}", apisock);
-    }
+            if apisock != "" {
+                let backend = Arc::clone(&fs_backend);
+                start_api_server(
+                    "nydusd".to_string(),
+                    env!("CARGO_PKG_VERSION").to_string(),
+                    apisock.to_string(),
+                    move |info| {
+                        let mut rafs = Rafs::new(rafs_conf.clone());
+                        let mut file = File::open(&info.source).map_err(ApiError::MountFailure)?;
+                        rafs.import(&mut file).map_err(ApiError::MountFailure)?;
+                        info!("rafs mounted");
+                        let vfs = Arc::clone(&backend.write().unwrap().vfs);
 
-    let mut daemon = VhostUserDaemon::new(
-        String::from("vhost-user-fs-backend"),
-        String::from(sock),
-        fs_backend.clone(),
-    )
-    .unwrap();
+                        match vfs.mount(rafs, &info.mountpoint) {
+                            Ok(()) => Ok(ApiResponsePayload::Mount),
+                            Err(e) => {
+                                error!("mount {:?} failed {}", info, e);
+                                Err(ApiError::MountFailure(io::Error::from(
+                                    io::ErrorKind::InvalidData,
+                                )))
+                            }
+                        }
+                    },
+                )?;
+                info!("api server running at {}", apisock);
+            }
 
-    info!("starting fuse daemon");
-    if let Err(e) = daemon.start() {
-        error!("Failed to start daemon: {:?}", e);
-        process::exit(1);
-    }
+            let mut daemon = VhostUserDaemon::new(
+                String::from("vhost-user-fs-backend"),
+                String::from(sock),
+                fs_backend.clone(),
+            )
+            .unwrap();
 
-    if let Err(e) = daemon.wait() {
-        error!("Waiting for daemon failed: {:?}", e);
-    }
+            info!("starting fuse daemon");
+            if let Err(e) = daemon.start() {
+                error!("Failed to start daemon: {:?}", e);
+                process::exit(1);
+            }
 
-    let kill_evt = &fs_backend.read().unwrap().kill_evt;
-    if let Err(e) = kill_evt.write(1) {
-        error!("Error shutting down worker thread: {:?}", e)
+            if let Err(e) = daemon.wait() {
+                error!("Waiting for daemon failed: {:?}", e);
+            }
+
+            let kill_evt = &fs_backend.read().unwrap().kill_evt;
+            if let Err(e) = kill_evt.write(1) {
+                error!("Error shutting down worker thread: {:?}", e)
+            }
+        }
     }
 
     info!("nydusd quits");
