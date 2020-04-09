@@ -7,9 +7,3 @@ pub mod device;
 
 #[allow(dead_code)]
 pub mod backend;
-
-#[allow(dead_code)]
-pub mod dummy_backend;
-
-#[allow(dead_code)]
-pub mod oss_backend;

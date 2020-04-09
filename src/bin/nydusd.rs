@@ -34,7 +34,7 @@ use fuse::Error as VhostUserFsError;
 use nydus_api::http::start_http_thread;
 use nydus_api::http_endpoint::{ApiError, ApiRequest, ApiResponsePayload, DaemonInfo, MountInfo};
 use rafs::fs::{Rafs, RafsConfig};
-use rafs::storage::oss_backend;
+use rafs::storage::backend;
 use vfs::vfs::Vfs;
 use vhost_rs::descriptor_utils::{Reader, Writer};
 use vhost_rs::vhost_user::message::*;
@@ -431,11 +431,11 @@ fn main() -> Result<()> {
         .expect("failed to open config file");
     let rafs_conf: RafsConfig = settings.try_into().expect("Invalid config");
 
-    let vfs: Vfs<Rafs<oss_backend::OSS>> = Vfs::new();
+    let vfs: Vfs<Rafs<backend::oss::OSS>> = Vfs::new();
     let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(vfs).unwrap()));
 
     if metadata != "" {
-        let mut rafs = Rafs::new(rafs_conf.clone(), oss_backend::new());
+        let mut rafs = Rafs::new(rafs_conf.clone(), backend::oss::new());
         let mut file = File::open(metadata)?;
         rafs.import(&mut file)?;
         info!("rafs mounted");
@@ -451,7 +451,7 @@ fn main() -> Result<()> {
             env!("CARGO_PKG_VERSION").to_string(),
             apisock.to_string(),
             move |info| {
-                let mut rafs = Rafs::new(rafs_conf.clone(), oss_backend::new());
+                let mut rafs = Rafs::new(rafs_conf.clone(), backend::oss::new());
                 let mut file = File::open(&info.source).map_err(ApiError::MountFailure)?;
                 rafs.import(&mut file).map_err(ApiError::MountFailure)?;
                 info!("rafs mounted");
