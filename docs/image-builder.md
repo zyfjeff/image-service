@@ -7,7 +7,7 @@ Nydus image contains two parts, `bootstrap` and `blob`:
 
 Nydus image builder is used to building the existing container rootfs directory into the `bootstrap` and `blob` file required by nydusd.
 
-[Buildkitd](https://gitlab.alibaba-inc.com/kata-containers/buildkit) provides a script tool to convert oci image to nydus format image using `bootstrap` and upload `blob` file to storage backend (for example aliyun OSS).
+[Buildkitd](https://gitlab.alibaba-inc.com/kata-containers/buildkit) provides a script tool to convert oci image to nydus format image using `bootstrap` and upload `blob` file to storage backend (for example aliyun OSS, docker registry).
 
 ## Compile nydus image builder
 
@@ -23,16 +23,15 @@ cargo build --release
 # $BOOTSTRAP_PATH: bootstrap file path
 # $PARENT_BOOTSTRAP_PATH: parent bootstrap file path, optional
 # $SOURCE: rootfs source directory
-# $OSS_*: aliyun oss config
+# $BACKEND_TYPE: oss|registry
+# $BACKEND_CONFIG: key1=value1,key2=value2
 
 ./target/release/nydus-image create \
             --blob $BLOB_PATH \
             --blob_id $BLOB_ID \
             --bootstrap $BOOTSTRAP_PATH \
             --parent_bootstrap $PARENT_BOOTSTRAP_PATH \
-            --oss_endpoint $OSS_ENDPOINT \
-            --oss_access_key_id $OSS_ACCESS_KEY_ID \
-            --oss_access_key_secret $OSS_ACCESS_KEY_SECRET \
-            --oss_bucket_name $OSS_BUCKET_NAME \
+            --backend_type $BACKEND_TYPE \
+            --backend_config $BACKEND_CONFIG
             $SOURCE
 ```

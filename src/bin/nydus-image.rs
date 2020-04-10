@@ -15,10 +15,56 @@ use clap::{App, Arg, SubCommand};
 use mktemp::Temp;
 use uuid::Uuid;
 
-use std::fs::File;
+use std::collections::HashMap;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Result, Write};
+use std::os::linux::fs::MetadataExt;
 
-use rafs::storage::backend::oss::OSS;
+use rafs::storage::backend::oss;
+use rafs::storage::backend::registry;
+use rafs::storage::backend::BlobBackend;
+
+fn parse_backend_config(conf: &str) -> HashMap<&str, &str> {
+    let mut config = HashMap::new();
+
+    let conf: Vec<_> = conf.split(",").collect();
+
+    for pairs in conf {
+        let pair: Vec<_> = pairs.split("=").collect();
+        if pair.len() == 2 {
+            config.insert(pair[0], pair[1]);
+        }
+    }
+
+    config
+}
+
+fn upload_blob<B: BlobBackend>(
+    mut backend: B,
+    config: HashMap<&str, &str>,
+    blob_id: &str,
+    blob_path: &str,
+) -> Result<()> {
+    backend.init(config)?;
+
+    let blob_file = OpenOptions::new().read(true).write(false).open(blob_path)?;
+    let size = blob_file.metadata()?.st_size() as usize;
+    backend.write_r::<File>(blob_id, blob_file, size, |(current, total)| {
+        io::stdout().flush().unwrap();
+        print!("\r");
+        print!(
+            "Backend blob uploading: {}/{} bytes ({}%)",
+            current,
+            total,
+            current * 100 / total,
+        );
+    })?;
+
+    print!("\r");
+    io::stdout().flush().unwrap();
+
+    Ok(())
+}
 
 fn main() -> Result<()> {
     stderrlog::new()
@@ -35,7 +81,7 @@ fn main() -> Result<()> {
         .about("Build image using nydus format.")
         .subcommand(
             SubCommand::with_name("create")
-                .about("create image and upload blob to oss")
+                .about("dump image bootstrap and upload blob to storage backend")
                 .arg(
                     Arg::with_name("SOURCE")
                         .help("source directory")
@@ -58,7 +104,7 @@ fn main() -> Result<()> {
                 .arg(
                     Arg::with_name("blob_id")
                         .long("blob_id")
-                        .help("blob id (as object key in oss)")
+                        .help("blob id (as object key in backend)")
                         .takes_value(true),
                 )
                 .arg(
@@ -69,27 +115,15 @@ fn main() -> Result<()> {
                         .required(false),
                 )
                 .arg(
-                    Arg::with_name("oss_endpoint")
-                        .long("oss_endpoint")
-                        .help("oss endpoint (enable oss upload if specified)")
+                    Arg::with_name("backend_type")
+                        .long("backend_type")
+                        .help("blob storage backend type (enable backend upload if specified)")
                         .takes_value(true),
                 )
                 .arg(
-                    Arg::with_name("oss_access_key_id")
-                        .long("oss_access_key_id")
-                        .help("oss access key id")
-                        .takes_value(true),
-                )
-                .arg(
-                    Arg::with_name("oss_access_key_secret")
-                        .long("oss_access_key_secret")
-                        .help("oss access key secret")
-                        .takes_value(true),
-                )
-                .arg(
-                    Arg::with_name("oss_bucket_name")
-                        .long("oss_bucket_name")
-                        .help("oss bucket name")
+                    Arg::with_name("backend_config")
+                        .long("backend_config")
+                        .help("blob storage backend config")
                         .takes_value(true),
                 ),
         )
@@ -130,38 +164,21 @@ fn main() -> Result<()> {
         )?;
         ib.build()?;
 
-        if let Some(oss_endpoint) = matches.value_of("oss_endpoint") {
-            let oss_access_key_id = matches
-                .value_of("oss_access_key_id")
-                .expect("oss_access_key_id is required");
-            let oss_access_key_secret = matches
-                .value_of("oss_access_key_secret")
-                .expect("oss_access_key_secret is required");
-            let oss_bucket_name = matches
-                .value_of("oss_bucket_name")
-                .expect("oss_bucket_name is required");
-
-            let oss = OSS::new(
-                oss_endpoint,
-                oss_access_key_id,
-                oss_access_key_secret,
-                oss_bucket_name,
-            );
-
-            let blob_file = File::open(real_blob_path)?;
-            oss.put_object(blob_id.as_str(), blob_file, |(current, total)| {
-                io::stdout().flush().unwrap();
-                print!("\r");
-                print!(
-                    "OSS blob uploading: {}/{} bytes ({}%)",
-                    current,
-                    total,
-                    current * 100 / total,
-                );
-            })?;
-
-            print!("\r");
-            io::stdout().flush().unwrap();
+        if let Some(backend_type) = matches.value_of("backend_type") {
+            if let Some(backend_config) = matches.value_of("backend_config") {
+                let config = parse_backend_config(backend_config);
+                match backend_type {
+                    "oss" => {
+                        upload_blob(oss::new(), config, blob_id.as_str(), real_blob_path)?;
+                    }
+                    "registry" => {
+                        upload_blob(registry::new(), config, blob_id.as_str(), real_blob_path)?;
+                    }
+                    _ => {
+                        error!("unsupported backend type {}", backend_type);
+                    }
+                }
+            }
         }
 
         if blob_path.is_some() {

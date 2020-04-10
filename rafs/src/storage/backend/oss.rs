@@ -5,15 +5,13 @@
 use base64;
 use crypto::{hmac::Hmac, mac::Mac, sha1::Sha1};
 use httpdate;
-use reqwest::{self, header::HeaderMap};
 use std::collections::HashMap;
-use std::fs::File;
+use std::io::Read;
 use std::io::Result;
-use std::io::{Error, ErrorKind};
 use std::time::SystemTime;
 use url::Url;
 
-use crate::storage::backend::request::{FileBody, Progress, ReqErr, Request};
+use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, ReqErr, Request};
 use crate::storage::backend::BlobBackend;
 
 const HEADER_DATE: &str = "Date";
@@ -29,36 +27,6 @@ pub struct OSS {
 }
 
 impl OSS {
-    pub fn new(
-        endpoint: &str,
-        access_key_id: &str,
-        access_key_secret: &str,
-        bucket_name: &str,
-    ) -> OSS {
-        OSS {
-            request: Request::new(),
-            endpoint: String::from(endpoint),
-            access_key_id: String::from(access_key_id),
-            access_key_secret: String::from(access_key_secret),
-            bucket_name: String::from(bucket_name),
-        }
-    }
-
-    pub fn put_object(&self, blob_id: &str, file: File, callback: fn((u64, u64))) -> Result<()> {
-        let method = "PUT";
-        let query = &[];
-        let (resource, url) = self.url(blob_id, query)?;
-        let headers = self.sign(method, HeaderMap::new(), resource.as_str())?;
-
-        let size = file.metadata()?.len();
-        let body = Progress::new(file, size, callback);
-
-        self.request
-            .call(method, url.as_str(), FileBody::File(body, size), headers)?;
-
-        Ok(())
-    }
-
     /// generate oss request signature
     fn sign(
         &self,
@@ -150,10 +118,10 @@ impl OSS {
         let (resource, url) = self.url("", query)?;
         let headers = self.sign(method, HeaderMap::new(), resource.as_str())?;
 
-        self.request.call(
+        self.request.call::<&[u8]>(
             method,
             url.as_str(),
-            FileBody::Buf("".as_bytes().to_vec()),
+            ReqBody::Buf("".as_bytes().to_vec()),
             headers,
         )?;
 
@@ -171,21 +139,21 @@ pub fn new() -> OSS {
     }
 }
 
-fn einval() -> Error {
-    Error::from_raw_os_error(libc::EINVAL)
-}
-
 impl BlobBackend for OSS {
     fn init(&mut self, config: HashMap<&str, &str>) -> Result<()> {
-        let endpoint = config.get("endpoint").ok_or(einval())?;
-        let access_key_id = config.get("access_key_id").ok_or(einval())?;
-        let access_key_secret = config.get("access_key_secret").ok_or(einval())?;
-        let bucket_name = config.get("bucket_name").ok_or(einval())?;
+        let endpoint = config.get("endpoint").ok_or(ReqErr::inv_input(()))?;
+        let access_key_id = config.get("access_key_id").ok_or(ReqErr::inv_input(()))?;
+        let access_key_secret = config
+            .get("access_key_secret")
+            .ok_or(ReqErr::inv_input(()))?;
+        let bucket_name = config.get("bucket_name").ok_or(ReqErr::inv_input(()))?;
+
         self.endpoint = (*endpoint).to_owned();
         self.access_key_id = (*access_key_id).to_owned();
         self.access_key_secret = (*access_key_secret).to_owned();
         self.bucket_name = (*bucket_name).to_owned();
         self.request = Request::new();
+
         // self.create_bucket()?;
         Ok(())
     }
@@ -204,10 +172,10 @@ impl BlobBackend for OSS {
 
         let mut resp = self
             .request
-            .call(
+            .call::<&[u8]>(
                 method,
                 url.as_str(),
-                FileBody::Buf("".as_bytes().to_vec()),
+                ReqBody::Buf("".as_bytes().to_vec()),
                 headers,
             )
             .or_else(|e| {
@@ -218,7 +186,7 @@ impl BlobBackend for OSS {
         resp.copy_to(buf)
             .or_else(|err| {
                 error!("oss read failed {:?}", err);
-                Err(Error::new(ErrorKind::BrokenPipe, format!("{}", err)))
+                Err(ReqErr::broken_pipe(err))
             })
             .map(|size| size as usize)
     }
@@ -232,8 +200,29 @@ impl BlobBackend for OSS {
         let headers = self.sign(method, HeaderMap::new(), resource.as_str())?;
 
         self.request
-            .call(method, url.as_str(), FileBody::Buf(buf.to_vec()), headers)?;
+            .call::<&[u8]>(method, url.as_str(), ReqBody::Buf(buf.to_vec()), headers)?;
+
         Ok(buf.len())
+    }
+
+    fn write_r<R: Read + Send + 'static>(
+        &self,
+        blob_id: &str,
+        file: R,
+        size: usize,
+        callback: fn((usize, usize)),
+    ) -> Result<usize> {
+        let method = "PUT";
+        let query = &[];
+        let (resource, url) = self.url(blob_id, query)?;
+        let headers = self.sign(method, HeaderMap::new(), resource.as_str())?;
+
+        let body = Progress::new(file, size, callback);
+
+        self.request
+            .call(method, url.as_str(), ReqBody::Read(body, size), headers)?;
+
+        Ok(size as usize)
     }
 
     fn close(&mut self) {}

@@ -11,7 +11,11 @@ pub mod dummy;
 #[allow(dead_code)]
 pub mod oss;
 
+#[allow(dead_code)]
+pub mod registry;
+
 use std::collections::HashMap;
+use std::io::Read;
 use std::io::Result;
 
 // Rafs blob backend API
@@ -25,6 +29,15 @@ pub trait BlobBackend {
 
     // Write a range of data to blob from the provided slice
     fn write(&self, blobid: &str, buf: &Vec<u8>, offset: u64) -> Result<usize>;
+
+    // Write data to blob from the provided reader
+    fn write_r<R: Read + Send + 'static>(
+        &self,
+        blobid: &str,
+        source: R,
+        size: usize,
+        callback: fn((usize, usize)),
+    ) -> Result<usize>;
 
     // Close a backend
     fn close(&mut self);

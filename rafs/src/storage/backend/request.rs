@@ -3,8 +3,8 @@
 // found in the LICENSE file.
 
 use reqwest::blocking::{Body, Client, Response};
-use reqwest::{self, header::HeaderMap, Method, StatusCode};
-use std::fs::File;
+pub use reqwest::header::HeaderMap;
+use reqwest::{self, Method, StatusCode};
 use std::io::Read;
 use std::io::Result;
 use std::io::{Error, ErrorKind};
@@ -26,17 +26,17 @@ impl ReqErr {
     }
 }
 
-pub struct Progress {
-    inner: File,
-    current: u64,
-    total: u64,
-    callback: fn((u64, u64)),
+pub struct Progress<R> {
+    inner: R,
+    current: usize,
+    total: usize,
+    callback: fn((usize, usize)),
 }
 
-impl Progress {
-    pub fn new(file: File, total: u64, callback: fn((u64, u64))) -> Progress {
+impl<R> Progress<R> {
+    pub fn new(r: R, total: usize, callback: fn((usize, usize))) -> Progress<R> {
         Progress {
-            inner: file,
+            inner: r,
             current: 0,
             total,
             callback,
@@ -44,18 +44,18 @@ impl Progress {
     }
 }
 
-impl Read for Progress {
+impl<R: Read + Send + 'static> Read for Progress<R> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
         self.inner.read(buf).map(|count| {
-            self.current += count as u64;
+            self.current += count as usize;
             (self.callback)((self.current, self.total));
             count
         })
     }
 }
 
-pub enum FileBody {
-    File(Progress, u64),
+pub enum ReqBody<R> {
+    Read(Progress<R>, usize),
     Buf(Vec<u8>),
 }
 
@@ -66,30 +66,29 @@ pub struct Request {
 
 impl Request {
     pub fn new() -> Request {
-        let client = Client::builder().timeout(None).build().unwrap();
-        Request { client }
+        Request {
+            client: Client::builder().timeout(None).build().unwrap(),
+        }
     }
 
-    pub fn call(
+    pub fn call<R: Read + Send + 'static>(
         &self,
         method: &str,
         url: &str,
-        data: FileBody,
+        data: ReqBody<R>,
         headers: HeaderMap,
     ) -> Result<Response> {
-        debug!("request {:?} method {:?} url {:?}", headers, method, url);
-
         let method = Method::from_bytes(method.as_bytes()).map_err(ReqErr::inv_input)?;
 
         let rb = self.client.request(method, url).headers(headers);
 
         let ret;
         match data {
-            FileBody::File(body, total) => {
-                let body = Body::sized(body, total);
+            ReqBody::Read(body, total) => {
+                let body = Body::sized(body, total as u64);
                 ret = rb.body(body).send();
             }
-            FileBody::Buf(buf) => {
+            ReqBody::Buf(buf) => {
                 ret = rb.body(buf).send();
             }
         }
@@ -100,10 +99,12 @@ impl Request {
                 if status >= StatusCode::OK && status < StatusCode::MULTIPLE_CHOICES {
                     return Ok(resp);
                 }
+
                 let message = resp.text().map_err(ReqErr::broken_pipe)?;
-                Err(Error::new(ErrorKind::Other, message))
+
+                Err(ReqErr::inv_input(message))
             }
-            Err(err) => Err(Error::new(ErrorKind::Other, format!("{}", err))),
+            Err(err) => Err(ReqErr::broken_pipe(err)),
         }
     }
 }
