@@ -135,6 +135,8 @@ impl BlobBackend for Registry {
         let url = Url::parse_with_params(location.as_str(), &[("digest", blob_id)])
             .map_err(ReqErr::inv_data)?;
 
+        let url = format!("{}{}?{}", self.host, url.path(), url.query().unwrap());
+
         let body = Progress::new(file, size, callback);
 
         let mut headers = HeaderMap::new();

@@ -16,7 +16,7 @@ use mktemp::Temp;
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Result, Write};
+use std::io::{self, Error, ErrorKind, Result, Write};
 use std::os::linux::fs::MetadataExt;
 
 use rafs::storage::backend::oss;
@@ -175,8 +175,8 @@ fn main() -> Result<()> {
                         upload_blob(registry::new(), config, blob_id.as_str(), real_blob_path)?;
                     }
                     _ => {
-                        error!("unsupported backend type {}", backend_type);
-                        return Ok(());
+                        let err = format!("unsupported backend_type: {}", backend_type);
+                        return Err(Error::new(ErrorKind::InvalidInput, err));
                     }
                 }
             }
