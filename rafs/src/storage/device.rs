@@ -24,13 +24,8 @@ static ZEROS: &'static [u8] = &[0u8; 4096]; // why 4096? volatile slice default 
 pub struct Config {
     // backend type
     pub backend_type: String,
-    // Storage path, can be a directory or a URL to some remote storage
-    pub endpoint: String,
-    // OSS bucket name
-    pub bucket_name: String,
-    // optional auth info used to access the storage
-    pub access_key_id: String,
-    pub access_key_secret: String,
+    // backend config: key1=value1,key2=value2...
+    pub backend_config: String,
 }
 
 impl Config {
@@ -41,11 +36,8 @@ impl Config {
     }
 
     pub fn hashmap(&self) -> HashMap<&str, &str> {
-        let mut hmap: HashMap<&str, &str> = HashMap::new();
-        hmap.insert("endpoint", &self.endpoint);
-        hmap.insert("access_key_id", &self.access_key_id);
-        hmap.insert("access_key_secret", &self.access_key_secret);
-        hmap.insert("bucket_name", &self.bucket_name);
+        let hmap = parse_config(self.backend_config.as_str());
+
         hmap
     }
 }

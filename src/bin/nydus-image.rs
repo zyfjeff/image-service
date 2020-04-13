@@ -15,28 +15,11 @@ use clap::{App, Arg, SubCommand};
 use mktemp::Temp;
 
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::{self, Error, ErrorKind, Result, Write};
 use std::os::linux::fs::MetadataExt;
 
-use rafs::storage::backend::oss;
-use rafs::storage::backend::registry;
-use rafs::storage::backend::BlobBackend;
-
-fn parse_backend_config(conf: &str) -> HashMap<&str, &str> {
-    let mut config = HashMap::new();
-
-    let conf: Vec<_> = conf.split(",").collect();
-
-    for pairs in conf {
-        let pair: Vec<_> = pairs.split("=").collect();
-        if pair.len() == 2 {
-            config.insert(pair[0], pair[1]);
-        }
-    }
-
-    config
-}
+use rafs::storage::backend::{self, oss, registry, BlobBackend};
 
 fn upload_blob<B: BlobBackend>(
     mut backend: B,
@@ -48,7 +31,7 @@ fn upload_blob<B: BlobBackend>(
 
     let blob_file = OpenOptions::new().read(true).write(false).open(blob_path)?;
     let size = blob_file.metadata()?.st_size() as usize;
-    backend.write_r::<File>(blob_id, blob_file, size, |(current, total)| {
+    backend.write_r(blob_id, blob_file, size, |(current, total)| {
         io::stdout().flush().unwrap();
         print!("\r");
         print!(
@@ -97,8 +80,7 @@ fn main() -> Result<()> {
                     Arg::with_name("bootstrap")
                         .long("bootstrap")
                         .help("bootstrap file path (required)")
-                        .takes_value(true)
-                        .required(true),
+                        .takes_value(true),
                 )
                 .arg(
                     Arg::with_name("blob_id")
@@ -165,13 +147,15 @@ fn main() -> Result<()> {
 
         if let Some(backend_type) = matches.value_of("backend_type") {
             if let Some(backend_config) = matches.value_of("backend_config") {
-                let config = parse_backend_config(backend_config);
+                let config = backend::parse_config(backend_config);
                 match backend_type {
                     "oss" => {
                         upload_blob(oss::new(), config, blob_id.as_str(), real_blob_path)?;
                     }
                     "registry" => {
-                        blob_id = format!("sha256:{}", blob_id.as_str());
+                        if !blob_id.starts_with("sha256:") {
+                            blob_id = format!("sha256:{}", blob_id.as_str());
+                        }
                         upload_blob(registry::new(), config, blob_id.as_str(), real_blob_path)?;
                     }
                     _ => {

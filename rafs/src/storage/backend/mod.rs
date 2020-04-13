@@ -18,6 +18,21 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::io::Result;
 
+pub fn parse_config(conf: &str) -> HashMap<&str, &str> {
+    let mut config = HashMap::new();
+
+    let conf: Vec<_> = conf.split(",").collect();
+
+    for pairs in conf {
+        let pair: Vec<_> = pairs.split("=").collect();
+        if pair.len() == 2 {
+            config.insert(pair[0], pair[1]);
+        }
+    }
+
+    config
+}
+
 // Rafs blob backend API
 pub trait BlobBackend {
     // Initialize the blob backend

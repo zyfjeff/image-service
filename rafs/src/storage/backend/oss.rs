@@ -141,12 +141,18 @@ pub fn new() -> OSS {
 
 impl BlobBackend for OSS {
     fn init(&mut self, config: HashMap<&str, &str>) -> Result<()> {
-        let endpoint = config.get("endpoint").ok_or(ReqErr::inv_input(()))?;
-        let access_key_id = config.get("access_key_id").ok_or(ReqErr::inv_input(()))?;
+        let endpoint = config
+            .get("endpoint")
+            .ok_or(ReqErr::inv_input("endpoint required"))?;
+        let access_key_id = config
+            .get("access_key_id")
+            .ok_or(ReqErr::inv_input("access_key_id required"))?;
         let access_key_secret = config
             .get("access_key_secret")
-            .ok_or(ReqErr::inv_input(()))?;
-        let bucket_name = config.get("bucket_name").ok_or(ReqErr::inv_input(()))?;
+            .ok_or(ReqErr::inv_input("access_key_secret required"))?;
+        let bucket_name = config
+            .get("bucket_name")
+            .ok_or(ReqErr::inv_input("bucket_name required"))?;
 
         self.endpoint = (*endpoint).to_owned();
         self.access_key_id = (*access_key_id).to_owned();

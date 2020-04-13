@@ -77,8 +77,12 @@ pub fn new() -> Registry {
 
 impl BlobBackend for Registry {
     fn init(&mut self, config: HashMap<&str, &str>) -> Result<()> {
-        let host = config.get("host").ok_or(ReqErr::inv_input(()))?;
-        let repo = config.get("repo").ok_or(ReqErr::inv_input(()))?;
+        let host = config
+            .get("host")
+            .ok_or(ReqErr::inv_input("host required"))?;
+        let repo = config
+            .get("repo")
+            .ok_or(ReqErr::inv_input("repo required"))?;
 
         self.host = (*host).to_owned();
         self.repo = (*repo).to_owned();

@@ -8,17 +8,27 @@ A container image acceleration tool.
 ```
 
 where the `config.json` is of format like:
+
+oss backend:
 ```
 {
   "device_config": {
     "backend_type": "oss",
-    "endpoint": "alibaba-cloud-oss-endpoint",
-    "bucket_name": "name",
-    "access_key_id": "id",
-    "access_key_secret": "secret"
+    "backend_config": "endpoint=,access_key_id=,access_key_secret=,bucket_name="
   }
 }
 ```
+
+registry backend:
+```
+{
+  "device_config": {
+    "backend_type": "registry",
+    "backend_config": "host=,repo="
+  }
+}
+```
+
 
 To start a qemu process, run something like:
 ```

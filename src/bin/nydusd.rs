@@ -437,8 +437,7 @@ fn main() -> Result<()> {
         .expect("failed to open config file");
     let rafs_conf: RafsConfig = settings.try_into().expect("Invalid config");
 
-    let vfs: Vfs<Rafs<backend::oss::OSS>> = Vfs::new();
-    let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(vfs).unwrap()));
+    let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(Vfs::new()).unwrap()));
 
     if metadata != "" {
         let mut rafs = Rafs::new(rafs_conf.clone(), backend::oss::new());
