@@ -203,8 +203,10 @@ impl<F: FileSystem> Vfs<F> {
 
 impl<F: FileSystem + Send + Sync + 'static> FileSystem for Vfs<F> {
     fn init(&self, opts: FsOptions) -> Result<FsOptions> {
-        self.opts.write().unwrap().no_open = (opts & FsOptions::ZERO_MESSAGE_OPEN).is_empty();
-        self.opts.write().unwrap().no_opendir = (opts & FsOptions::ZERO_MESSAGE_OPENDIR).is_empty();
+        self.opts.write().unwrap().no_open =
+            (opts & FsOptions::ZERO_MESSAGE_OPEN).is_empty() == false;
+        self.opts.write().unwrap().no_opendir =
+            (opts & FsOptions::ZERO_MESSAGE_OPENDIR).is_empty() == false;
         self.opts.write().unwrap().in_opts = opts;
         Ok(self.opts.read().unwrap().out_opts)
     }
