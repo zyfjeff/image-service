@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+use crypto::digest::Digest;
+use crypto::sha2::Sha256;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
@@ -30,6 +32,8 @@ pub struct Builder {
     blob_offset: u64,
     /// blob id (user specified)
     blob_id: String,
+    /// blob sha256
+    blob_hash: Sha256,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
     inode_map: HashMap<u64, Node>,
     /// mutilple layers build: source nodes
@@ -74,6 +78,7 @@ impl Builder {
             f_parent_bootstrap,
             blob_offset: 0,
             blob_id,
+            blob_hash: Sha256::new(),
             inode_map: HashMap::new(),
             additions: Vec::new(),
             removals: HashMap::new(),
@@ -155,7 +160,6 @@ impl Builder {
             }
 
             let node = Node {
-                blob_id: self.blob_id.to_owned(),
                 blob_offset: self.blob_offset,
                 root: self.root.to_owned(),
                 path: path.clone(),
@@ -206,7 +210,7 @@ impl Builder {
                 lower.inode.i_parent
             );
             if lower.overlay != Overlay::UpperRemoval && lower.overlay != Overlay::UpperOpaque {
-                lower.dump(None, Some(&mut self.f_bootstrap))?;
+                lower.dump_bootstrap(&mut self.f_bootstrap, None)?;
             }
         }
 
@@ -215,6 +219,7 @@ impl Builder {
 
     fn dump_superblock(&mut self) -> Result<RafsSuperBlockInfo> {
         info!("upper building superblock");
+
         let mut sb = RafsSuperBlockInfo::new();
         // all fields are initilized by RafsSuperBlockInfo::new()
         sb.s_flags = 0;
@@ -225,8 +230,39 @@ impl Builder {
         Ok(sb)
     }
 
-    fn walk_dirs(&mut self, file: &Path, parent_node: Option<Box<Node>>) -> Result<()> {
+    fn dump_bootstrap(&mut self) -> Result<()> {
+        if self.f_parent_bootstrap.is_none() {
+            for node in &mut self.additions {
+                node.dump_bootstrap(&mut self.f_bootstrap, Some(self.blob_id.to_owned()))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn dump_blob(&mut self, file: &Path, parent_node: Option<Box<Node>>) -> Result<()> {
         let meta = file.symlink_metadata()?;
+
+        if parent_node.is_none() {
+            let path = file.to_str().unwrap().to_owned();
+
+            let mut root_node = Node::new(
+                self.blob_offset,
+                self.root.to_owned(),
+                path,
+                None,
+                Overlay::LowerAddition,
+            );
+
+            root_node.build(None)?;
+            root_node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
+
+            self.additions.push(root_node.clone());
+
+            self.dump_blob(file, Some(Box::new(root_node)))?;
+
+            return Ok(());
+        }
 
         let is_symlink = meta.st_mode() & libc::S_IFMT == libc::S_IFLNK;
 
@@ -245,7 +281,6 @@ impl Builder {
                 let meta = entry.metadata()?;
 
                 let mut node = Node::new(
-                    self.blob_id.clone(),
                     self.blob_offset,
                     self.root.clone(),
                     path.to_str().unwrap().to_owned(),
@@ -271,19 +306,14 @@ impl Builder {
                     }
                 }
 
-                let mut f_bootstrap = Some(&self.f_bootstrap);
-                if self.f_parent_bootstrap.is_some() {
-                    f_bootstrap = None;
-                }
-
                 let ino = meta.st_ino();
                 let hardlink_node = self.inode_map.get(&ino);
                 if let Some(hardlink_node) = hardlink_node {
                     node.build(Some(hardlink_node.clone()))?;
-                    node.dump(Some(&mut self.f_blob), f_bootstrap)?;
+                    node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
                 } else {
                     node.build(None)?;
-                    node.dump(Some(&mut self.f_blob), f_bootstrap)?;
+                    node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
                     self.inode_map.insert(ino, node.clone());
                 }
                 self.blob_offset = node.blob_offset;
@@ -291,44 +321,33 @@ impl Builder {
                 self.additions.push(node.clone());
 
                 if path.is_dir() {
-                    self.walk_dirs(&path, Some(Box::new(node)))?;
+                    self.dump_blob(&path, Some(Box::new(node)))?;
                 }
             }
         }
+
         Ok(())
     }
 
-    pub fn build(&mut self) -> Result<()> {
+    pub fn build(&mut self) -> Result<String> {
         self.dump_superblock()?;
 
         let root = self.root.clone();
         let root_path = Path::new(root.as_str());
-        let root_path_str = root_path.to_str().unwrap().to_string();
-        let mut root_node = Node::new(
-            self.blob_id.clone(),
-            self.blob_offset,
-            root_path_str.clone(),
-            root_path_str,
-            None,
-            Overlay::LowerAddition,
-        );
 
-        let mut f_bootstrap = Some(&self.f_bootstrap);
-        if self.f_parent_bootstrap.is_some() {
-            f_bootstrap = None;
+        self.dump_blob(root_path, None)?;
+
+        let blob_hash = self.blob_hash.result_str();
+        if self.blob_id == "" {
+            self.blob_id = blob_hash;
         }
-        root_node.build(None)?;
-        root_node.dump(Some(&mut self.f_blob), f_bootstrap)?;
 
-        self.walk_dirs(root_path, Some(Box::new(root_node)))?;
-
-        // reset blob offset cursor
-        self.blob_offset = 0;
+        self.dump_bootstrap()?;
 
         if self.f_parent_bootstrap.is_some() {
             self.apply()?;
         }
 
-        Ok(())
+        Ok(self.blob_id.to_owned())
     }
 }

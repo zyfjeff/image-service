@@ -13,7 +13,6 @@ extern crate log;
 
 use clap::{App, Arg, SubCommand};
 use mktemp::Temp;
-use uuid::Uuid;
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -136,7 +135,7 @@ fn main() -> Result<()> {
             .value_of("bootstrap")
             .expect("bootstrap is required");
 
-        let mut blob_id = Uuid::new_v4().to_string();
+        let mut blob_id = String::new();
         if let Some(p_blob_id) = matches.value_of("blob_id") {
             blob_id = String::from(p_blob_id);
         }
@@ -162,7 +161,7 @@ fn main() -> Result<()> {
             parent_bootstrap,
             blob_id.clone(),
         )?;
-        ib.build()?;
+        blob_id = ib.build()?;
 
         if let Some(backend_type) = matches.value_of("backend_type") {
             if let Some(backend_config) = matches.value_of("backend_config") {
@@ -172,10 +171,12 @@ fn main() -> Result<()> {
                         upload_blob(oss::new(), config, blob_id.as_str(), real_blob_path)?;
                     }
                     "registry" => {
+                        blob_id = format!("sha256:{}", blob_id.as_str());
                         upload_blob(registry::new(), config, blob_id.as_str(), real_blob_path)?;
                     }
                     _ => {
                         error!("unsupported backend type {}", backend_type);
+                        return Ok(());
                     }
                 }
             }

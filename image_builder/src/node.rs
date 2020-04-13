@@ -43,8 +43,6 @@ impl fmt::Display for Overlay {
 pub struct Node {
     /// type
     pub overlay: Overlay,
-    /// image blob id
-    pub blob_id: String,
     /// offset of blob file
     pub blob_offset: u64,
     /// source path
@@ -65,7 +63,6 @@ pub struct Node {
 
 impl Node {
     pub fn new(
-        blob_id: String,
         blob_offset: u64,
         root: String,
         path: String,
@@ -73,7 +70,6 @@ impl Node {
         overlay: Overlay,
     ) -> Node {
         Node {
-            blob_id,
             blob_offset,
             root,
             path,
@@ -99,23 +95,6 @@ impl Node {
             info!("skip build {}", self.rootfs_path().to_str().unwrap());
         }
         Ok(())
-    }
-
-    pub fn dump(&mut self, f_blob: Option<&File>, f_bootstrap: Option<&File>) -> Result<u64> {
-        let file_type = self.get_type();
-
-        if file_type != "" {
-            if let Some(f_blob) = f_blob {
-                let digest = self.dump_blob(f_blob)?;
-                self.inode.digest = digest;
-            }
-
-            if let Some(f_bootstrap) = f_bootstrap {
-                self.dump_bootstrap(f_bootstrap)?;
-            }
-        }
-
-        Ok(self.inode.i_ino)
     }
 
     pub fn get_type(&self) -> &str {
@@ -312,7 +291,7 @@ impl Node {
         Ok(())
     }
 
-    fn dump_blob(&mut self, mut f_blob: &File) -> Result<RafsDigest> {
+    pub fn dump_blob(&mut self, mut f_blob: &File, blob_hash: &mut Sha256) -> Result<RafsDigest> {
         let mut inode_digest = RafsDigest::new();
 
         if self.is_symlink() {
@@ -337,7 +316,6 @@ impl Node {
             let mut chunk = RafsChunkInfo::new();
 
             // get chunk info
-            chunk.blobid = String::from(self.blob_id.as_str());
             chunk.file_offset = (i * DEFAULT_RAFS_BLOCK_SIZE as u64) as u64;
             let len: usize;
             if i == self.inode.i_chunk_cnt - 1 {
@@ -370,6 +348,9 @@ impl Node {
                 chunk.compress_size,
             );
 
+            // calc blob hash
+            blob_hash.input(&compressed);
+
             // dump compressed chunk data to blob
             f_blob.write(&compressed)?;
 
@@ -394,10 +375,16 @@ impl Node {
             self.inode.i_chunk_cnt,
         );
 
+        self.inode.digest = inode_digest.clone();
+
         Ok(inode_digest)
     }
 
-    pub fn dump_bootstrap(&self, mut f_bootstrap: &File) -> Result<()> {
+    pub fn dump_bootstrap(
+        &mut self,
+        mut f_bootstrap: &File,
+        blob_id: Option<String>,
+    ) -> Result<()> {
         // dump inode info to bootstrap
         self.inode.store(&mut f_bootstrap)?;
 
@@ -405,7 +392,10 @@ impl Node {
         self.xattr_chunks.store(&mut f_bootstrap)?;
 
         // dump chunk info to bootstrap
-        for chunk in &self.chunks {
+        for chunk in &mut self.chunks {
+            if let Some(blob_id) = &blob_id {
+                chunk.blobid = blob_id.to_owned();
+            }
             chunk.store(&mut f_bootstrap)?;
         }
 
