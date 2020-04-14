@@ -6,7 +6,7 @@ use base64;
 use crypto::{hmac::Hmac, mac::Mac, sha1::Sha1};
 use httpdate;
 use std::collections::HashMap;
-use std::io::Read;
+use std::fs::File;
 use std::io::Result;
 use std::time::SystemTime;
 use url::Url;
@@ -140,6 +140,8 @@ pub fn new() -> OSS {
 }
 
 impl BlobBackend for OSS {
+    type Reader = File;
+
     fn init(&mut self, config: HashMap<&str, &str>) -> Result<()> {
         let endpoint = config
             .get("endpoint")
@@ -211,10 +213,10 @@ impl BlobBackend for OSS {
         Ok(buf.len())
     }
 
-    fn write_r<R: Read + Send + 'static>(
+    fn write_r(
         &self,
         blob_id: &str,
-        file: R,
+        file: File,
         size: usize,
         callback: fn((usize, usize)),
     ) -> Result<usize> {

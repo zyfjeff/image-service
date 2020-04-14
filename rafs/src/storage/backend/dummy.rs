@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 use std::collections::HashMap;
-use std::io::Read;
+use std::fs::File;
 use std::io::Result;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -33,6 +33,8 @@ pub fn new() -> Dummy {
 }
 
 impl BlobBackend for Dummy {
+    type Reader = File;
+
     fn init(&mut self, _config: HashMap<&str, &str>) -> Result<()> {
         Ok(())
     }
@@ -48,10 +50,10 @@ impl BlobBackend for Dummy {
     }
 
     // Write data to blob from the provided source, the impl provided progress callback
-    fn write_r<R: Read + Send + 'static>(
+    fn write_r(
         &self,
         _blobid: &str,
-        _src: R,
+        _src: File,
         size: usize,
         _callback: fn((usize, usize)),
     ) -> Result<usize> {

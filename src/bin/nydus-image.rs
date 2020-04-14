@@ -15,13 +15,13 @@ use clap::{App, Arg, SubCommand};
 use mktemp::Temp;
 
 use std::collections::HashMap;
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io::{self, Error, ErrorKind, Result, Write};
 use std::os::linux::fs::MetadataExt;
 
 use rafs::storage::backend::{self, oss, registry, BlobBackend};
 
-fn upload_blob<B: BlobBackend>(
+fn upload_blob<B: BlobBackend<Reader = File>>(
     mut backend: B,
     config: HashMap<&str, &str>,
     blob_id: &str,

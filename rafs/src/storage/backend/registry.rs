@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 use std::collections::HashMap;
-use std::io::Read;
+use std::fs::File;
 use std::io::Result;
 use url::Url;
 
@@ -76,6 +76,8 @@ pub fn new() -> Registry {
 }
 
 impl BlobBackend for Registry {
+    type Reader = File;
+
     fn init(&mut self, config: HashMap<&str, &str>) -> Result<()> {
         let host = config
             .get("host")
@@ -126,10 +128,10 @@ impl BlobBackend for Registry {
         Ok(_buf.len())
     }
 
-    fn write_r<R: Read + Send + 'static>(
+    fn write_r(
         &self,
         blob_id: &str,
-        file: R,
+        file: File,
         size: usize,
         callback: fn((usize, usize)),
     ) -> Result<usize> {
