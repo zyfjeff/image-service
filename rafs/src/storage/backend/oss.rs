@@ -217,7 +217,7 @@ impl BlobBackend for OSS {
 impl BlobBackendUploader for OSS {
     type Reader = File;
 
-    fn write_r(
+    fn upload(
         &self,
         blob_id: &str,
         file: File,

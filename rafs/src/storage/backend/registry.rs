@@ -132,7 +132,7 @@ impl BlobBackend for Registry {
 impl BlobBackendUploader for Registry {
     type Reader = File;
 
-    fn write_r(
+    fn upload(
         &self,
         blob_id: &str,
         file: File,
@@ -141,8 +141,13 @@ impl BlobBackendUploader for Registry {
     ) -> Result<usize> {
         let location = self.create_upload()?;
 
+        let mut blob_id = blob_id.to_owned();
+        if !blob_id.starts_with("sha256:") {
+            blob_id = format!("sha256:{}", blob_id);
+        }
+
         let method = "PUT";
-        let url = Url::parse_with_params(location.as_str(), &[("digest", blob_id)])
+        let url = Url::parse_with_params(location.as_str(), &[("digest", blob_id.as_str())])
             .map_err(ReqErr::inv_data)?;
 
         let url = format!("{}{}?{}", self.host, url.path(), url.query().unwrap());

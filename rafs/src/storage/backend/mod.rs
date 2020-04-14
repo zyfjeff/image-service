@@ -38,7 +38,7 @@ pub trait BlobBackend {
 pub trait BlobBackendUploader {
     type Reader: Read + Send + 'static;
 
-    fn write_r(
+    fn upload(
         &self,
         blobid: &str,
         source: Self::Reader,

@@ -27,7 +27,7 @@ fn upload_blob(
 ) -> Result<()> {
     let blob_file = OpenOptions::new().read(true).write(false).open(blob_path)?;
     let size = blob_file.metadata()?.st_size() as usize;
-    backend.write_r(blob_id, blob_file, size, |(current, total)| {
+    backend.upload(blob_id, blob_file, size, |(current, total)| {
         io::stdout().flush().unwrap();
         print!("\r");
         print!(
@@ -145,10 +145,6 @@ fn main() -> Result<()> {
             if let Some(backend_config) = matches.value_of("backend_config") {
                 let config = BlobBackend::parse_config(backend_config);
                 let blob_backend = BlobBackend::map_uploader_type(backend_type, config).unwrap();
-
-                if backend_type == "registry" && !blob_id.starts_with("sha256:") {
-                    blob_id = format!("sha256:{}", blob_id.as_str());
-                }
 
                 upload_blob(blob_backend, blob_id.as_str(), real_blob_path)?;
             }
