@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::Result;
 use std::sync::{Arc, Mutex, RwLock};
 

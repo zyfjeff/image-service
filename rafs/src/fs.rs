@@ -325,19 +325,19 @@ impl RafsConfig {
     }
 }
 
-pub struct Rafs<B: backend::BlobBackend> {
+pub struct Rafs {
     conf: RafsConfig,
 
     sb: RafsSuper,
-    device: device::RafsDevice<B>,
+    device: device::RafsDevice,
     initialized: bool,
 }
 
-impl<B: backend::BlobBackend> Rafs<B> {
-    pub fn new(conf: RafsConfig, b: B) -> Self {
+impl Rafs {
+    pub fn new(conf: RafsConfig) -> Self {
         Rafs {
             sb: RafsSuper::new(),
-            device: device::RafsDevice::new(conf.dev_config(), b),
+            device: device::RafsDevice::new(conf.dev_config()),
             conf: conf,
             initialized: false,
         }
@@ -495,7 +495,7 @@ fn enoattr() -> Error {
     Error::from_raw_os_error(libc::ENODATA)
 }
 
-impl<B: backend::BlobBackend> FileSystem for Rafs<B> {
+impl FileSystem for Rafs {
     type Inode = Inode;
     type Handle = Handle;
 

@@ -339,7 +339,7 @@ impl Builder {
 
         let blob_hash = self.blob_hash.result_str();
         if self.blob_id == "" {
-            self.blob_id = blob_hash;
+            self.blob_id = format!("sha256:{}", blob_hash);
         }
 
         self.dump_bootstrap()?;

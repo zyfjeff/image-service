@@ -14,21 +14,17 @@ extern crate log;
 use clap::{App, Arg, SubCommand};
 use mktemp::Temp;
 
-use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Error, ErrorKind, Result, Write};
+use std::io::{self, Result, Write};
 use std::os::linux::fs::MetadataExt;
 
-use rafs::storage::backend::{self, oss, registry, BlobBackend, BlobBackendUploader};
+use rafs::storage::backend::*;
 
-fn upload_blob<B: BlobBackend + BlobBackendUploader<Reader = File>>(
-    mut backend: B,
-    config: HashMap<&str, &str>,
+fn upload_blob(
+    backend: Box<dyn BlobBackendUploader<Reader = File>>,
     blob_id: &str,
     blob_path: &str,
 ) -> Result<()> {
-    backend.init(config)?;
-
     let blob_file = OpenOptions::new().read(true).write(false).open(blob_path)?;
     let size = blob_file.metadata()?.st_size() as usize;
     backend.write_r(blob_id, blob_file, size, |(current, total)| {
@@ -147,22 +143,14 @@ fn main() -> Result<()> {
 
         if let Some(backend_type) = matches.value_of("backend_type") {
             if let Some(backend_config) = matches.value_of("backend_config") {
-                let config = backend::parse_config(backend_config);
-                match backend_type {
-                    "oss" => {
-                        upload_blob(oss::new(), config, blob_id.as_str(), real_blob_path)?;
-                    }
-                    "registry" => {
-                        if !blob_id.starts_with("sha256:") {
-                            blob_id = format!("sha256:{}", blob_id.as_str());
-                        }
-                        upload_blob(registry::new(), config, blob_id.as_str(), real_blob_path)?;
-                    }
-                    _ => {
-                        let err = format!("unsupported backend_type: {}", backend_type);
-                        return Err(Error::new(ErrorKind::InvalidInput, err));
-                    }
+                let config = BlobBackend::parse_config(backend_config);
+                let blob_backend = BlobBackend::map_uploader_type(backend_type, config).unwrap();
+
+                if backend_type == "registry" && !blob_id.starts_with("sha256:") {
+                    blob_id = format!("sha256:{}", blob_id.as_str());
                 }
+
+                upload_blob(blob_backend, blob_id.as_str(), real_blob_path)?;
             }
         }
 

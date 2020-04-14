@@ -36,27 +36,25 @@ impl Config {
     }
 
     pub fn hashmap(&self) -> HashMap<&str, &str> {
-        let hmap = parse_config(self.backend_config.as_str());
-
+        let hmap = BlobBackend::parse_config(self.backend_config.as_str());
         hmap
     }
 }
 
 // A rafs storage device
-pub struct RafsDevice<B: BlobBackend> {
+pub struct RafsDevice {
     c: Config,
-    b: B,
+    b: Box<dyn BlobBackend + Send + Sync>,
 }
 
-impl<B: BlobBackend> RafsDevice<B> {
-    pub fn new(c: Config, b: B) -> Self {
-        match c.backend_type {
-            _ => RafsDevice { c: c, b: b },
-        }
+impl RafsDevice {
+    pub fn new(c: Config) -> Self {
+        let blob_backend = BlobBackend::map_type(c.backend_type.as_str()).unwrap();
+        RafsDevice { c, b: blob_backend }
     }
 }
 
-impl<B: BlobBackend> RafsDevice<B> {
+impl RafsDevice {
     pub fn init(&mut self) -> io::Result<()> {
         self.b.init(self.c.hashmap())
     }
@@ -97,14 +95,14 @@ impl<B: BlobBackend> RafsDevice<B> {
     }
 }
 
-struct RafsBioDevice<'a, B: BlobBackend> {
+struct RafsBioDevice<'a> {
     bio: &'a RafsBio<'a>,
-    dev: &'a RafsDevice<B>,
+    dev: &'a RafsDevice,
     buf: Vec<u8>,
 }
 
-impl<'a, B: BlobBackend> RafsBioDevice<'a, B> {
-    fn new(bio: &'a RafsBio<'a>, b: &'a RafsDevice<B>) -> io::Result<Self> {
+impl<'a> RafsBioDevice<'a> {
+    fn new(bio: &'a RafsBio<'a>, b: &'a RafsDevice) -> io::Result<Self> {
         // FIXME: make sure bio is valid
         Ok(RafsBioDevice {
             bio: bio,
@@ -119,7 +117,7 @@ impl<'a, B: BlobBackend> RafsBioDevice<'a, B> {
     }
 }
 
-impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
+impl FileReadWriteVolatile for RafsBioDevice<'_> {
     fn read_volatile(&mut self, slice: VolatileSlice) -> Result<usize, Error> {
         // Skip because we don't really use it
         Ok(slice.len())
@@ -191,7 +189,7 @@ impl<B: BlobBackend> FileReadWriteVolatile for RafsBioDevice<'_, B> {
     }
 }
 
-impl<B: BlobBackend> RafsBioDevice<'_, B> {
+impl RafsBioDevice<'_> {
     fn fill_hole(&self, bufs: &[VolatileSlice]) -> Result<usize, Error> {
         let mut count: usize = 0;
         let mut remain: usize = self.bio.size;
