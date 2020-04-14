@@ -416,12 +416,16 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
         }
     }
 
-    fn open(&self, _ctx: Context, _inode: u64, _flags: u32) -> Result<(Option<u64>, OpenOptions)> {
+    fn open(&self, ctx: Context, inode: u64, flags: u32) -> Result<(Option<u64>, OpenOptions)> {
         if self.opts.read().unwrap().no_open {
             Err(Error::from_raw_os_error(libc::ENOSYS))
         } else {
-            // Matches the behavior of libfuse.
-            Ok((None, OpenOptions::empty()))
+            match self.get_real_rootfs(inode)? {
+                (Left(fs), idata) => fs.open(ctx, idata.ino, flags),
+                (Right(fs), idata) => fs
+                    .open(ctx, idata.ino.into(), flags)
+                    .map(|(h, opt)| (h.map(Into::into), opt)),
+            }
         }
     }
 
@@ -615,15 +619,19 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
 
     fn opendir(
         &self,
-        _ctx: Context,
-        _inode: u64,
-        _flags: u32,
-    ) -> Result<(Option<u64>, OpenOptions)> {
+        ctx: Context,
+        inode: u64,
+        flags: u32,
+    ) -> Result<(Option<Handle>, OpenOptions)> {
         if self.opts.read().unwrap().no_opendir {
             Err(Error::from_raw_os_error(libc::ENOSYS))
         } else {
-            // Matches the behavior of libfuse.
-            Ok((None, OpenOptions::empty()))
+            match self.get_real_rootfs(inode)? {
+                (Left(fs), idata) => fs.opendir(ctx, idata.ino, flags),
+                (Right(fs), idata) => fs
+                    .opendir(ctx, idata.ino.into(), flags)
+                    .map(|(h, opt)| (h.map(Into::into), opt)),
+            }
         }
     }
 
