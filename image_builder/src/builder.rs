@@ -231,13 +231,19 @@ impl Builder {
     }
 
     fn dump_bootstrap(&mut self) -> Result<()> {
-        if self.f_parent_bootstrap.is_none() {
-            for node in &mut self.additions {
-                node.dump_bootstrap(&mut self.f_bootstrap, Some(self.blob_id.to_owned()))?;
-            }
+        for node in &mut self.additions {
+            node.dump_bootstrap(&mut self.f_bootstrap, Some(self.blob_id.to_owned()))?;
         }
 
         Ok(())
+    }
+
+    fn fill_blob_id(&mut self) {
+        for node in &mut self.additions {
+            for chunk in &mut node.chunks {
+                chunk.blobid = self.blob_id.to_owned();
+            }
+        }
     }
 
     fn dump_blob(&mut self, file: &Path, parent_node: Option<Box<Node>>) -> Result<()> {
@@ -342,9 +348,10 @@ impl Builder {
             self.blob_id = format!("sha256:{}", blob_hash);
         }
 
-        self.dump_bootstrap()?;
-
-        if self.f_parent_bootstrap.is_some() {
+        if self.f_parent_bootstrap.is_none() {
+            self.dump_bootstrap()?;
+        } else {
+            self.fill_blob_id();
             self.apply()?;
         }
 
