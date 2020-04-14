@@ -33,8 +33,6 @@ pub fn new() -> Dummy {
 }
 
 impl BlobBackend for Dummy {
-    type Reader = File;
-
     fn init(&mut self, _config: HashMap<&str, &str>) -> Result<()> {
         Ok(())
     }
@@ -47,17 +45,6 @@ impl BlobBackend for Dummy {
     // Write a range of data to blob from the provided source
     fn write(&self, _blobid: &str, buf: &Vec<u8>, _offset: u64) -> Result<usize> {
         Ok(buf.len())
-    }
-
-    // Write data to blob from the provided source, the impl provided progress callback
-    fn write_r(
-        &self,
-        _blobid: &str,
-        _src: File,
-        size: usize,
-        _callback: fn((usize, usize)),
-    ) -> Result<usize> {
-        Ok(size)
     }
 
     fn close(&mut self) {

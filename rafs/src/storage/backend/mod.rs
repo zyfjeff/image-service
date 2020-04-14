@@ -35,8 +35,6 @@ pub fn parse_config(conf: &str) -> HashMap<&str, &str> {
 
 // Rafs blob backend API
 pub trait BlobBackend {
-    type Reader: Read + Send + 'static;
-
     // Initialize the blob backend
     // Each backend should define its own config type
     fn init(&mut self, config: HashMap<&str, &str>) -> Result<()>;
@@ -47,7 +45,14 @@ pub trait BlobBackend {
     // Write a range of data to blob from the provided slice
     fn write(&self, blobid: &str, buf: &Vec<u8>, offset: u64) -> Result<usize>;
 
-    // Write data to blob from the provided reader
+    // Close a backend
+    fn close(&mut self);
+}
+
+// Rafs blob backend upload API
+pub trait BlobBackendUploader {
+    type Reader: Read + Send + 'static;
+
     fn write_r(
         &self,
         blobid: &str,
@@ -55,7 +60,4 @@ pub trait BlobBackend {
         size: usize,
         callback: fn((usize, usize)),
     ) -> Result<usize>;
-
-    // Close a backend
-    fn close(&mut self);
 }

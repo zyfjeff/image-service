@@ -8,7 +8,7 @@ use std::io::Result;
 use url::Url;
 
 use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, ReqErr, Request};
-use crate::storage::backend::BlobBackend;
+use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 
 const HEADER_CONTENT_LENGTH: &str = "Content-Length";
 const HEADER_CONTENT_TYPE: &str = "Content-Type";
@@ -76,8 +76,6 @@ pub fn new() -> Registry {
 }
 
 impl BlobBackend for Registry {
-    type Reader = File;
-
     fn init(&mut self, config: HashMap<&str, &str>) -> Result<()> {
         let host = config
             .get("host")
@@ -128,6 +126,12 @@ impl BlobBackend for Registry {
         Ok(_buf.len())
     }
 
+    fn close(&mut self) {}
+}
+
+impl BlobBackendUploader for Registry {
+    type Reader = File;
+
     fn write_r(
         &self,
         blob_id: &str,
@@ -160,6 +164,4 @@ impl BlobBackend for Registry {
 
         Ok(size as usize)
     }
-
-    fn close(&mut self) {}
 }

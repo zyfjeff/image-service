@@ -12,7 +12,7 @@ use std::time::SystemTime;
 use url::Url;
 
 use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, ReqErr, Request};
-use crate::storage::backend::BlobBackend;
+use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 
 const HEADER_DATE: &str = "Date";
 const HEADER_AUTHORIZATION: &str = "Authorization";
@@ -140,8 +140,6 @@ pub fn new() -> OSS {
 }
 
 impl BlobBackend for OSS {
-    type Reader = File;
-
     fn init(&mut self, config: HashMap<&str, &str>) -> Result<()> {
         let endpoint = config
             .get("endpoint")
@@ -213,6 +211,12 @@ impl BlobBackend for OSS {
         Ok(buf.len())
     }
 
+    fn close(&mut self) {}
+}
+
+impl BlobBackendUploader for OSS {
+    type Reader = File;
+
     fn write_r(
         &self,
         blob_id: &str,
@@ -232,6 +236,4 @@ impl BlobBackend for OSS {
 
         Ok(size as usize)
     }
-
-    fn close(&mut self) {}
 }

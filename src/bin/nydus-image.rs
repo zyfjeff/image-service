@@ -19,9 +19,9 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Error, ErrorKind, Result, Write};
 use std::os::linux::fs::MetadataExt;
 
-use rafs::storage::backend::{self, oss, registry, BlobBackend};
+use rafs::storage::backend::{self, oss, registry, BlobBackend, BlobBackendUploader};
 
-fn upload_blob<B: BlobBackend<Reader = File>>(
+fn upload_blob<B: BlobBackend + BlobBackendUploader<Reader = File>>(
     mut backend: B,
     config: HashMap<&str, &str>,
     blob_id: &str,
