@@ -82,7 +82,7 @@ impl Node {
         }
     }
 
-    pub fn build(&mut self, hardlink_node: Option<Node>) -> Result<()> {
+    pub fn build(&mut self, hardlink_node: Option<Node>) -> Result<bool> {
         self.build_inode(hardlink_node)?;
         let file_type = self.get_type();
         if file_type != "" {
@@ -91,10 +91,10 @@ impl Node {
                 file_type,
                 self.rootfs_path().to_str().unwrap()
             );
-        } else {
-            info!("skip build {}", self.rootfs_path().to_str().unwrap());
+            return Ok(true);
         }
-        Ok(())
+        info!("skip build {}", self.rootfs_path().to_str().unwrap());
+        Ok(false)
     }
 
     pub fn get_type(&self) -> &str {
@@ -268,9 +268,9 @@ impl Node {
         self.build_inode_xattr()?;
 
         if self.is_reg() {
-            self.inode.i_flags |= INO_FLAG_HARDLINK;
             if self.is_hardlink() && hardlink_node.is_some() {
                 let hardlink_node = hardlink_node.unwrap();
+                self.inode.i_flags |= INO_FLAG_HARDLINK;
                 self.inode.digest = hardlink_node.inode.digest;
                 self.inode.i_chunk_cnt = 0;
             } else {

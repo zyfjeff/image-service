@@ -30,13 +30,13 @@ pub struct Builder {
     f_parent_bootstrap: Option<File>,
     /// record current blob offset cursor
     blob_offset: u64,
-    /// blob id (user specified)
+    /// blob id (user specified or sha256(blob))
     blob_id: String,
     /// blob sha256
     blob_hash: Sha256,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
     inode_map: HashMap<u64, Node>,
-    /// mutilple layers build: source nodes
+    /// mutilple layers build: upper source nodes
     additions: Vec<Node>,
     removals: HashMap<String, bool>,
     opaques: HashMap<String, bool>,
@@ -313,19 +313,25 @@ impl Builder {
                 }
 
                 let ino = meta.st_ino();
+                let keep;
                 let hardlink_node = self.inode_map.get(&ino);
+
                 if let Some(hardlink_node) = hardlink_node {
-                    node.build(Some(hardlink_node.clone()))?;
-                    node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
+                    keep = node.build(Some(hardlink_node.clone()))?;
                 } else {
-                    node.build(None)?;
-                    node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
-                    self.inode_map.insert(ino, node.clone());
+                    keep = node.build(None)?;
+                    if keep {
+                        self.inode_map.insert(ino, node.clone());
+                    }
                 }
+
+                if !keep {
+                    continue;
+                }
+
+                node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
                 self.blob_offset = node.blob_offset;
-
                 self.additions.push(node.clone());
-
                 if path.is_dir() {
                     self.dump_blob(&path, Some(Box::new(node)))?;
                 }

@@ -32,6 +32,6 @@ cargo build --release
             --bootstrap $BOOTSTRAP_PATH \
             --parent_bootstrap $PARENT_BOOTSTRAP_PATH \
             --backend_type $BACKEND_TYPE \
-            --backend_config $BACKEND_CONFIG
+            --backend_config $BACKEND_CONFIG \
             $SOURCE
 ```
