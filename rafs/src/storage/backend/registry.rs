@@ -41,7 +41,8 @@ impl Registry {
             query_str = format!("?{}", query.join("&"));
         }
 
-        let url = Url::parse(self.host.as_str()).map_err(ReqErr::inv_data)?;
+        let url = format!("https://{}", self.host.as_str());
+        let url = Url::parse(url.as_str()).map_err(ReqErr::inv_data)?;
         let path = format!("/v2/{}{}{}", self.repo, path, query_str);
         let url = url.join(path.as_str()).map_err(ReqErr::inv_input)?;
 
@@ -150,7 +151,12 @@ impl BlobBackendUploader for Registry {
         let url = Url::parse_with_params(location.as_str(), &[("digest", blob_id.as_str())])
             .map_err(ReqErr::inv_data)?;
 
-        let url = format!("{}{}?{}", self.host, url.path(), url.query().unwrap());
+        let url = format!(
+            "https://{}{}?{}",
+            self.host,
+            url.path(),
+            url.query().unwrap()
+        );
 
         let body = Progress::new(file, size, callback);
 
