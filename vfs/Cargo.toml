@@ -11,6 +11,6 @@ libc = "0.2"
 log = "0.4"
 bimap = "0.4"
 
-fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git", branch = "bergwolf/types" }
+fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git", branch = "master" }
 
 rafs = { path = "../rafs" }
