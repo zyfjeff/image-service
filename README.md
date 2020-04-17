@@ -14,7 +14,12 @@ oss backend:
 {
   "device_config": {
     "backend_type": "oss",
-    "backend_config": "endpoint=,access_key_id=,access_key_secret=,bucket_name="
+    "backend_config": {
+      "endpoint": "region.aliyuncs.com",
+      "access_key_id": "",
+      "access_key_secret": "",
+      "bucket_name": ""
+    }
   }
 }
 ```
@@ -24,7 +29,10 @@ registry backend:
 {
   "device_config": {
     "backend_type": "registry",
-    "backend_config": "host=,repo="
+    "backend_config": {
+      "host": "user:pass@my-registry:5000",
+      "repo": ""
+    }
   }
 }
 ```

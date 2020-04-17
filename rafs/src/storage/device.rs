@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use serde::{Deserialize, Serialize};
 use std::cmp;
-use std::collections::HashMap;
 use std::io;
 use std::io::{Error, Read, Write};
 
@@ -18,28 +16,6 @@ use crate::storage::backend::*;
 use utils;
 
 static ZEROS: &'static [u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
-
-// A rafs storage device config
-#[derive(Default, Clone, Serialize, Deserialize)]
-pub struct Config {
-    // backend type
-    pub backend_type: String,
-    // backend config: key1=value1,key2=value2...
-    pub backend_config: String,
-}
-
-impl Config {
-    pub fn new() -> Config {
-        Config {
-            ..Default::default()
-        }
-    }
-
-    pub fn hashmap(&self) -> HashMap<&str, &str> {
-        let hmap = BlobBackend::parse_config(self.backend_config.as_str());
-        hmap
-    }
-}
 
 // A rafs storage device
 pub struct RafsDevice {

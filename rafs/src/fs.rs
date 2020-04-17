@@ -4,7 +4,7 @@
 //
 // A container image Registry Accerlation File System.
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::CStr;
 use std::io::{Error, ErrorKind, Read, Result, Write};
@@ -308,9 +308,9 @@ impl RafsSuper {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Deserialize)]
 pub struct RafsConfig {
-    pub device_config: device::Config,
+    pub device_config: backend::Config,
 }
 
 impl RafsConfig {
@@ -320,7 +320,7 @@ impl RafsConfig {
         }
     }
 
-    fn dev_config(&self) -> device::Config {
+    fn dev_config(&self) -> backend::Config {
         self.device_config.clone()
     }
 }

@@ -32,7 +32,7 @@ pub fn new() -> Dummy {
 }
 
 impl BlobBackend for Dummy {
-    fn init(&mut self, _config: HashMap<&str, &str>) -> Result<()> {
+    fn init(&mut self, _config: HashMap<String, String>) -> Result<()> {
         Ok(())
     }
 

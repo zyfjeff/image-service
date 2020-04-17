@@ -140,7 +140,7 @@ pub fn new() -> OSS {
 }
 
 impl BlobBackend for OSS {
-    fn init(&mut self, config: HashMap<&str, &str>) -> Result<()> {
+    fn init(&mut self, config: HashMap<String, String>) -> Result<()> {
         let endpoint = config
             .get("endpoint")
             .ok_or(ReqErr::inv_input("endpoint required"))?;

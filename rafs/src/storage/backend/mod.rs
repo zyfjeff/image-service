@@ -18,11 +18,34 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Error, Read, Result};
 
+use config::Value;
+use serde::Deserialize;
+
+// storage backend config
+#[derive(Default, Clone, Deserialize)]
+pub struct Config {
+    pub backend_type: String,
+    // JSON {"key": "value"} pairs
+    pub backend_config: Value,
+}
+
+impl Config {
+    pub fn new() -> Config {
+        Config {
+            ..Default::default()
+        }
+    }
+
+    pub fn hashmap(&self) -> HashMap<String, String> {
+        BlobBackend::parse_config(&self.backend_config)
+    }
+}
+
 // Rafs blob backend API
 pub trait BlobBackend {
     // Initialize the blob backend
     // Each backend should define its own config type
-    fn init(&mut self, config: HashMap<&str, &str>) -> Result<()>;
+    fn init(&mut self, config: HashMap<String, String>) -> Result<()>;
 
     // Read a range of data from blob into the provided slice
     fn read(&self, blobid: &str, buf: &mut Vec<u8>, offset: u64, count: usize) -> Result<usize>;
@@ -48,15 +71,17 @@ pub trait BlobBackendUploader {
 }
 
 impl dyn BlobBackend {
-    pub fn parse_config(conf: &str) -> HashMap<&str, &str> {
+    pub fn parse_config(conf: &Value) -> HashMap<String, String> {
         let mut config = HashMap::new();
-        let conf: Vec<_> = conf.split(",").collect();
-        for pairs in conf {
-            let pair: Vec<_> = pairs.split("=").collect();
-            if pair.len() == 2 {
-                config.insert(pair[0], pair[1]);
+
+        if let Ok(pairs) = conf.clone().into_table() {
+            for (key, value) in pairs {
+                if let Ok(value) = value.into_str() {
+                    config.insert(key, value);
+                }
             }
         }
+
         config
     }
     pub fn map_type(backend_type: &str) -> Result<Box<dyn BlobBackend + Send + Sync>> {
@@ -71,7 +96,7 @@ impl dyn BlobBackend {
     }
     pub fn map_uploader_type(
         backend_type: &str,
-        config: HashMap<&str, &str>,
+        config: HashMap<String, String>,
     ) -> Result<Box<dyn BlobBackendUploader<Reader = File>>> {
         match backend_type {
             "oss" => {

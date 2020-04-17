@@ -24,7 +24,7 @@ cargo build --release
 # $PARENT_BOOTSTRAP_PATH: parent bootstrap file path, optional
 # $SOURCE: rootfs source directory
 # $BACKEND_TYPE: oss|registry
-# $BACKEND_CONFIG: key1=value1,key2=value2
+# $BACKEND_CONFIG: JSON string
 
 ./target/release/nydus-image create \
             --blob $BLOB_PATH \

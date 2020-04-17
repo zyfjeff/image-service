@@ -15,6 +15,7 @@ rust-crypto = "0.2.36"
 base64 = "0.11.0"
 reqwest = { version = "0.10.4", features=[ "blocking" ] }
 url = "2.1.1"
+config = "0.10"
 compress = "0.1.2"
 vm-memory = ">=0.2.0"
 fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git", branch = "master" }

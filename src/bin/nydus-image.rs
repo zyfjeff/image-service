@@ -13,7 +13,9 @@ extern crate log;
 
 use clap::{App, Arg, SubCommand};
 use mktemp::Temp;
+use serde_json;
 
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Result, Write};
 use std::os::linux::fs::MetadataExt;
@@ -81,7 +83,7 @@ fn main() -> Result<()> {
                 .arg(
                     Arg::with_name("blob_id")
                         .long("blob_id")
-                        .help("blob id (as object key in backend)")
+                        .help("blob id (as object id in backend)")
                         .takes_value(true),
                 )
                 .arg(
@@ -100,7 +102,7 @@ fn main() -> Result<()> {
                 .arg(
                     Arg::with_name("backend_config")
                         .long("backend_config")
-                        .help("blob storage backend config")
+                        .help("blob storage backend config (json)")
                         .takes_value(true),
                 ),
         )
@@ -143,9 +145,9 @@ fn main() -> Result<()> {
 
         if let Some(backend_type) = matches.value_of("backend_type") {
             if let Some(backend_config) = matches.value_of("backend_config") {
-                let config = BlobBackend::parse_config(backend_config);
+                let config: HashMap<String, String> = serde_json::from_str(backend_config)
+                    .expect("failed to parse backend_config json");
                 let blob_backend = BlobBackend::map_uploader_type(backend_type, config).unwrap();
-
                 upload_blob(blob_backend, blob_id.as_str(), real_blob_path)?;
             }
         }
