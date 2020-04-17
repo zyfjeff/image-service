@@ -311,8 +311,14 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserFsBackend<F> {
         }
 
         if used_count > 0 {
-            for &(desc_index, _) in &used_desc_heads[..used_count] {
-                vring.mut_queue().add_used(mem, desc_index, 0);
+            for &(desc_index, cnt) in &used_desc_heads[..used_count] {
+                trace!(
+                    "used desc index {} bytes {} total_used {}",
+                    desc_index,
+                    cnt,
+                    used_count
+                );
+                vring.mut_queue().add_used(mem, desc_index, cnt as u32);
             }
             vring.signal_used_queue().unwrap();
         }
