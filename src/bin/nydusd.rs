@@ -27,7 +27,7 @@ use libc::EFD_NONBLOCK;
 use clap::{App, Arg};
 use fuse_rs::api::filesystem::FileSystem;
 use fuse_rs::api::server::Server;
-use fuse_rs::transport::{Reader, Writer};
+use fuse_rs::transport::{Error as FuseTransportError, Reader, Writer};
 use fuse_rs::Error as VhostUserFsError;
 use vhost_rs::vhost_user::message::*;
 use vhost_rs::vhost_user::SlaveFsCacheReq;
@@ -62,6 +62,8 @@ enum Error {
     HandleEventUnknownEvent,
     /// No memory configured.
     NoMemoryConfigured,
+    /// Invalid Virtio descriptor chain.
+    InvalidDescriptorChain(FuseTransportError),
     /// Processing queue failed.
     ProcessQueue(VhostUserFsError),
     /// Cannot create epoll context.
@@ -147,6 +149,7 @@ struct VhostUserFsBackend<F: FileSystem + Send + Sync + 'static> {
     server: Arc<Server<Arc<Vfs<F>>>>,
     // handle request from slave to master
     vu_req: Option<SlaveFsCacheReq>,
+    used_descs: Vec<(u16, u32)>,
 }
 
 struct ApiServer {
@@ -288,38 +291,40 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserFsBackend<F> {
             server: Arc::new(Server::new(fs.clone())),
             vfs: fs,
             vu_req: None,
+            used_descs: Vec::with_capacity(QUEUE_SIZE),
         })
     }
 
+    // There's no way to recover if error happens during processing a virtq, let the caller
+    // to handle it.
     fn process_queue(&mut self, vring: &mut Vring) -> Result<()> {
         let mem = self.mem.as_ref().ok_or(Error::NoMemoryConfigured)?;
 
-        let mut used_desc_heads = [(0, 0); QUEUE_SIZE];
-        let mut used_count = 0;
         while let Some(avail_desc) = vring.mut_queue().iter(mem).next() {
             let head_index = avail_desc.index;
-            let reader = Reader::new(mem, avail_desc.clone()).unwrap();
-            let writer = Writer::new(mem, avail_desc.clone()).unwrap();
+            let reader =
+                Reader::new(mem, avail_desc.clone()).map_err(Error::InvalidDescriptorChain)?;
+            let writer = Writer::new(mem, avail_desc).map_err(Error::InvalidDescriptorChain)?;
 
             let total = self
                 .server
                 .handle_message(reader, writer, self.vu_req.as_mut())
                 .map_err(Error::ProcessQueue)?;
 
-            used_desc_heads[used_count] = (head_index, total);
-            used_count += 1;
+            self.used_descs.push((head_index, total as u32));
         }
 
-        if used_count > 0 {
-            for &(desc_index, cnt) in &used_desc_heads[..used_count] {
+        if self.used_descs.len() > 0 {
+            for (desc_index, data_sz) in &self.used_descs {
                 trace!(
                     "used desc index {} bytes {} total_used {}",
                     desc_index,
-                    cnt,
-                    used_count
+                    data_sz,
+                    self.used_descs.len()
                 );
-                vring.mut_queue().add_used(mem, desc_index, cnt as u32);
+                vring.mut_queue().add_used(mem, *desc_index, *data_sz);
             }
+            self.used_descs.clear();
             vring.signal_used_queue().unwrap();
         }
 
