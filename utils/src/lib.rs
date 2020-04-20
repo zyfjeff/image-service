@@ -54,10 +54,10 @@ fn decompress_liblz4(input: &[u8], blksize: u32) -> Result<Vec<u8>> {
 // For compatibility reason, we use liblz4 version to compress/decompress directly
 // with data blocks so that we don't really care about lz4 header magic numbers like
 // as being done with all these rust lz4 implementations
-pub fn compress(src: &Vec<u8>) -> Result<Vec<u8>> {
+pub fn compress(src: &[u8]) -> Result<Vec<u8>> {
     compress_liblz4(src)
 }
 
-pub fn decompress(src: &Vec<u8>, blksize: u32) -> Result<Vec<u8>> {
+pub fn decompress(src: &[u8], blksize: u32) -> Result<Vec<u8>> {
     decompress_liblz4(src, blksize)
 }
