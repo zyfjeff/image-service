@@ -23,8 +23,8 @@ const RAFS_INODE_BLOCKSIZE: u32 = 4096;
 const RAFS_DEFAULT_ATTR_TIMEOUT: u64 = 1 << 32;
 const RAFS_DEFAULT_ENTRY_TIMEOUT: u64 = RAFS_DEFAULT_ATTR_TIMEOUT;
 
-const DOT: &'static str = ".";
-const DOTDOT: &'static str = "..";
+const DOT: &str = ".";
+const DOTDOT: &str = "..";
 
 type Inode = u64;
 type Handle = u64;
@@ -238,7 +238,7 @@ impl RafsSuper {
                 .get(&ino.i_ino)
                 .map(Arc::clone)
             {
-                skip = inode.i_data.len() > 0;
+                skip = !inode.i_data.is_empty();
             }
         }
 
@@ -251,9 +251,9 @@ impl RafsSuper {
         Ok(())
     }
 
-    fn get_entry(&self, ino: &Inode) -> Result<Entry> {
+    fn get_entry(&self, ino: Inode) -> Result<Entry> {
         let inodes = self.s_inodes.read().unwrap();
-        let inode = inodes.get(ino).ok_or(ebadf())?;
+        let inode = inodes.get(&ino).ok_or_else(ebadf)?;
         let entry = Entry {
             attr: inode.get_attr().into(),
             inode: inode.i_ino,
@@ -285,14 +285,14 @@ impl RafsSuper {
             return Ok(());
         }
         let inodes = self.s_inodes.read().unwrap();
-        let rafs_inode = inodes.get(&inode).ok_or(ebadf())?;
+        let rafs_inode = inodes.get(&inode).ok_or_else(ebadf)?;
         if !rafs_inode.is_dir() {
             return Err(ebadf());
         }
 
         let mut next = offset + 1;
         for (ino, name) in rafs_inode.i_child[offset as usize..].iter() {
-            let child_inode = inodes.get(&ino).ok_or(ebadf())?;
+            let child_inode = inodes.get(&ino).ok_or_else(ebadf)?;
             match add_entry(DirEntry {
                 ino: child_inode.i_ino,
                 offset: next,
@@ -338,7 +338,7 @@ impl Rafs {
         Rafs {
             sb: RafsSuper::new(),
             device: device::RafsDevice::new(conf.dev_config()),
-            conf: conf,
+            conf,
             initialized: false,
         }
     }
@@ -522,13 +522,13 @@ impl FileSystem for Rafs {
 
     fn lookup(&self, ctx: Context, parent: u64, name: &CStr) -> Result<Entry> {
         let inodes = self.sb.s_inodes.read().unwrap();
-        let p = inodes.get(&parent).ok_or(ebadf())?;
+        let p = inodes.get(&parent).ok_or_else(ebadf)?;
         if !p.is_dir() {
             return Err(ebadf());
         }
         let target = name.to_str().or_else(|_| Err(ebadf()))?;
         if target == DOT || (parent == ROOT_ID && target == DOTDOT) {
-            let mut entry = self.sb.get_entry(&parent)?;
+            let mut entry = self.sb.get_entry(parent)?;
             entry.inode = parent;
             return Ok(entry);
         }
@@ -536,7 +536,7 @@ impl FileSystem for Rafs {
             if !target.eq(name) {
                 continue;
             }
-            let entry = self.sb.get_entry(ino)?;
+            let entry = self.sb.get_entry(*ino)?;
             return Ok(entry);
         }
         Err(enoent())
@@ -557,13 +557,13 @@ impl FileSystem for Rafs {
         handle: Option<u64>,
     ) -> Result<(libc::stat64, Duration)> {
         let inodes = self.sb.s_inodes.read().unwrap();
-        let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
+        let rafs_inode = inodes.get(&inode).ok_or_else(enoent)?;
         Ok((rafs_inode.get_attr().into(), self.sb.s_attr_timeout))
     }
 
     fn readlink(&self, ctx: Context, inode: u64) -> Result<Vec<u8>> {
         let inodes = self.sb.s_inodes.read().unwrap();
-        let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
+        let rafs_inode = inodes.get(&inode).ok_or_else(enoent)?;
         if !rafs_inode.is_symlink() {
             return Err(einval());
         }
@@ -584,7 +584,7 @@ impl FileSystem for Rafs {
         flags: u32,
     ) -> Result<usize> {
         let inodes = self.sb.s_inodes.read().unwrap();
-        let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
+        let rafs_inode = inodes.get(&inode).ok_or_else(enoent)?;
 
         if offset >= rafs_inode.i_size {
             return Ok(0);
@@ -608,7 +608,7 @@ impl FileSystem for Rafs {
         flags: u32,
     ) -> Result<usize> {
         let inodes = self.sb.s_inodes.read().unwrap();
-        let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
+        let rafs_inode = inodes.get(&inode).ok_or_else(enoent)?;
 
         let desc = rafs_inode.alloc_bio_desc(self.sb.s_block_size, size as usize, offset)?;
         self.device.write_from(r, desc)
@@ -650,10 +650,10 @@ impl FileSystem for Rafs {
             .unwrap()
             .get(&inode)
             .map(Arc::clone)
-            .ok_or(enoent())?;
+            .ok_or_else(enoent)?;
 
         let key = name.to_str().or_else(|_| Err(einval()))?;
-        let value = inode.i_xattr.get(key).ok_or(enoattr())?;
+        let value = inode.i_xattr.get(key).ok_or_else(enoattr)?;
         match size {
             0 => Ok(GetxattrReply::Count(value.len() as u32)),
             _ => Ok(GetxattrReply::Value(value.clone())),
@@ -668,7 +668,7 @@ impl FileSystem for Rafs {
             .unwrap()
             .get(&inode)
             .map(Arc::clone)
-            .ok_or(enoent())?;
+            .ok_or_else(enoent)?;
 
         match size {
             0 => {
@@ -717,7 +717,7 @@ impl FileSystem for Rafs {
         F: FnMut(DirEntry, Entry) -> Result<usize>,
     {
         self.sb.do_readdir(ctx, inode, size, offset, |dir_entry| {
-            let entry = self.sb.get_entry(&dir_entry.ino)?;
+            let entry = self.sb.get_entry(dir_entry.ino)?;
             add_entry(dir_entry, entry)
         })
     }
@@ -728,7 +728,7 @@ impl FileSystem for Rafs {
 
     fn access(&self, ctx: Context, inode: u64, mask: u32) -> Result<()> {
         let inodes = self.sb.s_inodes.read().unwrap();
-        let rafs_inode = inodes.get(&inode).ok_or(enoent())?;
+        let rafs_inode = inodes.get(&inode).ok_or_else(enoent)?;
         let st = rafs_inode.get_attr();
         let mode = mask as i32 & (libc::R_OK | libc::W_OK | libc::X_OK);
 

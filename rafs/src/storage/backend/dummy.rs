@@ -42,7 +42,7 @@ impl BlobBackend for Dummy {
     }
 
     // Write a range of data to blob from the provided source
-    fn write(&self, _blobid: &str, buf: &Vec<u8>, _offset: u64) -> Result<usize> {
+    fn write(&self, _blobid: &str, buf: &[u8], _offset: u64) -> Result<usize> {
         Ok(buf.len())
     }
 

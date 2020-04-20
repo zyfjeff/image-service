@@ -59,7 +59,7 @@ pub enum ReqBody<R> {
     Buf(Vec<u8>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Request {
     client: Client,
 }

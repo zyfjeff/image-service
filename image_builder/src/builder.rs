@@ -61,15 +61,16 @@ impl Builder {
             .truncate(true)
             .open(bootstrap_path)?;
 
-        let mut f_parent_bootstrap = None;
-        if parent_bootstrap_path != "" {
-            f_parent_bootstrap = Some(
+        let f_parent_bootstrap = if parent_bootstrap_path != "" {
+            Some(
                 OpenOptions::new()
                     .read(true)
                     .write(false)
                     .open(parent_bootstrap_path)?,
-            );
-        }
+            )
+        } else {
+            None
+        };
 
         Ok(Builder {
             root,
@@ -86,13 +87,11 @@ impl Builder {
         })
     }
 
-    fn get_lower_idx(&self, lowers: &Vec<Node>, path: String) -> Option<usize> {
-        let mut idx: usize = 0;
-        for lower in lowers {
+    fn get_lower_idx(&self, lowers: &[Node], path: String) -> Option<usize> {
+        for (idx, lower) in lowers.iter().enumerate() {
             if lower.path == path {
                 return Some(idx);
             }
-            idx = idx + 1;
         }
         None
     }
@@ -147,11 +146,11 @@ impl Builder {
                 path = _path.to_str().unwrap().to_owned();
             }
 
-            let mut overlay = Overlay::LowerAddition;
-
-            if self.removals.get(&path).is_some() {
-                overlay = Overlay::UpperRemoval;
-            }
+            let mut overlay = if self.removals.get(&path).is_some() {
+                Overlay::UpperRemoval
+            } else {
+                Overlay::LowerAddition
+            };
 
             if let Some(parent) = &parent {
                 if self.opaques.get(&parent.path).is_some() {
@@ -184,18 +183,16 @@ impl Builder {
                 _addition.inode.i_parent = lowers[idx].inode.i_parent;
                 _addition.overlay = Overlay::UpperModification;
                 lowers[idx] = _addition;
-            } else {
-                if let Some(parent_path) = addition_path.parent() {
-                    if let Some(idx) =
-                        self.get_lower_idx(&lowers, parent_path.to_str().unwrap().to_owned())
-                    {
-                        _addition.inode.i_parent = lowers[idx].inode.i_ino;
-                        _addition.overlay = Overlay::UpperAddition;
-                        lowers.insert(idx + 1, _addition);
-                    } else {
-                        _addition.overlay = Overlay::UpperAddition;
-                        lowers.push(_addition);
-                    }
+            } else if let Some(parent_path) = addition_path.parent() {
+                if let Some(idx) =
+                    self.get_lower_idx(&lowers, parent_path.to_str().unwrap().to_owned())
+                {
+                    _addition.inode.i_parent = lowers[idx].inode.i_ino;
+                    _addition.overlay = Overlay::UpperAddition;
+                    lowers.insert(idx + 1, _addition);
+                } else {
+                    _addition.overlay = Overlay::UpperAddition;
+                    lowers.push(_addition);
                 }
             }
         }
@@ -210,7 +207,7 @@ impl Builder {
                 lower.inode.i_parent
             );
             if lower.overlay != Overlay::UpperRemoval && lower.overlay != Overlay::UpperOpaque {
-                lower.dump_bootstrap(&mut self.f_bootstrap, None)?;
+                lower.dump_bootstrap(&self.f_bootstrap, None)?;
             }
         }
 
@@ -232,7 +229,7 @@ impl Builder {
 
     fn dump_bootstrap(&mut self) -> Result<()> {
         for node in &mut self.additions {
-            node.dump_bootstrap(&mut self.f_bootstrap, Some(self.blob_id.to_owned()))?;
+            node.dump_bootstrap(&self.f_bootstrap, Some(self.blob_id.to_owned()))?;
         }
 
         Ok(())
@@ -261,7 +258,7 @@ impl Builder {
             );
 
             root_node.build(None)?;
-            root_node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
+            root_node.dump_blob(&self.f_blob, &mut self.blob_hash)?;
 
             self.additions.push(root_node.clone());
 
@@ -329,7 +326,7 @@ impl Builder {
                     continue;
                 }
 
-                node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
+                node.dump_blob(&self.f_blob, &mut self.blob_hash)?;
                 self.blob_offset = node.blob_offset;
                 self.additions.push(node.clone());
                 if path.is_dir() {

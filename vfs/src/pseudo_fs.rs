@@ -39,7 +39,7 @@ impl PseudoFs {
     pub fn new(index: u64) -> Self {
         let fs = PseudoFs {
             next_inode: AtomicU64::new(PSEUDOFS_NEXT_INODE),
-            index: index,
+            index,
             inodes: RwLock::new(HashMap::new()),
         };
         fs.inodes.write().unwrap().insert(
@@ -59,8 +59,8 @@ impl PseudoFs {
         self.inodes.write().unwrap().insert(
             ino,
             Arc::new(PseudoInode {
-                ino: ino,
-                parent: parent,
+                ino,
+                parent,
                 name: String::from(name),
                 childs: RwLock::new(Vec::new()),
             }),
@@ -175,7 +175,7 @@ impl PseudoFs {
             .unwrap()
             .get(&parent)
             .map(Arc::clone)
-            .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            .ok_or_else(|| Error::from_raw_os_error(libc::ENOENT))?;
 
         let mut next = offset + 1;
         let childs = inode.childs.read().unwrap().clone();
@@ -215,7 +215,7 @@ impl FileSystem for PseudoFs {
             .unwrap()
             .get(&parent)
             .map(Arc::clone)
-            .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            .ok_or_else(|| Error::from_raw_os_error(libc::ENOENT))?;
         let child_name = name
             .to_str()
             .map_err(|_| Error::from_raw_os_error(libc::EINVAL))?;
@@ -256,10 +256,10 @@ impl FileSystem for PseudoFs {
             .unwrap()
             .get(&inode)
             .map(Arc::clone)
-            .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            .ok_or_else(|| Error::from_raw_os_error(libc::ENOENT))?;
 
         let entry = self.get_entry(info.ino);
-        Ok((entry.attr.into(), entry.attr_timeout))
+        Ok((entry.attr, entry.attr_timeout))
     }
 
     fn readdir<F>(

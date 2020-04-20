@@ -116,12 +116,11 @@ impl Node {
     }
 
     pub fn rootfs_path(&self) -> PathBuf {
-        let rootfs_path = Path::new("/").join(
+        Path::new("/").join(
             Path::new(self.path.as_str())
                 .strip_prefix(self.root.as_str())
                 .unwrap(),
-        );
-        return rootfs_path;
+        )
     }
 
     fn meta(&self) -> Box<dyn MetadataExt> {
@@ -130,19 +129,19 @@ impl Node {
     }
 
     fn is_dir(&self) -> bool {
-        return self.inode.i_mode & libc::S_IFMT == libc::S_IFDIR;
+        self.inode.i_mode & libc::S_IFMT == libc::S_IFDIR
     }
 
     fn is_symlink(&self) -> bool {
-        return self.inode.i_mode & libc::S_IFMT == libc::S_IFLNK;
+        self.inode.i_mode & libc::S_IFMT == libc::S_IFLNK
     }
 
     fn is_reg(&self) -> bool {
-        return self.inode.i_mode & libc::S_IFMT == libc::S_IFREG;
+        self.inode.i_mode & libc::S_IFMT == libc::S_IFREG
     }
 
     fn is_hardlink(&self) -> bool {
-        return self.inode.i_nlink > 1;
+        self.inode.i_nlink > 1
     }
 
     fn build_inode_xattr(&mut self) -> Result<()> {
@@ -170,7 +169,7 @@ impl Node {
 
         let names = match str::from_utf8(&buf) {
             Ok(s) => {
-                let s: Vec<&str> = s.split_terminator("\0").collect();
+                let s: Vec<&str> = s.split_terminator('\0').collect();
                 Ok(s)
             }
             Err(_) => Err(Error::from_raw_os_error(libc::EINVAL)),
@@ -179,7 +178,7 @@ impl Node {
         let mut count = 0;
         for n in names.iter() {
             // make sure name is nul terminated
-            let mut name = n.to_string();
+            let mut name = (*n).to_string();
             name.push('\0');
             let value_size = unsafe {
                 libc::lgetxattr(
@@ -268,16 +267,17 @@ impl Node {
         self.build_inode_xattr()?;
 
         if self.is_reg() {
-            if self.is_hardlink() && hardlink_node.is_some() {
-                let hardlink_node = hardlink_node.unwrap();
-                self.inode.i_flags |= INO_FLAG_HARDLINK;
-                self.inode.digest = hardlink_node.inode.digest;
-                self.inode.i_chunk_cnt = 0;
-            } else {
-                let file_size = self.inode.i_size;
-                let chunk_count = (file_size as f64 / DEFAULT_RAFS_BLOCK_SIZE as f64).ceil() as u64;
-                self.inode.i_chunk_cnt = chunk_count;
+            if self.is_hardlink() {
+                if let Some(hardlink_node) = hardlink_node {
+                    self.inode.i_flags |= INO_FLAG_HARDLINK;
+                    self.inode.digest = hardlink_node.inode.digest;
+                    self.inode.i_chunk_cnt = 0;
+                    return Ok(());
+                }
             }
+            let file_size = self.inode.i_size;
+            let chunk_count = (file_size as f64 / DEFAULT_RAFS_BLOCK_SIZE as f64).ceil() as u64;
+            self.inode.i_chunk_cnt = chunk_count;
         } else if self.is_symlink() {
             self.inode.i_flags |= INO_FLAG_SYMLINK;
             let target_path = fs::read_link(self.path.as_str())?;
@@ -317,12 +317,11 @@ impl Node {
 
             // get chunk info
             chunk.file_offset = (i * DEFAULT_RAFS_BLOCK_SIZE as u64) as u64;
-            let len: usize;
-            if i == self.inode.i_chunk_cnt - 1 {
-                len = (file_size % DEFAULT_RAFS_BLOCK_SIZE as u64) as usize;
+            let len = if i == self.inode.i_chunk_cnt - 1 {
+                (file_size % DEFAULT_RAFS_BLOCK_SIZE as u64) as usize
             } else {
-                len = DEFAULT_RAFS_BLOCK_SIZE;
-            }
+                DEFAULT_RAFS_BLOCK_SIZE
+            };
 
             // get chunk data
             file.seek(SeekFrom::Start(chunk.file_offset))?;
@@ -339,7 +338,7 @@ impl Node {
             chunk.compress_size = compressed_size as u32;
 
             // move cursor to offset of next chunk
-            self.blob_offset = self.blob_offset + compressed_size as u64;
+            self.blob_offset += compressed_size as u64;
 
             trace!(
                 "\tbuilding chunk: file offset {}, blob offset {}, size {}",
@@ -352,7 +351,7 @@ impl Node {
             blob_hash.input(&compressed);
 
             // dump compressed chunk data to blob
-            f_blob.write(&compressed)?;
+            f_blob.write_all(&compressed)?;
 
             // calc inode digest
             inode_hash.input(&chunk.blockid.data);
@@ -380,28 +379,24 @@ impl Node {
         Ok(inode_digest)
     }
 
-    pub fn dump_bootstrap(
-        &mut self,
-        mut f_bootstrap: &File,
-        blob_id: Option<String>,
-    ) -> Result<()> {
+    pub fn dump_bootstrap(&mut self, f_bootstrap: &File, blob_id: Option<String>) -> Result<()> {
         // dump inode info to bootstrap
-        self.inode.store(&mut f_bootstrap)?;
+        self.inode.store(f_bootstrap)?;
 
         // dump inode xattr to bootstrap
-        self.xattr_chunks.store(&mut f_bootstrap)?;
+        self.xattr_chunks.store(f_bootstrap)?;
 
         // dump chunk info to bootstrap
         for chunk in &mut self.chunks {
             if let Some(blob_id) = &blob_id {
                 chunk.blobid = blob_id.to_owned();
             }
-            chunk.store(&mut f_bootstrap)?;
+            chunk.store(f_bootstrap)?;
         }
 
         // or dump symlink chunk info to bootstrap
         for chunk in &self.link_chunks {
-            chunk.store(&mut f_bootstrap)?;
+            chunk.store(f_bootstrap)?;
         }
 
         Ok(())

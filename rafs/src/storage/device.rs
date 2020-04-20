@@ -15,7 +15,7 @@ use crate::storage::backend::*;
 
 use utils;
 
-static ZEROS: &'static [u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
+static ZEROS: &[u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
 
 // A rafs storage device
 pub struct RafsDevice {
@@ -81,7 +81,7 @@ impl<'a> RafsBioDevice<'a> {
     fn new(bio: &'a RafsBio<'a>, b: &'a RafsDevice) -> io::Result<Self> {
         // FIXME: make sure bio is valid
         Ok(RafsBioDevice {
-            bio: bio,
+            bio,
             dev: b,
             buf: Vec::new(),
         })
@@ -105,7 +105,7 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
     }
 
     fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
-        if self.buf.len() == 0 {
+        if self.buf.is_empty() {
             let mut buf = Vec::new();
             let len = self.dev.b.read(
                 &self.bio.blkinfo.blob_id,
@@ -215,9 +215,9 @@ impl<'a> RafsBio<'a> {
     pub fn new(b: &'a RafsBlk, offset: u32, size: usize, blksize: u32) -> Self {
         RafsBio {
             blkinfo: b,
-            offset: offset,
-            size: size,
-            blksize: blksize,
+            offset,
+            size,
+            blksize,
         }
     }
 }

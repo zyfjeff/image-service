@@ -63,7 +63,7 @@ impl OSS {
         let data = data.join("\n");
         let mut mac = Hmac::new(Sha1::new(), self.access_key_secret.as_bytes());
         mac.input(data.as_bytes());
-        let signature = format!("{}", base64::encode(mac.result().code()));
+        let signature = base64::encode(mac.result().code());
 
         let authorization = format!("OSS {}:{}", self.access_key_id, signature);
 
@@ -82,18 +82,20 @@ impl OSS {
     }
 
     fn resource(&self, object_key: &str, query_str: &str) -> String {
-        let mut prefix = String::new();
-        if self.bucket_name != "" {
-            prefix = format!("/{}", self.bucket_name);
-        }
+        let prefix = if self.bucket_name != "" {
+            format!("/{}", self.bucket_name)
+        } else {
+            String::new()
+        };
         format!("{}/{}{}", prefix, object_key, query_str)
     }
 
     fn url(&self, object_key: &str, query: &[&str]) -> Result<(String, String)> {
-        let mut host_prefix = String::new();
-        if self.bucket_name != "" {
-            host_prefix = format!("{}.", self.bucket_name);
-        }
+        let host_prefix = if self.bucket_name != "" {
+            format!("{}.", self.bucket_name)
+        } else {
+            String::new()
+        };
 
         let url = format!("https://{}{}", host_prefix, self.endpoint);
         let mut url = Url::parse(url.as_str()).map_err(ReqErr::inv_data)?;
@@ -101,10 +103,11 @@ impl OSS {
             .map_err(ReqErr::inv_data)?
             .push(object_key);
 
-        let mut query_str = String::new();
-        if query.len() > 0 {
-            query_str = format!("?{}", query.join("&"));
-        }
+        let query_str = if !query.is_empty() {
+            format!("?{}", query.join("&"))
+        } else {
+            String::new()
+        };
 
         let resource = self.resource(object_key, query_str.as_str());
         let url = format!("{}{}", url.as_str(), query_str);
@@ -118,12 +121,8 @@ impl OSS {
         let (resource, url) = self.url("", query)?;
         let headers = self.sign(method, HeaderMap::new(), resource.as_str())?;
 
-        self.request.call::<&[u8]>(
-            method,
-            url.as_str(),
-            ReqBody::Buf("".as_bytes().to_vec()),
-            headers,
-        )?;
+        self.request
+            .call::<&[u8]>(method, url.as_str(), ReqBody::Buf(b"".to_vec()), headers)?;
 
         Ok(())
     }
@@ -143,16 +142,16 @@ impl BlobBackend for OSS {
     fn init(&mut self, config: HashMap<String, String>) -> Result<()> {
         let endpoint = config
             .get("endpoint")
-            .ok_or(ReqErr::inv_input("endpoint required"))?;
+            .ok_or_else(|| ReqErr::inv_input("endpoint required"))?;
         let access_key_id = config
             .get("access_key_id")
-            .ok_or(ReqErr::inv_input("access_key_id required"))?;
+            .ok_or_else(|| ReqErr::inv_input("access_key_id required"))?;
         let access_key_secret = config
             .get("access_key_secret")
-            .ok_or(ReqErr::inv_input("access_key_secret required"))?;
+            .ok_or_else(|| ReqErr::inv_input("access_key_secret required"))?;
         let bucket_name = config
             .get("bucket_name")
-            .ok_or(ReqErr::inv_input("bucket_name required"))?;
+            .ok_or_else(|| ReqErr::inv_input("bucket_name required"))?;
 
         self.endpoint = (*endpoint).to_owned();
         self.access_key_id = (*access_key_id).to_owned();
@@ -178,12 +177,7 @@ impl BlobBackend for OSS {
 
         let mut resp = self
             .request
-            .call::<&[u8]>(
-                method,
-                url.as_str(),
-                ReqBody::Buf("".as_bytes().to_vec()),
-                headers,
-            )
+            .call::<&[u8]>(method, url.as_str(), ReqBody::Buf(b"".to_vec()), headers)
             .or_else(|e| {
                 error!("oss req failed {:?}", e);
                 Err(e)
@@ -198,7 +192,7 @@ impl BlobBackend for OSS {
     }
 
     /// append data to oss object
-    fn write(&self, blob_id: &str, buf: &Vec<u8>, offset: u64) -> Result<usize> {
+    fn write(&self, blob_id: &str, buf: &[u8], offset: u64) -> Result<usize> {
         let method = "POST";
         let position = format!("position={}", offset);
         let query = &["append", position.as_str()];

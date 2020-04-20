@@ -29,7 +29,7 @@ pub const RAFS_INODE_INFO_SIZE: usize = 512;
 pub const RAFS_CHUNK_INFO_SIZE: usize = 128;
 
 pub const DEFAULT_RAFS_BLOCK_SIZE: usize = 1024 * 1024;
-pub const RAFS_SUPER_MAGIC: u32 = 0x52414653;
+pub const RAFS_SUPER_MAGIC: u32 = 0x5241_4653;
 
 const RAFS_XATTR_ALIGNMENT: usize = 8;
 
@@ -130,7 +130,7 @@ fn read_string(input: &mut &[u8], count: usize) -> Result<String> {
     *input = rest;
     match str::from_utf8(&buf) {
         Ok(s) => {
-            let s: Vec<&str> = s.split_terminator("\0").collect();
+            let s: Vec<&str> = s.split_terminator('\0').collect();
             Ok(s[0].to_string())
         }
         Err(_) => Err(Error::from_raw_os_error(libc::EINVAL)),
@@ -202,7 +202,7 @@ impl RafsLayoutLoadStore for RafsInodeInfo {
         count += w.write(&u64::to_le_bytes(self.i_ctime))?;
         count += w.write(&u64::to_le_bytes(self.i_flags))?;
         count += w.write(&u64::to_le_bytes(self.i_chunk_cnt))?;
-        w.write(&vec![0; RAFS_INODE_INFO_SIZE - count])?;
+        w.write_all(&vec![0; RAFS_INODE_INFO_SIZE - count])?;
         trace!("written inode: {}", &self);
         Ok(RAFS_INODE_INFO_SIZE)
     }
@@ -280,7 +280,7 @@ impl RafsLayoutLoadStore for RafsSuperBlockInfo {
         count += w.write(&u32::to_le_bytes(self.s_block_size))?;
         count += w.write(&u32::to_le_bytes(self.s_chunkinfo_size))?;
         count += w.write(&u32::to_le_bytes(self.s_magic))?;
-        w.write(&vec![0; RAFS_SUPERBLOCK_SIZE - count])?;
+        w.write_all(&vec![0; RAFS_SUPERBLOCK_SIZE - count])?;
         trace!("written superblock: {}", &self);
         Ok(RAFS_SUPERBLOCK_SIZE)
     }
@@ -340,17 +340,17 @@ impl RafsLayoutLoadStore for RafsChunkInfo {
     }
 
     fn store<W: Write>(&self, mut w: W) -> Result<usize> {
-        w.write(&self.blockid.data[..])?;
+        w.write_all(&self.blockid.data[..])?;
 
         let blobid = self.blobid.as_bytes();
         let blobid_padding = vec![0; RAFS_BLOB_ID_MAX_LENGTH - blobid.len()];
-        w.write(blobid)?;
-        w.write(blobid_padding.as_slice())?;
+        w.write_all(blobid)?;
+        w.write_all(blobid_padding.as_slice())?;
 
-        w.write(&u64::to_le_bytes(self.file_offset))?;
-        w.write(&u64::to_le_bytes(self.blob_offset))?;
-        w.write(&u32::to_le_bytes(self.compress_size))?;
-        w.write(&u32::to_le_bytes(self.reserved))?; // padding
+        w.write_all(&u64::to_le_bytes(self.file_offset))?;
+        w.write_all(&u64::to_le_bytes(self.blob_offset))?;
+        w.write_all(&u32::to_le_bytes(self.compress_size))?;
+        w.write_all(&u32::to_le_bytes(self.reserved))?; // padding
         trace!("written chunk: {}", &self);
         Ok(RAFS_CHUNK_INFO_SIZE)
     }
@@ -384,7 +384,7 @@ impl RafsLayoutLoadStore for RafsLinkDataInfo {
 
     fn store<W: Write>(&self, mut w: W) -> Result<usize> {
         let count = w.write(self.target.as_bytes())?;
-        w.write(&vec![0; self.ondisk_size - count])?;
+        w.write_all(&vec![0; self.ondisk_size - count])?;
         Ok(self.ondisk_size)
     }
 }
@@ -488,13 +488,13 @@ impl RafsLayoutLoadStore for RafsInodeXattrInfos {
 
         let mut buf: Vec<u8> = Vec::new();
 
-        buf.write(&u32::to_le_bytes(self.count as u32))?;
+        buf.write_all(&u32::to_le_bytes(self.count as u32))?;
         for (key, value) in self.data.iter() {
-            buf.write(&u32::to_le_bytes(key.len() as u32))?;
-            buf.write(key.as_bytes())?;
-            buf.write(&u32::to_le_bytes(value.len() as u32))?;
-            if value.len() > 0 {
-                buf.write(&value)?;
+            buf.write_all(&u32::to_le_bytes(key.len() as u32))?;
+            buf.write_all(key.as_bytes())?;
+            buf.write_all(&u32::to_le_bytes(value.len() as u32))?;
+            if !value.is_empty() {
+                buf.write_all(&value)?;
             }
         }
 
@@ -505,7 +505,7 @@ impl RafsLayoutLoadStore for RafsInodeXattrInfos {
 
         let mut count = w.write(&u32::to_le_bytes(ondisk_size as u32))?;
         count += w.write(&buf)?;
-        w.write(&vec![0; ondisk_size - count])?;
+        w.write_all(&vec![0; ondisk_size - count])?;
 
         info!("written size {} xattr {:?}", ondisk_size, self);
         Ok(ondisk_size)

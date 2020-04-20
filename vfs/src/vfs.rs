@@ -93,6 +93,12 @@ pub struct Vfs<F: FileSystem> {
     opts: RwLock<VfsOptions>,
 }
 
+impl<F: FileSystem> Default for Vfs<F> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<F: FileSystem> Vfs<F> {
     pub fn new() -> Self {
         let vfs = Vfs {
@@ -169,13 +175,12 @@ impl<F: FileSystem> Vfs<F> {
             Ok(()) => ino,
             Err((_, _)) => {
                 // conflicts, find out the existing one
-                ino = inodes
+                ino = *inodes
                     .get_by_right(&InodeData {
                         super_index: index,
                         ino: inode,
                     })
-                    .unwrap()
-                    .clone();
+                    .unwrap();
                 ino
             }
         };
@@ -193,8 +198,8 @@ impl<F: FileSystem> Vfs<F> {
             .read()
             .unwrap()
             .get_by_left(&inode)
-            .map(|d| d.clone())
-            .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+            .copied()
+            .ok_or_else(|| Error::from_raw_os_error(libc::ENOENT))?;
 
         if idata.is_pseudo() {
             Ok((Left(&self.root), idata))
@@ -205,7 +210,7 @@ impl<F: FileSystem> Vfs<F> {
                 .unwrap()
                 .get(&idata.super_index)
                 .map(Arc::clone)
-                .ok_or(Error::from_raw_os_error(libc::ENOENT))?;
+                .ok_or_else(|| Error::from_raw_os_error(libc::ENOENT))?;
             Ok((Right(fs), idata))
         }
     }
@@ -216,10 +221,9 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
     type Handle = Handle;
 
     fn init(&self, opts: FsOptions) -> Result<FsOptions> {
-        self.opts.write().unwrap().no_open =
-            (opts & FsOptions::ZERO_MESSAGE_OPEN).is_empty() == false;
+        self.opts.write().unwrap().no_open = !(opts & FsOptions::ZERO_MESSAGE_OPEN).is_empty();
         self.opts.write().unwrap().no_opendir =
-            (opts & FsOptions::ZERO_MESSAGE_OPENDIR).is_empty() == false;
+            !(opts & FsOptions::ZERO_MESSAGE_OPENDIR).is_empty();
         self.opts.write().unwrap().in_opts = opts;
         Ok(self.opts.read().unwrap().out_opts)
     }
@@ -249,7 +253,7 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
                     }
                 };
                 // cross mountpoint, return mount root entry
-                entry = mnt.root_entry.clone();
+                entry = mnt.root_entry;
                 entry.inode = self.hash_inode(mnt.super_index, mnt.ino)?;
                 trace!(
                     "vfs lookup cross mountpoint, return new mount index {} inode {} fuse inode {}",
@@ -693,7 +697,7 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
 
                     // cross mountpoint, return mount root entry
                     dir_entry.ino = self.hash_inode(mnt.super_index, mnt.ino)?;
-                    entry = mnt.root_entry.clone();
+                    entry = mnt.root_entry;
                     add_entry(dir_entry, entry)
                 },
             ),

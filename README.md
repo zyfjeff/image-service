@@ -1,7 +1,11 @@
 # nydus-rs
 A container image acceleration tool.
 
-# Howto run it?
+# Build binary
+
+`make` or `make release`
+
+# Run nydusd
 
 ```
 ./nydusd --config config.json --metadata bootstrap --sock vhost-user-fs.sock

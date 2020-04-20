@@ -15,7 +15,7 @@ const HEADER_CONTENT_TYPE: &str = "Content-Type";
 const HEADER_LOCATION: &str = "LOCATION";
 const HEADER_OCTET_STREAM: &str = "application/octet-stream";
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Registry {
     request: Request,
     host: String,
@@ -36,10 +36,11 @@ impl Registry {
     }
 
     fn url(&self, path: &str, query: &[&str]) -> Result<String> {
-        let mut query_str = String::new();
-        if query.len() > 0 {
-            query_str = format!("?{}", query.join("&"));
-        }
+        let query_str = if !query.is_empty() {
+            format!("?{}", query.join("&"))
+        } else {
+            String::new()
+        };
 
         let url = format!("https://{}", self.host.as_str());
         let url = Url::parse(url.as_str()).map_err(ReqErr::inv_data)?;
@@ -57,7 +58,7 @@ impl Registry {
         let resp = self.request.call::<&[u8]>(
             method,
             url.as_str(),
-            ReqBody::Buf("".as_bytes().to_vec()),
+            ReqBody::Buf(b"".to_vec()),
             HeaderMap::new(),
         )?;
 
@@ -80,10 +81,10 @@ impl BlobBackend for Registry {
     fn init(&mut self, config: HashMap<String, String>) -> Result<()> {
         let host = config
             .get("host")
-            .ok_or(ReqErr::inv_input("host required"))?;
+            .ok_or_else(|| ReqErr::inv_input("host required"))?;
         let repo = config
             .get("repo")
-            .ok_or(ReqErr::inv_input("repo required"))?;
+            .ok_or_else(|| ReqErr::inv_input("repo required"))?;
 
         self.host = (*host).to_owned();
         self.repo = (*repo).to_owned();
@@ -104,12 +105,7 @@ impl BlobBackend for Registry {
 
         let mut resp = self
             .request
-            .call::<&[u8]>(
-                method,
-                url.as_str(),
-                ReqBody::Buf("".as_bytes().to_vec()),
-                headers,
-            )
+            .call::<&[u8]>(method, url.as_str(), ReqBody::Buf(b"".to_vec()), headers)
             .or_else(|e| {
                 error!("registry req failed {:?}", e);
                 Err(e)
@@ -123,7 +119,7 @@ impl BlobBackend for Registry {
             .map(|size| size as usize)
     }
 
-    fn write(&self, _blob_id: &str, _buf: &Vec<u8>, _offset: u64) -> Result<usize> {
+    fn write(&self, _blob_id: &str, _buf: &[u8], _offset: u64) -> Result<usize> {
         Ok(_buf.len())
     }
 

@@ -51,7 +51,7 @@ pub trait BlobBackend {
     fn read(&self, blobid: &str, buf: &mut Vec<u8>, offset: u64, count: usize) -> Result<usize>;
 
     // Write a range of data to blob from the provided slice
-    fn write(&self, blobid: &str, buf: &Vec<u8>, offset: u64) -> Result<usize>;
+    fn write(&self, blobid: &str, buf: &[u8], offset: u64) -> Result<usize>;
 
     // Close a backend
     fn close(&mut self);

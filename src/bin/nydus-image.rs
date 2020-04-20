@@ -122,12 +122,11 @@ fn main() -> Result<()> {
 
         let temp_blob_file = Temp::new_file().unwrap();
 
-        let real_blob_path;
-        if blob_path.is_none() {
-            real_blob_path = temp_blob_file.to_str().unwrap();
+        let real_blob_path = if let Some(blob_path) = blob_path {
+            blob_path
         } else {
-            real_blob_path = blob_path.unwrap();
-        }
+            temp_blob_file.to_str().unwrap()
+        };
 
         let mut parent_bootstrap = String::new();
         if let Some(_parent_bootstrap) = matches.value_of("parent_bootstrap") {

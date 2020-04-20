@@ -167,10 +167,10 @@ impl ApiServer {
             .map_err(Error::Epoll)?;
 
         Ok(ApiServer {
-            id: id,
-            version: version,
-            epoll: epoll,
-            api_evt: api_evt,
+            id,
+            version,
+            epoll,
+            api_evt,
         })
     }
 
