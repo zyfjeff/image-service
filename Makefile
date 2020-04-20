@@ -9,5 +9,5 @@ pre-release:
 	cargo build --release
 
 post-check:
-	cargo clippy && \
-	cargo fmt
+	cargo clippy
+	cargo fmt -- --check
