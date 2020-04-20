@@ -314,7 +314,7 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserFsBackend<F> {
             self.used_descs.push((head_index, total as u32));
         }
 
-        if self.used_descs.len() > 0 {
+        if !self.used_descs.is_empty() {
             for (desc_index, data_sz) in &self.used_descs {
                 trace!(
                     "used desc index {} bytes {} total_used {}",
