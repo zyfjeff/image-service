@@ -516,9 +516,7 @@ impl FileSystem for Rafs {
         )
     }
 
-    fn destroy(&self) {
-        self.sb.s_inodes.write().unwrap().clear();
-    }
+    fn destroy(&self) {}
 
     fn lookup(&self, ctx: Context, parent: u64, name: &CStr) -> Result<Entry> {
         let inodes = self.sb.s_inodes.read().unwrap();

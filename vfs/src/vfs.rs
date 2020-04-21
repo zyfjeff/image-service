@@ -229,9 +229,23 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
     }
 
     fn destroy(&self) {
-        self.inodes.write().unwrap().clear();
-        self.superblocks.write().unwrap().clear();
-        self.root.destroy();
+        let inodes: Vec<u64> = self
+            .inodes
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|(_, &idata)| idata.super_index != PSEUDO_FS_SUPER && idata.ino != ROOT_ID)
+            .map(|(&a, _)| a)
+            .collect();
+        let mut vfsinodes = self.inodes.write().unwrap();
+        for inode in inodes.iter() {
+            vfsinodes.remove_by_left(inode);
+        }
+        self.superblocks
+            .read()
+            .unwrap()
+            .iter()
+            .for_each(|(_, f)| f.destroy());
     }
 
     fn lookup(&self, ctx: Context, parent: Inode, name: &CStr) -> Result<Entry> {
