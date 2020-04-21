@@ -51,6 +51,21 @@ registry backend:
 }
 ```
 
+localfs backend:
+```
+{
+  "device_config": {
+    "backend": {
+      "type": "localfs",
+      "config": {
+        "dir": "/path/to/blobs/"
+      }
+    },
+    "cache": {}
+  }
+}
+```
+
 To mount a bootstrap via api, first launch nydusd without a bootstrap:
 ```
 ./nydusd --apisock api.sock --config config.json --sock vhost-user-fs.sock
@@ -63,7 +78,6 @@ curl --unix-socket api.sock \
      -H "Content-Type: application/json" \
      -d "{\"source\":\"<path-to-bootstrap>\",\"fstype\":\"rafs\",\"mountpoint\":\"/foo/bar\"}"
 ```
-
 
 To start a qemu process, run something like:
 ```

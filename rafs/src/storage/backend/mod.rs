@@ -15,6 +15,8 @@ pub mod oss;
 pub mod registry;
 
 use std::io::{Read, Result};
+#[allow(dead_code)]
+pub mod localfs;
 
 // Rafs blob backend API
 pub trait BlobBackend {

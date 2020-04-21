@@ -44,6 +44,10 @@ pub fn new_backend(config: &BackendConfig) -> Result<Box<dyn BlobBackend + Send 
             Ok(Box::new(registry::new(&config.backend_config)?)
                 as Box<dyn BlobBackend + Send + Sync>)
         }
+        "localfs" => {
+            Ok(Box::new(localfs::new(&config.backend_config)?)
+                as Box<dyn BlobBackend + Send + Sync>)
+        }
         _ => {
             error!("unsupported backend type {}", config.backend_type);
             Err(Error::from_raw_os_error(libc::EINVAL))
@@ -70,6 +74,10 @@ pub fn new_uploader(config: &BackendConfig) -> Result<Box<dyn BlobBackendUploade
         }
         "registry" => {
             let backend = registry::new(&config.backend_config)?;
+            Ok(Box::new(backend) as Box<dyn BlobBackendUploader<Reader = File>>)
+        }
+        "localfs" => {
+            let backend = localfs::new(&config.backend_config)?;
             Ok(Box::new(backend) as Box<dyn BlobBackendUploader<Reader = File>>)
         }
         _ => {

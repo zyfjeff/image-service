@@ -23,7 +23,7 @@ cargo build --release
 # $BOOTSTRAP_PATH: bootstrap file path
 # $PARENT_BOOTSTRAP_PATH: parent bootstrap file path, optional
 # $SOURCE: rootfs source directory
-# $BACKEND_TYPE: oss|registry
+# $BACKEND_TYPE: oss|registry|localfs
 # $BACKEND_CONFIG: JSON string
 
 ./target/release/nydus-image create \
@@ -33,5 +33,15 @@ cargo build --release
             --parent_bootstrap $PARENT_BOOTSTRAP_PATH \
             --backend_type $BACKEND_TYPE \
             --backend_config $BACKEND_CONFIG \
+            $SOURCE
+```
+
+For `localfs` backend, it's much simpler as below:
+
+```shell
+./target/release/nydus-image create \
+            --bootstrap $BOOTSTRAP_PATH \
+            --backend_type localfs \
+            --backend_config "{\"dir\":\"/path/to/blobs/\"}" \
             $SOURCE
 ```
