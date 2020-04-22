@@ -75,6 +75,8 @@ impl Default for VfsOptions {
                 | FsOptions::ZERO_MESSAGE_OPEN
                 | FsOptions::ATOMIC_O_TRUNC
                 | FsOptions::CACHE_SYMLINKS
+                | FsOptions::DO_READDIRPLUS
+                | FsOptions::READDIRPLUS_AUTO
                 | FsOptions::ZERO_MESSAGE_OPENDIR,
         }
     }
