@@ -1,13 +1,12 @@
-build: pre-build post-check
-
-release: pre-release post-check
-
-pre-build:
+build:
 	cargo build
-
-pre-release:
-	cargo build --release
-
-post-check:
 	cargo clippy
 	cargo fmt -- --check
+
+release:
+	cargo build --release
+	cargo clippy
+	cargo fmt -- --check
+
+test: release
+	RUST_BACKTRACE=1 cargo test -- --nocapture
