@@ -328,7 +328,12 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
     fn symlink(&self, ctx: Context, linkname: &CStr, parent: u64, name: &CStr) -> Result<Entry> {
         match self.get_real_rootfs(parent)? {
             (Left(fs), idata) => fs.symlink(ctx, linkname, idata.ino, name),
-            (Right(fs), idata) => fs.symlink(ctx, linkname, idata.ino.into(), name),
+            (Right(fs), idata) => fs
+                .symlink(ctx, linkname, idata.ino.into(), name)
+                .map(|mut e| {
+                    e.inode = self.hash_inode(idata.super_index, e.inode).unwrap();
+                    e
+                }),
         }
     }
 
@@ -343,7 +348,12 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
     ) -> Result<Entry> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.mknod(ctx, idata.ino, name, mode, rdev, umask),
-            (Right(fs), idata) => fs.mknod(ctx, idata.ino.into(), name, mode, rdev, umask),
+            (Right(fs), idata) => fs
+                .mknod(ctx, idata.ino.into(), name, mode, rdev, umask)
+                .map(|mut e| {
+                    e.inode = self.hash_inode(idata.super_index, e.inode).unwrap();
+                    e
+                }),
         }
     }
 
@@ -357,7 +367,13 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
     ) -> Result<Entry> {
         match self.get_real_rootfs(parent)? {
             (Left(fs), idata) => fs.mkdir(ctx, idata.ino, name, mode, umask),
-            (Right(fs), idata) => fs.mkdir(ctx, idata.ino.into(), name, mode, umask),
+            (Right(fs), idata) => {
+                fs.mkdir(ctx, idata.ino.into(), name, mode, umask)
+                    .map(|mut e| {
+                        e.inode = self.hash_inode(idata.super_index, e.inode).unwrap();
+                        e
+                    })
+            }
         }
     }
 
@@ -414,7 +430,12 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
 
         match root {
             Left(fs) => fs.link(ctx, idata_old.ino, idata_new.ino, newname),
-            Right(fs) => fs.link(ctx, idata_old.ino.into(), idata_new.ino.into(), newname),
+            Right(fs) => fs
+                .link(ctx, idata_old.ino.into(), idata_new.ino.into(), newname)
+                .map(|mut e| {
+                    e.inode = self.hash_inode(idata_new.super_index, e.inode).unwrap();
+                    e
+                }),
         }
     }
 
@@ -444,7 +465,10 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
             (Left(fs), idata) => fs.create(ctx, idata.ino, name, mode, flags, umask),
             (Right(fs), idata) => fs
                 .create(ctx, idata.ino.into(), name, mode, flags, umask)
-                .map(|(a, b, c)| (a, b.map(|h| h.into()), c)),
+                .map(|(mut a, b, c)| {
+                    a.inode = self.hash_inode(idata.super_index, a.inode).unwrap();
+                    (a, b.map(|h| h.into()), c)
+                }),
         }
     }
 
