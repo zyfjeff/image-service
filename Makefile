@@ -8,5 +8,5 @@ release:
 	cargo clippy
 	cargo fmt -- --check
 
-test: release
+test: build
 	RUST_BACKTRACE=1 cargo test -- --nocapture
