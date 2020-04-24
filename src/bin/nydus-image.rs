@@ -161,6 +161,9 @@ fn main() -> Result<()> {
                     backend_type: backend_type.to_owned(),
                     backend_config: serde_json::from_str(backend_config)
                         .expect("failed to parse backend_config json"),
+                    // cache config useless here
+                    cache_type: "".to_string(),
+                    cache_config: Default::default(),
                 };
                 let blob_backend = factory::new_uploader(&config).unwrap();
                 upload_blob(blob_backend, blob_id.as_str(), real_blob_path)?;

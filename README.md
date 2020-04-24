@@ -13,7 +13,7 @@ A container image acceleration tool.
 
 where the `config.json` is of format like:
 
-oss backend:
+oss backend(blob cache):
 ```
 {
   "device_config": {
@@ -23,6 +23,10 @@ oss backend:
       "access_key_id": "",
       "access_key_secret": "",
       "bucket_name": ""
+    }
+    "cache_type": "blobcache",
+    "cache_config": {
+      "work_dir": "/cache"
     }
   }
 }

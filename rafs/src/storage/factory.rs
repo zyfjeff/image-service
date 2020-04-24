@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 use crate::storage::backend::*;
+use crate::storage::cache::*;
 
 use serde::Deserialize;
 
@@ -15,6 +16,8 @@ use std::io::{Error, Result};
 pub struct Config {
     pub backend_type: String,
     pub backend_config: HashMap<String, String>,
+    pub cache_type: String,
+    pub cache_config: HashMap<String, String>,
 }
 
 pub fn new_backend(config: &Config) -> Result<Box<dyn BlobBackend + Send + Sync>> {
@@ -30,6 +33,15 @@ pub fn new_backend(config: &Config) -> Result<Box<dyn BlobBackend + Send + Sync>
             error!("unsupported backend type {}", config.backend_type);
             Err(Error::from_raw_os_error(libc::EINVAL))
         }
+    }
+}
+
+pub fn new_rw_layer(config: &Config) -> Result<Box<dyn RafsCache + Send + Sync>> {
+    let backend = new_backend(config)?;
+    match config.cache_type.as_str() {
+        "blobcache" => Ok(Box::new(blobcache::new(&config.cache_config, backend)?)
+            as Box<dyn RafsCache + Send + Sync>),
+        _ => Ok(Box::new(dummycache::new(backend)?) as Box<dyn RafsCache + Send + Sync>),
     }
 }
 

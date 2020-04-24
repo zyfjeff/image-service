@@ -389,7 +389,7 @@ impl RafsLayoutLoadStore for RafsLinkDataInfo {
     }
 }
 
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug, Clone, Eq, PartialEq, Hash)]
 pub struct RafsDigest {
     pub data: [u8; RAFS_SHA256_LENGTH],
 }

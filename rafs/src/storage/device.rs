@@ -11,27 +11,26 @@ use fuse_rs::transport::FileReadWriteVolatile;
 use vm_memory::VolatileSlice;
 
 use crate::fs::RafsBlk;
-use crate::storage::{backend, factory};
+use crate::storage::cache::RafsCache;
+use crate::storage::factory;
 
 static ZEROS: &[u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
 
 // A rafs storage device
 pub struct RafsDevice {
-    backend: Box<dyn backend::BlobBackend + Send + Sync>,
+    // device -> cache -> backend
+    rw_layer: Box<dyn RafsCache + Send + Sync>,
 }
 
 impl RafsDevice {
-    pub fn new(c: factory::Config) -> Self {
-        let blob_backend = factory::new_backend(&c).unwrap();
+    pub fn new(config: factory::Config) -> RafsDevice {
         RafsDevice {
-            backend: blob_backend,
+            rw_layer: factory::new_rw_layer(&config).unwrap(),
         }
     }
-}
 
-impl RafsDevice {
     pub fn close(&mut self) -> io::Result<()> {
-        self.backend.close();
+        self.rw_layer.release();
         Ok(())
     }
 
@@ -101,15 +100,12 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
 
     fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
         if self.buf.is_empty() {
-            let mut buf = Vec::new();
-            let len = self.dev.backend.read(
-                &self.bio.blkinfo.blob_id,
-                &mut buf,
-                self.bio.blkinfo.blob_offset,
-                self.bio.blkinfo.compr_size,
-            )?;
-            debug_assert_eq!(len, buf.len());
-            self.buf = utils::decompress(&buf, self.bio.blksize)?;
+            let rbuf = self.dev.rw_layer.read(&self.bio.blkinfo.clone())?;
+            if !self.dev.rw_layer.compressed() {
+                self.buf = rbuf; // move
+            } else {
+                self.buf = utils::decompress(&rbuf, self.bio.blksize)?;
+            }
         }
 
         let count = cmp::min(
@@ -148,13 +144,15 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
         Ok(count)
     }
 
-    fn write_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
+    fn write_at_volatile(&mut self, slice: VolatileSlice, _offset: u64) -> Result<usize, Error> {
         let mut buf = vec![0u8; slice.len()];
         slice.copy_to(&mut buf);
-        let compressed = utils::compress(&buf)?;
-        self.dev
-            .backend
-            .write(&self.bio.blkinfo.blob_id, &compressed, offset)?;
+        let wbuf = if self.dev.rw_layer.compressed() {
+            utils::compress(&buf)?
+        } else {
+            buf
+        };
+        self.dev.rw_layer.write(&self.bio.blkinfo.clone(), &wbuf)?;
         // Need to return slice length because that's what upper layer asks to write
         Ok(slice.len())
     }
