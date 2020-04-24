@@ -405,6 +405,7 @@ fn main() -> Result<()> {
             Arg::with_name("sock")
                 .long("sock")
                 .help("vhost-user socket path")
+                .required(true)
                 .takes_value(true)
                 .min_values(1),
         )
@@ -413,6 +414,7 @@ fn main() -> Result<()> {
                 .long("config")
                 .help("config file")
                 .takes_value(true)
+                .required(true)
                 .min_values(1),
         )
         .arg(
