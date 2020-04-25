@@ -456,6 +456,7 @@ fn main() -> Result<()> {
             };
             let mut vfs_opts = VfsOptions::default();
             vfs_opts.no_open = false;
+            vfs_opts.no_writeback = true;
 
             let passthrough_fs = PassthroughFs::new(fs_cfg).unwrap();
             let fs_backend = Arc::new(RwLock::new(

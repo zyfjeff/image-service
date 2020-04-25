@@ -54,6 +54,7 @@ struct MountPointData {
 pub struct VfsOptions {
     pub no_open: bool,
     pub no_opendir: bool,
+    pub no_writeback: bool,
     in_opts: FsOptions,
     out_opts: FsOptions,
 }
@@ -63,6 +64,7 @@ impl Default for VfsOptions {
         VfsOptions {
             no_open: true,
             no_opendir: true,
+            no_writeback: false,
             in_opts: FsOptions::ASYNC_READ,
             out_opts: FsOptions::ASYNC_READ
                 | FsOptions::PARALLEL_DIROPS
@@ -227,6 +229,13 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
         }
         self.opts.write().unwrap().no_opendir =
             !(opts & FsOptions::ZERO_MESSAGE_OPENDIR).is_empty();
+        if self.opts.read().unwrap().no_writeback {
+            self.opts
+                .write()
+                .unwrap()
+                .out_opts
+                .remove(FsOptions::WRITEBACK_CACHE);
+        }
         self.opts.write().unwrap().in_opts = opts;
         Ok(self.opts.read().unwrap().out_opts)
     }
