@@ -224,7 +224,7 @@ impl Node {
             self.inode.i_flags |= INO_FLAG_XATTR;
             self.xattr_chunks.count = count;
             trace!(
-                "inode {} has xattr {:?}",
+                "\tinode {} has xattr {:?}",
                 self.inode.name,
                 self.xattr_chunks
             );

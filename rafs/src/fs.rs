@@ -392,6 +392,13 @@ impl Rafs {
 
     fn unpack_dir<R: Read>(&self, dir: &mut RafsInode, r: &mut R) -> Result<Option<RafsInodeInfo>> {
         trace!("unpacking dir {} ino {}", &dir.i_name, dir.i_ino);
+
+        if dir.has_xattr() {
+            let mut xattr_info = RafsInodeXattrInfos::new();
+            xattr_info.load(r)?;
+            dir.i_xattr = xattr_info.into();
+        }
+
         let mut res = None;
         let mut next = None;
         loop {
