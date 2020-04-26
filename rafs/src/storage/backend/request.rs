@@ -65,10 +65,14 @@ pub struct Request {
 }
 
 impl Request {
-    pub fn new() -> Request {
-        Request {
-            client: Client::builder().timeout(None).build().unwrap(),
+    pub fn new(proxy: Option<&str>) -> Result<Request> {
+        let mut cb = Client::builder().timeout(None);
+        if let Some(proxy) = proxy {
+            cb = cb.proxy(reqwest::Proxy::all(proxy).map_err(ReqErr::inv_input)?)
         }
+        Ok(Request {
+            client: cb.build().map_err(ReqErr::inv_input)?,
+        })
     }
 
     pub fn call<R: Read + Send + 'static>(

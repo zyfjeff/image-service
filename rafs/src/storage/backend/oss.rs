@@ -15,7 +15,7 @@ use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 const HEADER_DATE: &str = "Date";
 const HEADER_AUTHORIZATION: &str = "Authorization";
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct OSS {
     request: Request,
     access_key_id: String,
@@ -127,13 +127,7 @@ impl OSS {
 }
 
 pub fn new() -> OSS {
-    OSS {
-        request: Request::new(),
-        access_key_id: String::new(),
-        access_key_secret: String::new(),
-        endpoint: String::new(),
-        bucket_name: String::new(),
-    }
+    OSS::default()
 }
 
 impl BlobBackend for OSS {
@@ -155,7 +149,11 @@ impl BlobBackend for OSS {
         self.access_key_id = (*access_key_id).to_owned();
         self.access_key_secret = (*access_key_secret).to_owned();
         self.bucket_name = (*bucket_name).to_owned();
-        self.request = Request::new();
+
+        let proxy = config.get("proxy");
+        if let Some(proxy) = proxy {
+            self.request = Request::new(Some(proxy.as_str()))?;
+        }
 
         // self.create_bucket()?;
         Ok(())

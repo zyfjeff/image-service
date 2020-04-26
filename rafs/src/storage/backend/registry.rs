@@ -25,9 +25,9 @@ pub struct Registry {
 impl Registry {
     pub fn default() -> Registry {
         Registry {
+            request: Request::default(),
             host: String::new(),
             repo: String::new(),
-            request: Request::new(),
         }
     }
 
@@ -88,6 +88,11 @@ impl BlobBackend for Registry {
 
         self.host = (*host).to_owned();
         self.repo = (*repo).to_owned();
+
+        let proxy = config.get("proxy");
+        if let Some(proxy) = proxy {
+            self.request = Request::new(Some(proxy.as_str()))?;
+        }
 
         Ok(())
     }
