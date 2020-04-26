@@ -16,8 +16,6 @@ use crypto::sha2::Sha256;
 
 use rafs::layout::*;
 
-use utils;
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum Overlay {
     LowerAddition,

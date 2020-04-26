@@ -2,9 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use base64;
 use crypto::{hmac::Hmac, mac::Mac, sha1::Sha1};
-use httpdate;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Result;

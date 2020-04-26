@@ -13,8 +13,6 @@ use vm_memory::VolatileSlice;
 use crate::fs::RafsBlk;
 use crate::storage::backend::*;
 
-use utils;
-
 static ZEROS: &[u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
 
 // A rafs storage device

@@ -4,7 +4,6 @@
 //
 // A vfs for real filesystems switching
 
-use libc;
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::io::{Error, Read, Result, Write};

@@ -13,7 +13,6 @@ extern crate log;
 
 use clap::{App, Arg, SubCommand};
 use mktemp::Temp;
-use serde_json;
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
