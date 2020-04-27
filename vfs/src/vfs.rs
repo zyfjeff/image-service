@@ -165,7 +165,7 @@ impl<F: FileSystem> Vfs<F> {
 
     // bimap insert_no_overwrite ensures hashed inode number uniqueness
     // We assume we never run out of u64 fuse inode number
-    fn hash_inode(&self, index: u64, inode: u64) -> Result<u64> {
+    fn hash_inode(&self, index: u64, inode: u64) -> u64 {
         let mut ino = self.next_inode.fetch_add(1, Ordering::Relaxed);
         let mut inodes = self.inodes.write().unwrap();
         ino = match inodes.insert_no_overwrite(
@@ -192,7 +192,7 @@ impl<F: FileSystem> Vfs<F> {
             "vfs hash inode index {} ino {} fuse ino {}",
             index, inode, ino
         );
-        Ok(ino)
+        ino
     }
 
     fn get_real_rootfs(&self, inode: u64) -> Result<(Either<&PseudoFs, Arc<F>>, InodeData)> {
@@ -274,13 +274,13 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
                 {
                     Some(mnt) => mnt,
                     None => {
-                        entry.inode = self.hash_inode(idata.super_index, entry.inode)?;
+                        entry.inode = self.hash_inode(idata.super_index, entry.inode);
                         return Ok(entry);
                     }
                 };
                 // cross mountpoint, return mount root entry
                 entry = mnt.root_entry;
-                entry.inode = self.hash_inode(mnt.super_index, mnt.ino)?;
+                entry.inode = self.hash_inode(mnt.super_index, mnt.ino);
                 trace!(
                     "vfs lookup cross mountpoint, return new mount index {} inode {} fuse inode {}",
                     mnt.super_index,
@@ -293,7 +293,7 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
                 // parent is in an underlying rootfs
                 let mut entry = fs.lookup(ctx, idata.ino.into(), name)?;
                 // lookup succees, hash it to a real fuse inode
-                entry.inode = self.hash_inode(idata.super_index, entry.inode)?;
+                entry.inode = self.hash_inode(idata.super_index, entry.inode);
                 Ok(entry)
             }
         }
@@ -340,7 +340,7 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
             (Right(fs), idata) => fs
                 .symlink(ctx, linkname, idata.ino.into(), name)
                 .map(|mut e| {
-                    e.inode = self.hash_inode(idata.super_index, e.inode).unwrap();
+                    e.inode = self.hash_inode(idata.super_index, e.inode);
                     e
                 }),
         }
@@ -360,7 +360,7 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
             (Right(fs), idata) => fs
                 .mknod(ctx, idata.ino.into(), name, mode, rdev, umask)
                 .map(|mut e| {
-                    e.inode = self.hash_inode(idata.super_index, e.inode).unwrap();
+                    e.inode = self.hash_inode(idata.super_index, e.inode);
                     e
                 }),
         }
@@ -379,7 +379,7 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
             (Right(fs), idata) => {
                 fs.mkdir(ctx, idata.ino.into(), name, mode, umask)
                     .map(|mut e| {
-                        e.inode = self.hash_inode(idata.super_index, e.inode).unwrap();
+                        e.inode = self.hash_inode(idata.super_index, e.inode);
                         e
                     })
             }
@@ -442,7 +442,7 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
             Right(fs) => fs
                 .link(ctx, idata_old.ino.into(), idata_new.ino.into(), newname)
                 .map(|mut e| {
-                    e.inode = self.hash_inode(idata_new.super_index, e.inode).unwrap();
+                    e.inode = self.hash_inode(idata_new.super_index, e.inode);
                     e
                 }),
         }
@@ -475,7 +475,7 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
             (Right(fs), idata) => fs
                 .create(ctx, idata.ino.into(), name, mode, flags, umask)
                 .map(|(mut a, b, c)| {
-                    a.inode = self.hash_inode(idata.super_index, a.inode).unwrap();
+                    a.inode = self.hash_inode(idata.super_index, a.inode);
                     (a, b.map(|h| h.into()), c)
                 }),
         }
@@ -694,13 +694,13 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
                     {
                         Some(mnt) => mnt,
                         None => {
-                            dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino)?;
+                            dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino);
                             return add_entry(dir_entry);
                         }
                     };
 
                     // cross mountpoint, return mount root entry
-                    dir_entry.ino = self.hash_inode(mnt.super_index, mnt.ino)?;
+                    dir_entry.ino = self.hash_inode(mnt.super_index, mnt.ino);
                     add_entry(dir_entry)
                 })
             }
@@ -711,7 +711,7 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
                 size,
                 offset,
                 |mut dir_entry| {
-                    dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino)?;
+                    dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino);
                     add_entry(dir_entry)
                 },
             ),
@@ -747,14 +747,14 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
                     {
                         Some(mnt) => mnt,
                         None => {
-                            dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino)?;
+                            dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino);
                             entry.inode = dir_entry.ino;
                             return add_entry(dir_entry, entry);
                         }
                     };
 
                     // cross mountpoint, return mount root entry
-                    dir_entry.ino = self.hash_inode(mnt.super_index, mnt.ino)?;
+                    dir_entry.ino = self.hash_inode(mnt.super_index, mnt.ino);
                     entry = mnt.root_entry;
                     add_entry(dir_entry, entry)
                 },
@@ -766,7 +766,7 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
                 size,
                 offset,
                 |mut dir_entry, mut entry| {
-                    dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino)?;
+                    dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino);
                     entry.inode = dir_entry.ino;
                     add_entry(dir_entry, entry)
                 },
