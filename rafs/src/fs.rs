@@ -599,26 +599,6 @@ impl FileSystem for Rafs {
         self.device.read_to(w, desc)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn write<R: Read + ZeroCopyReader>(
-        &self,
-        ctx: Context,
-        inode: u64,
-        handle: u64,
-        r: R,
-        size: u32,
-        offset: u64,
-        lock_owner: Option<u64>,
-        delayed_write: bool,
-        flags: u32,
-    ) -> Result<usize> {
-        let inodes = self.sb.s_inodes.read().unwrap();
-        let rafs_inode = inodes.get(&inode).ok_or_else(enoent)?;
-
-        let desc = rafs_inode.alloc_bio_desc(self.sb.s_block_size, size as usize, offset)?;
-        self.device.write_from(r, desc)
-    }
-
     fn release(
         &self,
         ctx: Context,
