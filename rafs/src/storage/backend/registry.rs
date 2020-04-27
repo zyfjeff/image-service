@@ -18,6 +18,7 @@ const HEADER_OCTET_STREAM: &str = "application/octet-stream";
 #[derive(Debug, Default)]
 pub struct Registry {
     request: Request,
+    scheme: String,
     host: String,
     repo: String,
 }
@@ -26,6 +27,7 @@ impl Registry {
     pub fn default() -> Registry {
         Registry {
             request: Request::default(),
+            scheme: String::new(),
             host: String::new(),
             repo: String::new(),
         }
@@ -42,7 +44,7 @@ impl Registry {
             String::new()
         };
 
-        let url = format!("https://{}", self.host.as_str());
+        let url = format!("{}://{}", self.scheme, self.host.as_str());
         let url = Url::parse(url.as_str()).map_err(ReqErr::inv_data)?;
         let path = format!("/v2/{}{}{}", self.repo, path, query_str);
         let url = url.join(path.as_str()).map_err(ReqErr::inv_input)?;
@@ -89,8 +91,13 @@ impl BlobBackend for Registry {
         self.host = (*host).to_owned();
         self.repo = (*repo).to_owned();
 
-        let proxy = config.get("proxy");
-        if let Some(proxy) = proxy {
+        if let Some(scheme) = config.get("scheme") {
+            self.scheme = (*scheme).to_owned();
+        } else {
+            self.scheme = String::from("https");
+        }
+
+        if let Some(proxy) = config.get("proxy") {
             self.request = Request::new(Some(proxy.as_str()))?;
         }
 
@@ -153,7 +160,8 @@ impl BlobBackendUploader for Registry {
             .map_err(ReqErr::inv_data)?;
 
         let url = format!(
-            "https://{}{}?{}",
+            "{}://{}{}?{}",
+            self.scheme,
             self.host,
             url.path(),
             url.query().unwrap()

@@ -20,6 +20,7 @@ pub struct OSS {
     request: Request,
     access_key_id: String,
     access_key_secret: String,
+    scheme: String,
     endpoint: String,
     bucket_name: String,
 }
@@ -95,7 +96,7 @@ impl OSS {
             String::new()
         };
 
-        let url = format!("https://{}{}", host_prefix, self.endpoint);
+        let url = format!("{}://{}{}", self.scheme, host_prefix, self.endpoint);
         let mut url = Url::parse(url.as_str()).map_err(ReqErr::inv_data)?;
         url.path_segments_mut()
             .map_err(ReqErr::inv_data)?
@@ -149,6 +150,12 @@ impl BlobBackend for OSS {
         self.access_key_id = (*access_key_id).to_owned();
         self.access_key_secret = (*access_key_secret).to_owned();
         self.bucket_name = (*bucket_name).to_owned();
+
+        if let Some(scheme) = config.get("scheme") {
+            self.scheme = (*scheme).to_owned();
+        } else {
+            self.scheme = String::from("https");
+        }
 
         let proxy = config.get("proxy");
         if let Some(proxy) = proxy {
