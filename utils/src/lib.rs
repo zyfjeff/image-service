@@ -2,9 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use std::io::Result;
-
 use lz4 as liblz4;
+use std::io::Result;
 
 /*
 #[allow(dead_code)]
@@ -60,4 +59,8 @@ pub fn compress(src: &[u8]) -> Result<Vec<u8>> {
 
 pub fn decompress(src: &[u8], blksize: u32) -> Result<Vec<u8>> {
     decompress_liblz4(src, blksize)
+}
+
+pub fn log_level_to_verbosity(level: log::LevelFilter) -> usize {
+    level as usize - 1
 }

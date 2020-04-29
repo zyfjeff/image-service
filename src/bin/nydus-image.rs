@@ -45,14 +45,6 @@ fn upload_blob(
 }
 
 fn main() -> Result<()> {
-    stderrlog::new()
-        .quiet(false)
-        .modules(vec![module_path!(), "image_builder"])
-        .verbosity(log::LevelFilter::Info as usize)
-        .timestamp(stderrlog::Timestamp::Second)
-        .init()
-        .unwrap();
-
     let cmd = App::new("nydus image builder")
         .version(crate_version!())
         .author(crate_authors!())
@@ -104,7 +96,30 @@ fn main() -> Result<()> {
                         .takes_value(true),
                 ),
         )
+        .arg(
+            Arg::with_name("log_level")
+                .long("log_level")
+                .default_value("warn")
+                .help("Specify log level: trace, debug, info, warn, error")
+                .takes_value(true)
+                .required(false)
+                .global(true),
+        )
         .get_matches();
+
+    let v = cmd
+        .value_of("log_level")
+        .unwrap()
+        .parse()
+        .unwrap_or(log::LevelFilter::Warn);
+
+    stderrlog::new()
+        .quiet(false)
+        .modules(vec![module_path!(), "image_builder"])
+        .verbosity(utils::log_level_to_verbosity(v))
+        .timestamp(stderrlog::Timestamp::Second)
+        .init()
+        .unwrap();
 
     if let Some(matches) = cmd.subcommand_matches("create") {
         let source_path = matches.value_of("SOURCE").expect("SOURCE is required");

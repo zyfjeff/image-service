@@ -1741,6 +1741,7 @@ dependencies = [
 name = "utils"
 version = "0.1.0"
 dependencies = [
+ "log 0.4.8",
  "lz4",
 ]
 
