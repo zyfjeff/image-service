@@ -11,30 +11,27 @@ use fuse_rs::transport::FileReadWriteVolatile;
 use vm_memory::VolatileSlice;
 
 use crate::fs::RafsBlk;
-use crate::storage::backend::*;
+use crate::storage::{backend, factory};
 
 static ZEROS: &[u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
 
 // A rafs storage device
 pub struct RafsDevice {
-    c: Config,
-    b: Box<dyn BlobBackend + Send + Sync>,
+    backend: Box<dyn backend::BlobBackend + Send + Sync>,
 }
 
 impl RafsDevice {
-    pub fn new(c: Config) -> Self {
-        let blob_backend = BlobBackend::map_type(c.backend_type.as_str()).unwrap();
-        RafsDevice { c, b: blob_backend }
+    pub fn new(c: factory::Config) -> Self {
+        let blob_backend = factory::new_backend(&c).unwrap();
+        RafsDevice {
+            backend: blob_backend,
+        }
     }
 }
 
 impl RafsDevice {
-    pub fn init(&mut self) -> io::Result<()> {
-        self.b.init(self.c.hashmap())
-    }
-
     pub fn close(&mut self) -> io::Result<()> {
-        self.b.close();
+        self.backend.close();
         Ok(())
     }
 
@@ -105,7 +102,7 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
     fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
         if self.buf.is_empty() {
             let mut buf = Vec::new();
-            let len = self.dev.b.read(
+            let len = self.dev.backend.read(
                 &self.bio.blkinfo.blob_id,
                 &mut buf,
                 self.bio.blkinfo.blob_offset,
@@ -156,7 +153,7 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
         slice.copy_to(&mut buf);
         let compressed = utils::compress(&buf)?;
         self.dev
-            .b
+            .backend
             .write(&self.bio.blkinfo.blob_id, &compressed, offset)?;
         // Need to return slice length because that's what upper layer asks to write
         Ok(slice.len())

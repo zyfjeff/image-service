@@ -14,15 +14,14 @@ extern crate log;
 use clap::{App, Arg, SubCommand};
 use mktemp::Temp;
 
-use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Result, Write};
 use std::os::linux::fs::MetadataExt;
 
-use rafs::storage::backend::*;
+use rafs::storage::{backend, factory};
 
 fn upload_blob(
-    backend: Box<dyn BlobBackendUploader<Reader = File>>,
+    backend: Box<dyn backend::BlobBackendUploader<Reader = File>>,
     blob_id: &str,
     blob_path: &str,
 ) -> Result<()> {
@@ -143,9 +142,12 @@ fn main() -> Result<()> {
 
         if let Some(backend_type) = matches.value_of("backend_type") {
             if let Some(backend_config) = matches.value_of("backend_config") {
-                let config: HashMap<String, String> = serde_json::from_str(backend_config)
-                    .expect("failed to parse backend_config json");
-                let blob_backend = BlobBackend::map_uploader_type(backend_type, config).unwrap();
+                let config = factory::Config {
+                    backend_type: backend_type.to_owned(),
+                    backend_config: serde_json::from_str(backend_config)
+                        .expect("failed to parse backend_config json"),
+                };
+                let blob_backend = factory::new_uploader(&config).unwrap();
                 upload_blob(blob_backend, blob_id.as_str(), real_blob_path)?;
             }
         }

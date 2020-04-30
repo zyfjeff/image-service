@@ -15,7 +15,7 @@ const HEADER_CONTENT_TYPE: &str = "Content-Type";
 const HEADER_LOCATION: &str = "LOCATION";
 const HEADER_OCTET_STREAM: &str = "application/octet-stream";
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Registry {
     request: Request,
     scheme: String,
@@ -31,10 +31,6 @@ impl Registry {
             host: String::new(),
             repo: String::new(),
         }
-    }
-
-    pub fn new() -> Registry {
-        Self::default()
     }
 
     fn url(&self, path: &str, query: &[&str]) -> Result<String> {
@@ -75,35 +71,33 @@ impl Registry {
     }
 }
 
-pub fn new() -> Registry {
-    Registry::default()
+pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Result<Registry> {
+    let host = config
+        .get("host")
+        .ok_or_else(|| ReqErr::inv_input("host required"))?;
+    let repo = config
+        .get("repo")
+        .ok_or_else(|| ReqErr::inv_input("repo required"))?;
+
+    let host = (*host).to_owned();
+    let repo = (*repo).to_owned();
+
+    let scheme = if let Some(scheme) = config.get("scheme") {
+        (*scheme).to_owned()
+    } else {
+        String::from("https")
+    };
+    let request = Request::new(config.get("proxy"))?;
+
+    Ok(Registry {
+        request,
+        scheme,
+        host,
+        repo,
+    })
 }
 
 impl BlobBackend for Registry {
-    fn init(&mut self, config: HashMap<String, String>) -> Result<()> {
-        let host = config
-            .get("host")
-            .ok_or_else(|| ReqErr::inv_input("host required"))?;
-        let repo = config
-            .get("repo")
-            .ok_or_else(|| ReqErr::inv_input("repo required"))?;
-
-        self.host = (*host).to_owned();
-        self.repo = (*repo).to_owned();
-
-        if let Some(scheme) = config.get("scheme") {
-            self.scheme = (*scheme).to_owned();
-        } else {
-            self.scheme = String::from("https");
-        }
-
-        if let Some(proxy) = config.get("proxy") {
-            self.request = Request::new(Some(proxy.as_str()))?;
-        }
-
-        Ok(())
-    }
-
     fn read(&self, blob_id: &str, buf: &mut Vec<u8>, offset: u64, count: usize) -> Result<usize> {
         let method = "GET";
 

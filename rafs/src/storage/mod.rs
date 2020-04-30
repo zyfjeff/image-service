@@ -7,3 +7,6 @@ pub mod device;
 
 #[allow(dead_code)]
 pub mod backend;
+
+#[allow(dead_code)]
+pub mod factory;

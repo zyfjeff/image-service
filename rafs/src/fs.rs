@@ -310,7 +310,7 @@ impl RafsSuper {
 
 #[derive(Clone, Default, Deserialize)]
 pub struct RafsConfig {
-    pub device_config: backend::Config,
+    pub device_config: factory::Config,
 }
 
 impl RafsConfig {
@@ -320,7 +320,7 @@ impl RafsConfig {
         }
     }
 
-    fn dev_config(&self) -> backend::Config {
+    fn dev_config(&self) -> factory::Config {
         self.device_config.clone()
     }
 }
@@ -350,7 +350,6 @@ impl Rafs {
             warn! {"Rafs already initialized"}
             return Err(Error::new(ErrorKind::AlreadyExists, "Already mounted"));
         }
-        self.device.init()?;
         self.do_import(r).or_else(|e| {
             self.sb.destroy()?;
             Err(e)

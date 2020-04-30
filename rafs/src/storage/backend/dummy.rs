@@ -32,10 +32,6 @@ pub fn new() -> Dummy {
 }
 
 impl BlobBackend for Dummy {
-    fn init(&mut self, _config: HashMap<String, String>) -> Result<()> {
-        Ok(())
-    }
-
     // Read a range of data from blob into the provided destination
     fn read(&self, _blobid: &str, buf: &mut Vec<u8>, _offset: u64, _count: usize) -> Result<usize> {
         Ok(buf.len())

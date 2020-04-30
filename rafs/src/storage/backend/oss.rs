@@ -15,7 +15,7 @@ use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 const HEADER_DATE: &str = "Date";
 const HEADER_AUTHORIZATION: &str = "Authorization";
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct OSS {
     request: Request,
     access_key_id: String,
@@ -127,45 +127,43 @@ impl OSS {
     }
 }
 
-pub fn new() -> OSS {
-    OSS::default()
+pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Result<OSS> {
+    let endpoint = config
+        .get("endpoint")
+        .ok_or_else(|| ReqErr::inv_input("endpoint required"))?;
+    let access_key_id = config
+        .get("access_key_id")
+        .ok_or_else(|| ReqErr::inv_input("access_key_id required"))?;
+    let access_key_secret = config
+        .get("access_key_secret")
+        .ok_or_else(|| ReqErr::inv_input("access_key_secret required"))?;
+    let bucket_name = config
+        .get("bucket_name")
+        .ok_or_else(|| ReqErr::inv_input("bucket_name required"))?;
+
+    let endpoint = (*endpoint).to_owned();
+    let access_key_id = (*access_key_id).to_owned();
+    let access_key_secret = (*access_key_secret).to_owned();
+    let bucket_name = (*bucket_name).to_owned();
+
+    let scheme = if let Some(scheme) = config.get("scheme") {
+        (*scheme).to_owned()
+    } else {
+        String::from("https")
+    };
+    let request = Request::new(config.get("proxy"))?;
+
+    Ok(OSS {
+        scheme,
+        endpoint,
+        access_key_id,
+        access_key_secret,
+        bucket_name,
+        request,
+    })
 }
 
 impl BlobBackend for OSS {
-    fn init(&mut self, config: HashMap<String, String>) -> Result<()> {
-        let endpoint = config
-            .get("endpoint")
-            .ok_or_else(|| ReqErr::inv_input("endpoint required"))?;
-        let access_key_id = config
-            .get("access_key_id")
-            .ok_or_else(|| ReqErr::inv_input("access_key_id required"))?;
-        let access_key_secret = config
-            .get("access_key_secret")
-            .ok_or_else(|| ReqErr::inv_input("access_key_secret required"))?;
-        let bucket_name = config
-            .get("bucket_name")
-            .ok_or_else(|| ReqErr::inv_input("bucket_name required"))?;
-
-        self.endpoint = (*endpoint).to_owned();
-        self.access_key_id = (*access_key_id).to_owned();
-        self.access_key_secret = (*access_key_secret).to_owned();
-        self.bucket_name = (*bucket_name).to_owned();
-
-        if let Some(scheme) = config.get("scheme") {
-            self.scheme = (*scheme).to_owned();
-        } else {
-            self.scheme = String::from("https");
-        }
-
-        let proxy = config.get("proxy");
-        if let Some(proxy) = proxy {
-            self.request = Request::new(Some(proxy.as_str()))?;
-        }
-
-        // self.create_bucket()?;
-        Ok(())
-    }
-
     /// read ranged data from oss object
     fn read(&self, blob_id: &str, buf: &mut Vec<u8>, offset: u64, count: usize) -> Result<usize> {
         let method = "GET";
