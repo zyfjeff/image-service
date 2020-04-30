@@ -4,6 +4,7 @@
 
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
+
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
@@ -28,12 +29,8 @@ pub struct Builder {
     f_bootstrap: File,
     /// parent bootstrap file reader
     f_parent_bootstrap: Option<File>,
-    /// record current blob offset cursor
-    blob_offset: u64,
     /// blob id (user specified or sha256(blob))
     blob_id: String,
-    /// blob sha256
-    blob_hash: Sha256,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
     inode_map: HashMap<u64, Node>,
     /// mutilple layers build: upper source nodes
@@ -77,9 +74,7 @@ impl Builder {
             f_blob,
             f_bootstrap,
             f_parent_bootstrap,
-            blob_offset: 0,
             blob_id,
-            blob_hash: Sha256::new(),
             inode_map: HashMap::new(),
             additions: Vec::new(),
             removals: HashMap::new(),
@@ -159,7 +154,6 @@ impl Builder {
             }
 
             let node = Node {
-                blob_offset: self.blob_offset,
                 root: self.root.to_owned(),
                 path: path.clone(),
                 parent,
@@ -227,6 +221,25 @@ impl Builder {
         Ok(sb)
     }
 
+    fn dump_blob(&mut self) -> Result<Sha256> {
+        let mut blob_hash = Sha256::new();
+        let mut blob_offset: u64 = 0;
+
+        for node in &mut self.additions {
+            let file_type = node.get_type();
+            if file_type != "" {
+                info!(
+                    "upper building {} {}",
+                    file_type,
+                    node.rootfs_path().to_str().unwrap(),
+                );
+            }
+            node.dump_blob(&self.f_blob, &mut blob_hash, &mut blob_offset)?;
+        }
+
+        Ok(blob_hash)
+    }
+
     fn dump_bootstrap(&mut self) -> Result<()> {
         for node in &mut self.additions {
             node.dump_bootstrap(&self.f_bootstrap, Some(self.blob_id.to_owned()))?;
@@ -243,26 +256,18 @@ impl Builder {
         }
     }
 
-    fn dump_blob(&mut self, file: &Path, parent_node: Option<Box<Node>>) -> Result<()> {
+    fn build_node(&mut self, file: &Path, parent_node: Option<Box<Node>>) -> Result<()> {
         let meta = file.symlink_metadata()?;
 
         if parent_node.is_none() {
             let path = file.to_str().unwrap().to_owned();
 
-            let mut root_node = Node::new(
-                self.blob_offset,
-                self.root.to_owned(),
-                path,
-                None,
-                Overlay::LowerAddition,
-            );
+            let mut root_node = Node::new(self.root.to_owned(), path, None, Overlay::LowerAddition);
 
-            root_node.build(None)?;
-            root_node.dump_blob(&self.f_blob, &mut self.blob_hash)?;
-
+            root_node.build_inode(None)?;
             self.additions.push(root_node.clone());
 
-            self.dump_blob(file, Some(Box::new(root_node)))?;
+            self.build_node(file, Some(Box::new(root_node)))?;
 
             return Ok(());
         }
@@ -284,7 +289,6 @@ impl Builder {
                 let meta = entry.metadata()?;
 
                 let mut node = Node::new(
-                    self.blob_offset,
                     self.root.clone(),
                     path.to_str().unwrap().to_owned(),
                     parent_node.clone(),
@@ -310,13 +314,13 @@ impl Builder {
                 }
 
                 let ino = meta.st_ino();
-                let keep;
                 let hardlink_node = self.inode_map.get(&ino);
 
+                let keep;
                 if let Some(hardlink_node) = hardlink_node {
-                    keep = node.build(Some(hardlink_node.clone()))?;
+                    keep = node.build_inode(Some(hardlink_node.clone()))?;
                 } else {
-                    keep = node.build(None)?;
+                    keep = node.build_inode(None)?;
                     if keep {
                         self.inode_map.insert(ino, node.clone());
                     }
@@ -326,11 +330,10 @@ impl Builder {
                     continue;
                 }
 
-                node.dump_blob(&self.f_blob, &mut self.blob_hash)?;
-                self.blob_offset = node.blob_offset;
                 self.additions.push(node.clone());
+
                 if path.is_dir() {
-                    self.dump_blob(&path, Some(Box::new(node)))?;
+                    self.build_node(&path, Some(Box::new(node)))?;
                 }
             }
         }
@@ -339,16 +342,17 @@ impl Builder {
     }
 
     pub fn build(&mut self) -> Result<String> {
-        self.dump_superblock()?;
-
         let root = self.root.clone();
         let root_path = Path::new(root.as_str());
 
-        self.dump_blob(root_path, None)?;
+        self.dump_superblock()?;
 
-        let blob_hash = self.blob_hash.result_str();
+        self.build_node(root_path, None)?;
+
+        let mut blob_hash = self.dump_blob()?;
+
         if self.blob_id == "" {
-            self.blob_id = format!("sha256:{}", blob_hash);
+            self.blob_id = format!("sha256:{}", blob_hash.result_str());
         }
 
         if self.f_parent_bootstrap.is_none() {
