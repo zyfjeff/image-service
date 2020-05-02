@@ -26,7 +26,7 @@ struct PseudoInode {
     ino: u64,
     parent: u64,
     name: String,
-    childs: RwLock<Vec<u64>>,
+    children: RwLock<Vec<Arc<PseudoInode>>>,
 }
 
 pub struct PseudoFs {
@@ -48,24 +48,10 @@ impl PseudoFs {
                 ino: ROOT_ID,
                 parent: ROOT_ID,
                 name: String::from("/"),
-                childs: RwLock::new(Vec::new()),
+                children: RwLock::new(Vec::new()),
             }),
         );
         fs
-    }
-
-    pub fn new_inode(&self, parent: u64, name: &str) -> u64 {
-        let ino = self.next_inode.fetch_add(1, Ordering::Relaxed);
-        self.inodes.write().unwrap().insert(
-            ino,
-            Arc::new(PseudoInode {
-                ino,
-                parent,
-                name: String::from(name),
-                childs: RwLock::new(Vec::new()),
-            }),
-        );
-        ino
     }
 
     // mount creates path walk nodes all the way from root
@@ -100,42 +86,40 @@ impl PseudoFs {
         Ok(inode.ino)
     }
 
+    fn new_inode(&self, parent: u64, name: &str) -> Arc<PseudoInode> {
+        let ino = self.next_inode.fetch_add(1, Ordering::Relaxed);
+        let inode = Arc::new(PseudoInode {
+            ino,
+            parent,
+            name: String::from(name),
+            children: RwLock::new(Vec::new()),
+        });
+        self.inodes.write().unwrap().insert(ino, inode.clone());
+
+        inode
+    }
+
     fn do_lookup_create(&self, parent: &Arc<PseudoInode>, name: &str) -> Arc<PseudoInode> {
-        let childs = parent.childs.read().unwrap();
-        for ino in childs.iter() {
-            match self.inodes.read().unwrap().get(ino) {
-                Some(inode) => {
-                    if inode.name == name {
-                        return Arc::clone(inode);
-                    }
-                }
-                None => continue,
+        // Optimistic check with reader lock.
+        for child in parent.children.read().unwrap().iter() {
+            if child.name == name {
+                return Arc::clone(child);
             }
         }
+
+        // Double check with writer lock.
+        let mut children = parent.children.write().unwrap();
+        for child in children.iter() {
+            if child.name == name {
+                return Arc::clone(child);
+            }
+        }
+
         // not found, create new
-        drop(childs);
-        let mut childs = parent.childs.write().unwrap();
-        for ino in childs.iter() {
-            match self.inodes.read().unwrap().get(ino) {
-                Some(inode) => {
-                    if inode.name == name {
-                        return Arc::clone(inode);
-                    }
-                }
-                None => continue,
-            }
-        }
+        let inode = self.new_inode(parent.ino, name);
+        children.push(inode.clone());
 
-        let ino = self.new_inode(parent.ino, name);
-        childs.push(ino);
-        drop(childs);
-
-        self.inodes
-            .read()
-            .unwrap()
-            .get(&ino)
-            .map(Arc::clone)
-            .unwrap()
+        inode
     }
 
     fn get_entry(&self, ino: u64) -> Entry {
@@ -178,21 +162,14 @@ impl PseudoFs {
             .ok_or_else(|| Error::from_raw_os_error(libc::ENOENT))?;
 
         let mut next = offset + 1;
-        let childs = inode.childs.read().unwrap().clone();
+        let children = inode.children.read().unwrap();
 
-        for child in childs[offset as usize..].iter() {
-            let child_inode = self
-                .inodes
-                .read()
-                .unwrap()
-                .get(&child)
-                .map(Arc::clone)
-                .unwrap();
+        for child in children[offset as usize..].iter() {
             match add_entry(DirEntry {
-                ino: child_inode.ino,
+                ino: child.ino,
                 offset: next,
                 type_: 0,
-                name: child_inode.name.clone().as_bytes(),
+                name: child.name.clone().as_bytes(),
             }) {
                 Ok(0) => break,
                 Ok(_) => next += 1,
@@ -225,20 +202,12 @@ impl FileSystem for PseudoFs {
         } else if child_name == ".." {
             ino = pinode.parent;
         } else {
-            let childs = pinode.childs.read().unwrap();
-            for c in childs.iter() {
-                match self.inodes.read().unwrap().get(c) {
-                    Some(inode) => {
-                        if inode.name == child_name {
-                            ino = inode.ino;
-                            break;
-                        }
-                    }
-                    None => continue,
+            for child in pinode.children.read().unwrap().iter() {
+                if child.name == child_name {
+                    ino = child.ino;
+                    break;
                 }
             }
-            // not found, create new
-            drop(childs);
         }
 
         if ino == 0 {
