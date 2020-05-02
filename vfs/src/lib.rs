@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 //
 
+extern crate arc_swap;
+extern crate fuse_rs;
 #[macro_use]
 extern crate log;
 

@@ -3,15 +3,23 @@
 // found in the LICENSE file.
 //
 // A pseudo fs for path walking to other real filesystems
+//
+// There are several assumptions adopted when designing the PseudoFs:
+// - The PseudoFs is used to mount other filesystems, so it only supports directories.
+// - There won't be too much directories/sub-directories managed by a PseudoFs instance, so linear
+//   search is used when searching for child inodes.
+// - Inodes managed by the PseudoFs is readonly, even for the permission bits.
 
 use std::collections::HashMap;
 use std::ffi::CStr;
 use std::io::{Error, Result};
+use std::ops::Deref;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
+use arc_swap::ArcSwap;
 use fuse_rs::abi::linux_abi::Attr;
 use fuse_rs::api::filesystem::*;
 
@@ -26,15 +34,27 @@ type Handle = u64;
 struct PseudoInode {
     ino: u64,
     parent: u64,
+    children: ArcSwap<Vec<Arc<PseudoInode>>>,
     name: String,
-    children: RwLock<Vec<Arc<PseudoInode>>>,
+}
+
+impl PseudoInode {
+    // It's protected by Pseudofs.lock.
+    fn insert_child(&self, child: Arc<PseudoInode>) {
+        let mut children = self.children.load().deref().deref().clone();
+
+        children.push(child);
+
+        self.children.store(Arc::new(children));
+    }
 }
 
 pub struct PseudoFs {
     index: u64,
     next_inode: AtomicU64,
     root_inode: Arc<PseudoInode>,
-    inodes: RwLock<HashMap<u64, Arc<PseudoInode>>>,
+    inodes: ArcSwap<HashMap<u64, Arc<PseudoInode>>>,
+    lock: Mutex<()>, // Write protect PseudoFs.inodes and PseudoInode.children
 }
 
 impl PseudoFs {
@@ -42,18 +62,21 @@ impl PseudoFs {
         let root_inode = Arc::new(PseudoInode {
             ino: ROOT_ID,
             parent: ROOT_ID,
+            children: ArcSwap::new(Arc::new(Vec::new())),
             name: String::from("/"),
-            children: RwLock::new(Vec::new()),
         });
         let fs = PseudoFs {
             next_inode: AtomicU64::new(PSEUDOFS_NEXT_INODE),
             index,
             root_inode: root_inode.clone(),
-            inodes: RwLock::new(HashMap::new()),
+            inodes: ArcSwap::new(Arc::new(HashMap::new())),
+            lock: Mutex::new(()),
         };
 
-        // Create the root inode
+        // Create the root inode. We have just created the lock, so it should be safe to unwrap().
+        let _guard = fs.lock.lock().unwrap();
         fs.insert_inode(root_inode);
+        drop(_guard);
 
         fs
     }
@@ -86,41 +109,51 @@ impl PseudoFs {
 
     fn new_inode(&self, parent: u64, name: &str) -> Arc<PseudoInode> {
         let ino = self.next_inode.fetch_add(1, Ordering::Relaxed);
+
         Arc::new(PseudoInode {
             ino,
             parent,
             name: String::from(name),
-            children: RwLock::new(Vec::new()),
+            children: ArcSwap::new(Arc::new(Vec::new())),
         })
     }
 
+    // Caller must hold PseudoFs.lock.
     fn insert_inode(&self, inode: Arc<PseudoInode>) {
-        // Do not expect poisoned rwlock here
-        self.inodes.write().unwrap().insert(inode.ino, inode);
+        let mut hashmap = self.inodes.load().deref().deref().clone();
+
+        hashmap.insert(inode.ino, inode);
+
+        self.inodes.store(Arc::new(hashmap));
+    }
+
+    // Caller must hold PseudoFs.lock.
+    fn create_inode(&self, name: &str, parent: &Arc<PseudoInode>) -> Arc<PseudoInode> {
+        let inode = self.new_inode(parent.ino, name);
+
+        self.insert_inode(inode.clone());
+        parent.insert_child(inode.clone());
+
+        inode
     }
 
     fn do_lookup_create(&self, parent: &Arc<PseudoInode>, name: &str) -> Arc<PseudoInode> {
         // Optimistic check with reader lock.
-        for child in parent.children.read().unwrap().iter() {
+        for child in parent.children.load().iter() {
             if child.name == name {
                 return Arc::clone(child);
             }
         }
 
-        // Double check with writer lock.
-        let mut children = parent.children.write().unwrap();
-        for child in children.iter() {
+        // Double check with writer lock held.
+        let _guard = self.lock.lock();
+        for child in parent.children.load().iter() {
             if child.name == name {
                 return Arc::clone(child);
             }
         }
 
-        // not found, create new
-        let inode = self.new_inode(parent.ino, name);
-        self.insert_inode(inode.clone());
-        children.push(inode.clone());
-
-        inode
+        self.create_inode(name, parent)
     }
 
     fn get_entry(&self, ino: u64) -> Entry {
@@ -154,13 +187,12 @@ impl PseudoFs {
             return Ok(());
         }
 
-        // Do not expect poisoned rwlock here
-        let inodes = self.inodes.read().unwrap();
+        let inodes = self.inodes.load();
         let inode = inodes
             .get(&parent)
             .ok_or_else(|| Error::from_raw_os_error(libc::ENOENT))?;
         let mut next = offset + 1;
-        let children = inode.children.read().unwrap();
+        let children = inode.children.load();
 
         for child in children[offset as usize..].iter() {
             match add_entry(DirEntry {
@@ -184,8 +216,7 @@ impl FileSystem for PseudoFs {
     type Handle = Handle;
 
     fn lookup(&self, _: Context, parent: u64, name: &CStr) -> Result<Entry> {
-        // Do not expect poisoned rwlock here
-        let inodes = self.inodes.read().unwrap();
+        let inodes = self.inodes.load();
         let pinode = inodes
             .get(&parent)
             .ok_or_else(|| Error::from_raw_os_error(libc::ENOENT))?;
@@ -198,7 +229,7 @@ impl FileSystem for PseudoFs {
         } else if child_name == ".." {
             ino = pinode.parent;
         } else {
-            for child in pinode.children.read().unwrap().iter() {
+            for child in pinode.children.load().iter() {
                 if child.name == child_name {
                     ino = child.ino;
                     break;
@@ -215,12 +246,13 @@ impl FileSystem for PseudoFs {
     }
 
     fn getattr(&self, _: Context, inode: u64, _: Option<u64>) -> Result<(libc::stat64, Duration)> {
-        // Do not expect poisoned rwlock here
-        let inodes = self.inodes.read().unwrap();
-        let info = inodes
+        let ino = self
+            .inodes
+            .load()
             .get(&inode)
+            .map(|inode| inode.ino)
             .ok_or_else(|| Error::from_raw_os_error(libc::ENOENT))?;
-        let entry = self.get_entry(info.ino);
+        let entry = self.get_entry(ino);
 
         Ok((entry.attr, entry.attr_timeout))
     }
