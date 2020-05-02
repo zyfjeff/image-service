@@ -15,6 +15,7 @@ use std::time::{Duration, SystemTime};
 use fuse_rs::abi::linux_abi::Attr;
 use fuse_rs::api::filesystem::*;
 
+// ID 0 is reserved for invalid entry, and ID 1 is used for ROOT_ID.
 const PSEUDOFS_NEXT_INODE: u64 = 2;
 const PSEUDOFS_DEFAULT_ATTR_TIMEOUT: u64 = 1 << 32;
 const PSEUDOFS_DEFAULT_ENTRY_TIMEOUT: u64 = PSEUDOFS_DEFAULT_ATTR_TIMEOUT;
@@ -32,25 +33,28 @@ struct PseudoInode {
 pub struct PseudoFs {
     index: u64,
     next_inode: AtomicU64,
+    root_inode: Arc<PseudoInode>,
     inodes: RwLock<HashMap<u64, Arc<PseudoInode>>>,
 }
 
 impl PseudoFs {
     pub fn new(index: u64) -> Self {
+        let root_inode = Arc::new(PseudoInode {
+            ino: ROOT_ID,
+            parent: ROOT_ID,
+            name: String::from("/"),
+            children: RwLock::new(Vec::new()),
+        });
         let fs = PseudoFs {
             next_inode: AtomicU64::new(PSEUDOFS_NEXT_INODE),
             index,
+            root_inode: root_inode.clone(),
             inodes: RwLock::new(HashMap::new()),
         };
-        fs.inodes.write().unwrap().insert(
-            ROOT_ID,
-            Arc::new(PseudoInode {
-                ino: ROOT_ID,
-                parent: ROOT_ID,
-                name: String::from("/"),
-                children: RwLock::new(Vec::new()),
-            }),
-        );
+
+        // Create the root inode
+        fs.insert_inode(root_inode);
+
         fs
     }
 
@@ -64,13 +68,7 @@ impl PseudoFs {
         }
 
         let mut pathbuf = PathBuf::from("/");
-        let mut inode = self
-            .inodes
-            .read()
-            .unwrap()
-            .get(&ROOT_ID)
-            .map(Arc::clone)
-            .unwrap();
+        let mut inode = self.root_inode.clone();
 
         for component in path.components() {
             debug!("pseudo fs mount iterate {:?}", component.as_os_str());
@@ -88,15 +86,17 @@ impl PseudoFs {
 
     fn new_inode(&self, parent: u64, name: &str) -> Arc<PseudoInode> {
         let ino = self.next_inode.fetch_add(1, Ordering::Relaxed);
-        let inode = Arc::new(PseudoInode {
+        Arc::new(PseudoInode {
             ino,
             parent,
             name: String::from(name),
             children: RwLock::new(Vec::new()),
-        });
-        self.inodes.write().unwrap().insert(ino, inode.clone());
+        })
+    }
 
-        inode
+    fn insert_inode(&self, inode: Arc<PseudoInode>) {
+        // Do not expect poisoned rwlock here
+        self.inodes.write().unwrap().insert(inode.ino, inode);
     }
 
     fn do_lookup_create(&self, parent: &Arc<PseudoInode>, name: &str) -> Arc<PseudoInode> {
@@ -117,6 +117,7 @@ impl PseudoFs {
 
         // not found, create new
         let inode = self.new_inode(parent.ino, name);
+        self.insert_inode(inode.clone());
         children.push(inode.clone());
 
         inode
@@ -153,14 +154,11 @@ impl PseudoFs {
             return Ok(());
         }
 
-        let inode = self
-            .inodes
-            .read()
-            .unwrap()
+        // Do not expect poisoned rwlock here
+        let inodes = self.inodes.read().unwrap();
+        let inode = inodes
             .get(&parent)
-            .map(Arc::clone)
             .ok_or_else(|| Error::from_raw_os_error(libc::ENOENT))?;
-
         let mut next = offset + 1;
         let children = inode.children.read().unwrap();
 
@@ -186,12 +184,10 @@ impl FileSystem for PseudoFs {
     type Handle = Handle;
 
     fn lookup(&self, _: Context, parent: u64, name: &CStr) -> Result<Entry> {
-        let pinode = self
-            .inodes
-            .read()
-            .unwrap()
+        // Do not expect poisoned rwlock here
+        let inodes = self.inodes.read().unwrap();
+        let pinode = inodes
             .get(&parent)
-            .map(Arc::clone)
             .ok_or_else(|| Error::from_raw_os_error(libc::ENOENT))?;
         let child_name = name
             .to_str()
@@ -219,15 +215,13 @@ impl FileSystem for PseudoFs {
     }
 
     fn getattr(&self, _: Context, inode: u64, _: Option<u64>) -> Result<(libc::stat64, Duration)> {
-        let info = self
-            .inodes
-            .read()
-            .unwrap()
+        // Do not expect poisoned rwlock here
+        let inodes = self.inodes.read().unwrap();
+        let info = inodes
             .get(&inode)
-            .map(Arc::clone)
             .ok_or_else(|| Error::from_raw_os_error(libc::ENOENT))?;
-
         let entry = self.get_entry(info.ino);
+
         Ok((entry.attr, entry.attr_timeout))
     }
 
