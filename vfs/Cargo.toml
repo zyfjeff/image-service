@@ -7,10 +7,13 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-libc = "0.2"
-log = "0.4"
-bimap = "0.4"
+bimap = ">=0.4"
+libc = ">=0.2"
+log = ">=0.4"
 
 fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git", branch = "master" }
 
-rafs = { path = "../rafs" }
+[features]
+fusedev = ["fuse-rs/fusedev"]
+virtio-fs = ["fuse-rs/virtiofs"]
+vhost-user-fs = ["fuse-rs/vhost-user-fs"]
