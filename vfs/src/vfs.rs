@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::io::{Error, Read, Result, Write};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use bimap::hash::BiHashMap;
@@ -92,10 +92,11 @@ pub struct Vfs<F: FileSystem> {
     // inodes maintains mapping between fuse inode and (pseudo fs or mounted fs) inode data
     inodes: RwLock<BiHashMap<Inode, InodeData>>,
     // mountpoints maps from pseudo fs inode to mounted fs mountpoint data
-    mountpoints: RwLock<HashMap<Inode, Arc<MountPointData>>>,
+    mountpoints: ArcSwap<HashMap<Inode, Arc<MountPointData>>>,
     // superblocks keeps track of all mounted file systems
-    superblocks: RwLock<HashMap<SuperIndex, Arc<F>>>,
+    superblocks: ArcSwap<HashMap<SuperIndex, Arc<F>>>,
     opts: ArcSwap<VfsOptions>,
+    lock: Mutex<()>,
 }
 
 impl<F: FileSystem> Default for Vfs<F> {
@@ -110,10 +111,11 @@ impl<F: FileSystem> Vfs<F> {
             next_inode: AtomicU64::new(ROOT_ID + 1),
             next_super: AtomicU64::new(PSEUDO_FS_SUPER + 1),
             inodes: RwLock::new(BiHashMap::new()),
-            mountpoints: RwLock::new(HashMap::new()),
-            superblocks: RwLock::new(HashMap::new()),
+            mountpoints: ArcSwap::new(Arc::new(HashMap::new())),
+            superblocks: ArcSwap::new(Arc::new(HashMap::new())),
             root: PseudoFs::new(PSEUDO_FS_SUPER),
             opts: ArcSwap::new(Arc::new(opts)),
+            lock: Mutex::new(()),
         };
 
         vfs.inodes.write().unwrap().insert(
@@ -137,10 +139,19 @@ impl<F: FileSystem> Vfs<F> {
             ROOT_ID.into(),
             &CString::new(".").unwrap(),
         )?;
+
+        // Serialize mount operations. Do not expect poisoned lock here.
+        let _guard = self.lock.lock().unwrap();
         let inode = self.root.mount(path)?;
         let index = self.next_super.fetch_add(1, Ordering::Relaxed);
+
         // TODO: handle over mount on the same mountpoint
-        self.mountpoints.write().unwrap().insert(
+        // #################################################
+        // TODO: confirm the visibility of mountpoints and superblocks, which one should be committed
+        // first?
+        // #################################################
+        let mut mountpoints = self.mountpoints.load().deref().deref().clone();
+        mountpoints.insert(
             inode,
             Arc::new(MountPointData {
                 super_index: index,
@@ -148,10 +159,12 @@ impl<F: FileSystem> Vfs<F> {
                 root_entry: entry,
             }),
         );
-        self.superblocks
-            .write()
-            .unwrap()
-            .insert(index, Arc::new(fs));
+        self.mountpoints.store(Arc::new(mountpoints));
+
+        let mut superblocks = self.superblocks.load().deref().deref().clone();
+        superblocks.insert(index, Arc::new(fs));
+        self.superblocks.store(Arc::new(superblocks));
+
         // Special case, mount on pseudo fs root, need to hash it so that
         // future access to vfs ROOT_ID points to the new mount
         if inode == ROOT_ID {
@@ -212,8 +225,7 @@ impl<F: FileSystem> Vfs<F> {
         } else {
             let fs = self
                 .superblocks
-                .read()
-                .unwrap()
+                .load()
                 .get(&idata.super_index)
                 .map(Arc::clone)
                 .ok_or_else(|| Error::from_raw_os_error(libc::ENOENT))?;
@@ -257,8 +269,7 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
             vfsinodes.remove_by_left(inode);
         }
         self.superblocks
-            .read()
-            .unwrap()
+            .load()
             .iter()
             .for_each(|(_, f)| f.destroy());
     }
@@ -267,35 +278,26 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
         match self.get_real_rootfs(parent)? {
             (Left(fs), idata) => {
                 let mut entry = fs.lookup(ctx, idata.ino, name)?;
-                // check mountpoints
-                let mnt = match self
-                    .mountpoints
-                    .read()
-                    .unwrap()
-                    .get(&entry.inode)
-                    .map(Arc::clone)
-                {
-                    Some(mnt) => mnt,
-                    None => {
-                        entry.inode = self.hash_inode(idata.super_index, entry.inode);
-                        return Ok(entry);
+                match self.mountpoints.load().get(&entry.inode) {
+                    Some(mnt) => {
+                        // cross mountpoint, return mount root entry
+                        entry = mnt.root_entry;
+                        entry.inode = self.hash_inode(mnt.super_index, mnt.ino);
+                        trace!(
+                            "vfs lookup cross mountpoint, return new mount index {} inode {} fuse inode {}",
+                            mnt.super_index,
+                            mnt.ino,
+                            entry.inode
+                        );
                     }
-                };
-                // cross mountpoint, return mount root entry
-                entry = mnt.root_entry;
-                entry.inode = self.hash_inode(mnt.super_index, mnt.ino);
-                trace!(
-                    "vfs lookup cross mountpoint, return new mount index {} inode {} fuse inode {}",
-                    mnt.super_index,
-                    mnt.ino,
-                    entry.inode
-                );
+                    None => entry.inode = self.hash_inode(idata.super_index, entry.inode),
+                }
                 Ok(entry)
             }
             (Right(fs), idata) => {
                 // parent is in an underlying rootfs
                 let mut entry = fs.lookup(ctx, idata.ino.into(), name)?;
-                // lookup succees, hash it to a real fuse inode
+                // lookup success, hash it to a real fuse inode
                 entry.inode = self.hash_inode(idata.super_index, entry.inode);
                 Ok(entry)
             }
@@ -687,25 +689,19 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => {
                 fs.readdir(ctx, idata.ino, handle, size, offset, |mut dir_entry| {
-                    let mnt = match self
-                        .mountpoints
-                        .read()
-                        .unwrap()
-                        .get(&dir_entry.ino)
-                        .map(Arc::clone)
-                    {
-                        Some(mnt) => mnt,
+                    match self.mountpoints.load().get(&dir_entry.ino) {
+                        // cross mountpoint, return mount root entry
+                        Some(mnt) => {
+                            dir_entry.ino = self.hash_inode(mnt.super_index, mnt.ino);
+                        }
                         None => {
                             dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino);
-                            return add_entry(dir_entry);
                         }
-                    };
-
-                    // cross mountpoint, return mount root entry
-                    dir_entry.ino = self.hash_inode(mnt.super_index, mnt.ino);
+                    }
                     add_entry(dir_entry)
                 })
             }
+
             (Right(fs), idata) => fs.readdir(
                 ctx,
                 idata.ino.into(),
@@ -740,27 +736,22 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
                 size,
                 offset,
                 |mut dir_entry, mut entry| {
-                    let mnt = match self
-                        .mountpoints
-                        .read()
-                        .unwrap()
-                        .get(&dir_entry.ino)
-                        .map(Arc::clone)
-                    {
-                        Some(mnt) => mnt,
+                    match self.mountpoints.load().get(&dir_entry.ino) {
+                        Some(mnt) => {
+                            // cross mountpoint, return mount root entry
+                            dir_entry.ino = self.hash_inode(mnt.super_index, mnt.ino);
+                            entry = mnt.root_entry;
+                        }
                         None => {
                             dir_entry.ino = self.hash_inode(idata.super_index, dir_entry.ino);
                             entry.inode = dir_entry.ino;
-                            return add_entry(dir_entry, entry);
                         }
-                    };
+                    }
 
-                    // cross mountpoint, return mount root entry
-                    dir_entry.ino = self.hash_inode(mnt.super_index, mnt.ino);
-                    entry = mnt.root_entry;
                     add_entry(dir_entry, entry)
                 },
             ),
+
             (Right(fs), idata) => fs.readdirplus(
                 ctx,
                 idata.ino.into(),
@@ -836,5 +827,15 @@ mod tests {
         assert_eq!(opts.no_open, false);
         assert_eq!(opts.no_opendir, false);
         assert_eq!(opts.no_writeback, false);
+    }
+
+    #[test]
+    fn test_vfs_lookup() {
+        // TODO
+    }
+
+    #[test]
+    fn test_vfs_readdir() {
+        // TODO
     }
 }
