@@ -90,18 +90,39 @@ impl PseudoFs {
             return Err(Error::from_raw_os_error(libc::EINVAL));
         }
 
-        let mut inode = self.root_inode.clone();
+        let mut inodes = self.inodes.load();
+        let mut inode = &self.root_inode;
 
-        for component in path.components() {
+        'outer: for component in path.components() {
             debug!("pseudo fs mount iterate {:?}", component.as_os_str());
             match component {
                 Component::RootDir => continue,
                 Component::CurDir => continue,
-                Component::ParentDir => inode = self.get_inode(inode.parent).unwrap(),
+                Component::ParentDir => inode = inodes.get(&inode.parent).unwrap(),
                 Component::Prefix(_) => panic!("unsupported path: {}", mountpoint),
                 Component::Normal(path) => {
-                    // lookup or create component
-                    inode = self.do_lookup_create(&inode, path.to_str().unwrap());
+                    let name = path.to_str().unwrap();
+
+                    // Optimistic check without lock.
+                    for child in inode.children.load().iter() {
+                        if child.name == name {
+                            inode = inodes.get(&child.ino).unwrap();
+                            continue 'outer;
+                        }
+                    }
+
+                    // Double check with writer lock held.
+                    let _guard = self.lock.lock();
+                    for child in inode.children.load().iter() {
+                        if child.name == name {
+                            inode = inodes.get(&child.ino).unwrap();
+                            continue 'outer;
+                        }
+                    }
+
+                    let new_node = self.create_inode(name, inode);
+                    inodes = self.inodes.load();
+                    inode = inodes.get(&new_node.ino).unwrap();
                 }
             }
         }
@@ -138,29 +159,6 @@ impl PseudoFs {
         parent.insert_child(inode.clone());
 
         inode
-    }
-
-    fn get_inode(&self, ino: Inode) -> Option<Arc<PseudoInode>> {
-        self.inodes.load().get(&ino).map(|x| x.clone())
-    }
-
-    fn do_lookup_create(&self, parent: &Arc<PseudoInode>, name: &str) -> Arc<PseudoInode> {
-        // Optimistic check with reader lock.
-        for child in parent.children.load().iter() {
-            if child.name == name {
-                return Arc::clone(child);
-            }
-        }
-
-        // Double check with writer lock held.
-        let _guard = self.lock.lock();
-        for child in parent.children.load().iter() {
-            if child.name == name {
-                return Arc::clone(child);
-            }
-        }
-
-        self.create_inode(name, parent)
     }
 
     fn get_entry(&self, ino: u64) -> Entry {
