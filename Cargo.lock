@@ -19,6 +19,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arc-swap"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b585a98a234c46fc563103e9278c9391fde1f4e6850334da895d27edb9580f62"
+
+[[package]]
 name = "arrayvec"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1779,11 +1785,11 @@ checksum = "078775d0255232fb988e6fccf26ddc9d1ac274299aaedcedce21c6f72cc533ce"
 name = "vfs"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "bimap",
  "fuse-rs",
  "libc",
  "log 0.4.8",
- "rafs",
 ]
 
 [[package]]

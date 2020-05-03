@@ -24,13 +24,15 @@ pub enum Either<A, B> {
     /// Second branch of the type
     Right(B),
 }
+use arc_swap::ArcSwap;
+use std::ops::Deref;
 use Either::*;
-
-const PSEUDO_FS_SUPER: u64 = 1;
 
 type Inode = u64;
 type Handle = u64;
 type SuperIndex = u64;
+
+const PSEUDO_FS_SUPER: SuperIndex = 1;
 
 #[derive(Clone, Copy, Eq, PartialEq, Hash, Debug)]
 struct InodeData {
@@ -93,7 +95,7 @@ pub struct Vfs<F: FileSystem> {
     mountpoints: RwLock<HashMap<Inode, Arc<MountPointData>>>,
     // superblocks keeps track of all mounted file systems
     superblocks: RwLock<HashMap<SuperIndex, Arc<F>>>,
-    opts: RwLock<VfsOptions>,
+    opts: ArcSwap<VfsOptions>,
 }
 
 impl<F: FileSystem> Default for Vfs<F> {
@@ -111,8 +113,9 @@ impl<F: FileSystem> Vfs<F> {
             mountpoints: RwLock::new(HashMap::new()),
             superblocks: RwLock::new(HashMap::new()),
             root: PseudoFs::new(PSEUDO_FS_SUPER),
-            opts: RwLock::new(opts),
+            opts: ArcSwap::new(Arc::new(opts)),
         };
+
         vfs.inodes.write().unwrap().insert(
             ROOT_ID,
             InodeData {
@@ -224,20 +227,20 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
     type Handle = Handle;
 
     fn init(&self, opts: FsOptions) -> Result<FsOptions> {
-        if self.opts.read().unwrap().no_open {
-            self.opts.write().unwrap().no_open = !(opts & FsOptions::ZERO_MESSAGE_OPEN).is_empty();
+        let mut n_opts = *self.opts.load().deref().deref();
+        if n_opts.no_open {
+            n_opts.no_open = !(opts & FsOptions::ZERO_MESSAGE_OPEN).is_empty();
         }
-        self.opts.write().unwrap().no_opendir =
-            !(opts & FsOptions::ZERO_MESSAGE_OPENDIR).is_empty();
-        if self.opts.read().unwrap().no_writeback {
-            self.opts
-                .write()
-                .unwrap()
-                .out_opts
-                .remove(FsOptions::WRITEBACK_CACHE);
+        n_opts.no_opendir = !(opts & FsOptions::ZERO_MESSAGE_OPENDIR).is_empty();
+        if n_opts.no_writeback {
+            n_opts.out_opts.remove(FsOptions::WRITEBACK_CACHE);
         }
-        self.opts.write().unwrap().in_opts = opts;
-        Ok(self.opts.read().unwrap().out_opts)
+        n_opts.in_opts = opts;
+
+        let out_opts = n_opts.out_opts;
+        self.opts.store(Arc::new(n_opts));
+
+        Ok(out_opts)
     }
 
     fn destroy(&self) {
@@ -448,7 +451,7 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
     }
 
     fn open(&self, ctx: Context, inode: u64, flags: u32) -> Result<(Option<u64>, OpenOptions)> {
-        if self.opts.read().unwrap().no_open {
+        if self.opts.load().no_open {
             Err(Error::from_raw_os_error(libc::ENOSYS))
         } else {
             match self.get_real_rootfs(inode)? {
@@ -657,7 +660,7 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
         inode: u64,
         flags: u32,
     ) -> Result<(Option<Handle>, OpenOptions)> {
-        if self.opts.read().unwrap().no_opendir {
+        if self.opts.load().no_opendir {
             Err(Error::from_raw_os_error(libc::ENOSYS))
         } else {
             match self.get_real_rootfs(inode)? {
@@ -789,5 +792,49 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
             (Left(fs), idata) => fs.access(ctx, idata.ino, mask),
             (Right(fs), idata) => fs.access(ctx, idata.ino.into(), mask),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FakeFs {}
+
+    impl FileSystem for FakeFs {
+        type Inode = Inode;
+        type Handle = Handle;
+    }
+
+    #[test]
+    fn test_vfs_init() {
+        let vfs: Vfs<FakeFs> = Vfs::default();
+
+        let out_opts = FsOptions::ASYNC_READ
+            | FsOptions::PARALLEL_DIROPS
+            | FsOptions::BIG_WRITES
+            | FsOptions::HANDLE_KILLPRIV
+            | FsOptions::ASYNC_DIO
+            | FsOptions::HAS_IOCTL_DIR
+            | FsOptions::WRITEBACK_CACHE
+            | FsOptions::ZERO_MESSAGE_OPEN
+            | FsOptions::ATOMIC_O_TRUNC
+            | FsOptions::CACHE_SYMLINKS
+            | FsOptions::DO_READDIRPLUS
+            | FsOptions::READDIRPLUS_AUTO
+            | FsOptions::ZERO_MESSAGE_OPENDIR;
+        let opts = vfs.opts.load();
+
+        assert_eq!(opts.no_open, true);
+        assert_eq!(opts.no_opendir, true);
+        assert_eq!(opts.no_writeback, false);
+        assert_eq!(opts.in_opts, FsOptions::ASYNC_READ);
+        assert_eq!(opts.out_opts, out_opts);
+
+        vfs.init(FsOptions::ASYNC_READ).unwrap();
+        let opts = vfs.opts.load();
+        assert_eq!(opts.no_open, false);
+        assert_eq!(opts.no_opendir, false);
+        assert_eq!(opts.no_writeback, false);
     }
 }
