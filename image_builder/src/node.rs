@@ -14,7 +14,8 @@ use std::str;
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 
-use rafs::layout::*;
+use rafs::metadata::layout::*;
+use rafs::metadata::*;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Overlay {

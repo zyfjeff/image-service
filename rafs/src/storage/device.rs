@@ -14,6 +14,8 @@ use crate::fs::RafsBlk;
 use crate::layout::RafsSuperBlockInfo;
 use crate::storage::cache::RafsCache;
 use crate::storage::factory;
+use crate::metadata::RafsChunkInfo;
+use crate::storage::backend::*;
 
 static ZEROS: &[u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
 
@@ -34,28 +36,26 @@ impl RafsDevice {
         self.rw_layer.init(sb_info)
     }
 
-    pub fn close(&mut self) -> io::Result<()> {
-        self.rw_layer.release();
-        Ok(())
+    pub fn close(&mut self) {
+        self.b.close();
     }
 
-    // Read a range of data from blob into the provided writer
+    /// Read a range of data from blob into the provided writer
     pub fn read_to(&self, w: &mut dyn ZeroCopyWriter, desc: RafsBioDesc) -> io::Result<usize> {
         let mut count: usize = 0;
         for bio in desc.bi_vec.iter() {
             let mut f = RafsBioDevice::new(bio, &self)?;
-            debug!("reading bio desc {:?}", bio);
             count += w.write_from(&mut f, bio.size, bio.offset as u64)?;
         }
         Ok(count)
     }
 
-    // Write a range of data to blob from the provided reader
+    /// Write a range of data to blob from the provided reader
     pub fn write_from(&self, r: &mut dyn ZeroCopyReader, desc: RafsBioDesc) -> io::Result<usize> {
         let mut count: usize = 0;
         for bio in desc.bi_vec.iter() {
             let mut f = RafsBioDevice::new(bio, &self)?;
-            let offset = bio.blkinfo.blob_offset + bio.offset as u64;
+            let offset = bio.chunkinfo.blob_offset() + bio.offset as u64;
             count += r.read_to(&mut f, bio.size, offset)?;
         }
         Ok(count)
@@ -108,8 +108,7 @@ impl<'a> RafsBioDevice<'a> {
     }
 
     fn blob_offset(&self) -> u64 {
-        let blkinfo = &self.bio.blkinfo;
-        blkinfo.blob_offset + self.bio.offset as u64
+        self.bio.chunkinfo.blob_offset() + self.bio.offset as u64
     }
 }
 
@@ -126,11 +125,15 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
 
     fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
         if self.buf.is_empty() {
-            self.buf = self
-                .dev
-                .rw_layer
-                .read(&self.bio.blkinfo.clone())?
-                .decompressed(&|b| utils::decompress(b, self.bio.blksize))?;
+            let mut buf = Vec::new();
+            let len = self.dev.b.read(
+                &self.bio.chunkinfo.blobid(),
+                &mut buf,
+                self.bio.chunkinfo.blob_offset(),
+                self.bio.chunkinfo.compress_size() as usize,
+            )?;
+            debug_assert_eq!(len, buf.len());
+            self.buf = utils::decompress(&buf, self.bio.blksize)?;
         }
 
         let count = cmp::min(
@@ -152,7 +155,7 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
     ) -> Result<usize, Error> {
         let mut f_offset: u64 = offset;
         let mut count: usize = 0;
-        if self.bio.blkinfo.compr_size == 0 {
+        if self.bio.chunkinfo.compress_size() == 0 {
             return self.fill_hole(bufs);
         }
         for buf in bufs.iter() {
@@ -172,12 +175,10 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
     fn write_at_volatile(&mut self, slice: VolatileSlice, _offset: u64) -> Result<usize, Error> {
         let mut buf = vec![0u8; slice.len()];
         slice.copy_to(&mut buf);
-        let wbuf = if self.dev.rw_layer.compressed() {
-            utils::compress(&buf)?
-        } else {
-            buf
-        };
-        self.dev.rw_layer.write(&self.bio.blkinfo.clone(), &wbuf)?;
+        let compressed = utils::compress(&buf)?;
+        self.dev
+            .b
+            .write(&self.bio.chunkinfo.blobid(), &compressed, offset)?;
         // Need to return slice length because that's what upper layer asks to write
         Ok(slice.len())
     }
@@ -202,14 +203,13 @@ impl RafsBioDevice<'_> {
 }
 
 // Rafs device blob IO descriptor
-#[derive(Default, Debug)]
+#[derive(Clone, Default)]
 pub struct RafsBioDesc<'a> {
     // Blob IO flags
     pub bi_flags: u32,
     // Totol IO size to be performed
     pub bi_size: usize,
-    // Array of blob IO info. Corresponding data should
-    // be read from (written to) IO stream sequencially
+    // Array of blob IO info. Corresponding data should be read from/write to IO stream sequentially
     pub bi_vec: Vec<RafsBio<'a>>,
 }
 
@@ -222,21 +222,22 @@ impl RafsBioDesc<'_> {
 }
 
 // Rafs blob IO info
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone)]
 pub struct RafsBio<'a> {
-    pub blkinfo: &'a RafsBlk,
-    // offset within the block
+    /// Reference to the chunk.
+    pub chunkinfo: &'a dyn RafsChunkInfo,
+    /// offset within the block
     pub offset: u32,
-    // size of data to transfer
+    /// size of data to transfer
     pub size: usize,
-    // block size to read in one shot
+    /// block size to read in one shot
     pub blksize: u32,
 }
 
 impl<'a> RafsBio<'a> {
-    pub fn new(b: &'a RafsBlk, offset: u32, size: usize, blksize: u32) -> Self {
+    pub fn new(chunkinfo: &'a dyn RafsChunkInfo, offset: u32, size: usize, blksize: u32) -> Self {
         RafsBio {
-            blkinfo: b,
+            chunkinfo,
             offset,
             size,
             blksize,

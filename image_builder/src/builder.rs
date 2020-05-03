@@ -13,7 +13,7 @@ use std::io::{ErrorKind, Result};
 use std::os::linux::fs::MetadataExt;
 use std::path::Path;
 
-use rafs::layout::*;
+use rafs::metadata::layout::*;
 
 use crate::node::*;
 
