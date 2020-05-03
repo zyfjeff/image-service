@@ -14,7 +14,7 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 use std::io::{Error, Result};
 use std::ops::Deref;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Component, Path};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -90,7 +90,6 @@ impl PseudoFs {
             return Err(Error::from_raw_os_error(libc::EINVAL));
         }
 
-        let mut pathbuf = PathBuf::from("/");
         let mut inode = self.root_inode.clone();
 
         for component in path.components() {
@@ -103,7 +102,6 @@ impl PseudoFs {
                 Component::Normal(path) => {
                     // lookup or create component
                     inode = self.do_lookup_create(&inode, path.to_str().unwrap());
-                    pathbuf.push(inode.name.clone());
                 }
             }
         }
