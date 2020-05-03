@@ -95,12 +95,17 @@ impl PseudoFs {
 
         for component in path.components() {
             debug!("pseudo fs mount iterate {:?}", component.as_os_str());
-            if component == Component::RootDir {
-                continue;
+            match component {
+                Component::RootDir => continue,
+                Component::CurDir => continue,
+                Component::ParentDir => inode = self.get_inode(inode.parent).unwrap(),
+                Component::Prefix(_) => panic!("unsupported path: {}", mountpoint),
+                Component::Normal(path) => {
+                    // lookup or create component
+                    inode = self.do_lookup_create(&inode, path.to_str().unwrap());
+                    pathbuf.push(inode.name.clone());
+                }
             }
-            // lookup or create component
-            inode = self.do_lookup_create(&inode, component.as_os_str().to_str().unwrap());
-            pathbuf.push(inode.name.clone());
         }
 
         // Now we have all path components exist, return the last one
@@ -135,6 +140,10 @@ impl PseudoFs {
         parent.insert_child(inode.clone());
 
         inode
+    }
+
+    fn get_inode(&self, ino: Inode) -> Option<Arc<PseudoInode>> {
+        self.inodes.load().get(&ino).map(|x| x.clone())
     }
 
     fn do_lookup_create(&self, parent: &Arc<PseudoInode>, name: &str) -> Arc<PseudoInode> {
@@ -193,6 +202,10 @@ impl PseudoFs {
             .ok_or_else(|| Error::from_raw_os_error(libc::ENOENT))?;
         let mut next = offset + 1;
         let children = inode.children.load();
+
+        if offset >= children.len() as u64 {
+            return Ok(());
+        }
 
         for child in children[offset as usize..].iter() {
             match add_entry(DirEntry {
@@ -292,5 +305,157 @@ impl FileSystem for PseudoFs {
 
     fn access(&self, _ctx: Context, _inode: u64, _mask: u32) -> Result<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::CString;
+
+    fn create_fuse_context() -> Context {
+        Context {
+            uid: 0,
+            gid: 0,
+            pid: 0,
+        }
+    }
+
+    #[test]
+    fn test_pseudofs_new() {
+        let fs = PseudoFs::new(0x10);
+
+        assert_eq!(fs.index, 0x10);
+        assert_eq!(fs.next_inode.load(Ordering::Relaxed), 2);
+        assert_eq!(fs.root_inode.ino, ROOT_ID);
+        assert_eq!(fs.root_inode.children.load().len(), 0);
+        assert_eq!(fs.inodes.load().len(), 1);
+    }
+
+    #[test]
+    fn test_pseudofs_mount() {
+        let fs = PseudoFs::new(0x10);
+
+        assert_eq!(
+            fs.mount("test").unwrap_err().raw_os_error().unwrap(),
+            libc::EINVAL
+        );
+
+        let a1 = fs.mount("/a").unwrap();
+        let a2 = fs.mount("/a").unwrap();
+        assert_eq!(a1, a2);
+        let a3 = fs.mount("/./a").unwrap();
+        assert_eq!(a1, a3);
+        let a4 = fs.mount("/../a").unwrap();
+        assert_eq!(a1, a4);
+        let a5 = fs.mount("/../../a").unwrap();
+        assert_eq!(a1, a5);
+
+        let c1 = fs.mount("/a/b/c").unwrap();
+        let c1_i = fs.inodes.load().get(&c1).unwrap().clone();
+        let b1 = fs.mount("/a/b").unwrap();
+        assert_eq!(c1, c1_i.ino);
+        assert_eq!(c1_i.parent, b1);
+    }
+
+    #[test]
+    fn test_pseudofs_lookup() {
+        let fs = PseudoFs::new(0x10);
+        let a1 = fs.mount("/a").unwrap();
+        let b1 = fs.mount("/a/b").unwrap();
+        let c1 = fs.mount("/a/b/c").unwrap();
+
+        assert!(fs
+            .lookup(
+                create_fuse_context(),
+                0x1000_0000,
+                &CString::new(".").unwrap()
+            )
+            .is_err());
+        assert_eq!(
+            fs.lookup(create_fuse_context(), ROOT_ID, &CString::new("..").unwrap())
+                .unwrap()
+                .inode,
+            ROOT_ID
+        );
+        assert_eq!(
+            fs.lookup(create_fuse_context(), ROOT_ID, &CString::new(".").unwrap())
+                .unwrap()
+                .inode,
+            ROOT_ID
+        );
+        assert_eq!(
+            fs.lookup(create_fuse_context(), ROOT_ID, &CString::new("a").unwrap())
+                .unwrap()
+                .inode,
+            a1
+        );
+        assert!(fs
+            .lookup(
+                create_fuse_context(),
+                ROOT_ID,
+                &CString::new("a_no").unwrap()
+            )
+            .is_err());
+        assert_eq!(
+            fs.lookup(create_fuse_context(), a1, &CString::new("b").unwrap())
+                .unwrap()
+                .inode,
+            b1
+        );
+        assert!(fs
+            .lookup(create_fuse_context(), a1, &CString::new("b_no").unwrap())
+            .is_err());
+        assert_eq!(
+            fs.lookup(create_fuse_context(), b1, &CString::new("c").unwrap())
+                .unwrap()
+                .inode,
+            c1
+        );
+        assert!(fs
+            .lookup(create_fuse_context(), b1, &CString::new("c_no").unwrap())
+            .is_err());
+    }
+
+    #[test]
+    fn test_pseudofs_getattr() {
+        let fs = PseudoFs::new(0x10);
+        let a1 = fs.mount("/a").unwrap();
+
+        fs.getattr(create_fuse_context(), ROOT_ID, None).unwrap();
+        fs.getattr(create_fuse_context(), a1, None).unwrap();
+        assert!(fs.getattr(create_fuse_context(), 0x1000, None).is_err());
+    }
+
+    #[test]
+    fn test_pseudofs_readdir() {
+        let fs = PseudoFs::new(0x10);
+        let _ = fs.mount("/a").unwrap();
+        let _ = fs.mount("/b").unwrap();
+
+        fs.readdir(create_fuse_context(), ROOT_ID, 0, 0, 0, |_| Ok(1))
+            .unwrap();
+        fs.readdir(create_fuse_context(), ROOT_ID, 0, 1, 0, |_| Ok(1))
+            .unwrap();
+        fs.readdir(create_fuse_context(), ROOT_ID, 0, 1, 1, |_| Ok(1))
+            .unwrap();
+        fs.readdir(create_fuse_context(), ROOT_ID, 0, 2, 0, |_| Ok(1))
+            .unwrap();
+        fs.readdir(create_fuse_context(), ROOT_ID, 0, 3, 0, |_| Ok(1))
+            .unwrap();
+        fs.readdir(create_fuse_context(), ROOT_ID, 0, 3, 3, |_| Ok(1))
+            .unwrap();
+        assert!(fs
+            .readdir(create_fuse_context(), 0x1000, 0, 3, 0, |_| Ok(1))
+            .is_err());
+    }
+
+    #[test]
+    fn test_pseudofs_access() {
+        let fs = PseudoFs::new(0x10);
+        let a1 = fs.mount("/a").unwrap();
+        let ctx = create_fuse_context();
+
+        fs.access(ctx, a1, 0).unwrap();
     }
 }
