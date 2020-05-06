@@ -192,7 +192,7 @@ impl Builder {
         }
 
         for lower in &mut lowers {
-            info!(
+            debug!(
                 "{} {} {} inode {}, parent {}",
                 lower.overlay,
                 lower.get_type(),
@@ -209,7 +209,7 @@ impl Builder {
     }
 
     fn dump_superblock(&mut self) -> Result<RafsSuperBlockInfo> {
-        info!("upper building superblock");
+        debug!("upper building superblock");
 
         let mut sb = RafsSuperBlockInfo::new();
         // all fields are initilized by RafsSuperBlockInfo::new()
@@ -228,7 +228,7 @@ impl Builder {
         for node in &mut self.additions {
             let file_type = node.get_type();
             if file_type != "" {
-                info!(
+                debug!(
                     "upper building {} {}",
                     file_type,
                     node.rootfs_path().to_str().unwrap(),
