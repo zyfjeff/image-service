@@ -433,11 +433,26 @@ fn main() -> Result<()> {
                 .takes_value(true)
                 .min_values(1),
         )
+        .arg(
+            Arg::with_name("log-level")
+                .long("log-level")
+                .default_value("warn")
+                .help("Specify log level: trace, debug, info, warn, error")
+                .takes_value(true)
+                .required(false)
+                .global(true),
+        )
         .get_matches();
+
+    let v = cmd_arguments
+        .value_of("log-level")
+        .unwrap()
+        .parse()
+        .unwrap_or(log::LevelFilter::Warn);
 
     stderrlog::new()
         .quiet(false)
-        .verbosity(log::LevelFilter::Trace as usize)
+        .verbosity(utils::log_level_to_verbosity(v))
         .timestamp(stderrlog::Timestamp::Second)
         .init()
         .unwrap();
