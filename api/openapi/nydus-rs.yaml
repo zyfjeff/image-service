@@ -27,6 +27,30 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: Internal Server Error
       summary: Returns general information about a nydus-rs daemon
+    put:
+        operationId: configureDaemon
+        responses:
+          "204":
+            content:
+              content: {}
+            description: "Successfully configure the daemon!"
+          "403":
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Error'
+            description: "Can't configure the daemon!"
+          default:
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/Error'
+            description: Internal Server Error
+        requestBody:
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DaemonConf'
   /mount:
     put:
       operationId: createMount
@@ -76,6 +100,21 @@ components:
       - id
       - state
       - version
+      type: object
+    DaemonConf:
+      example:
+        log_level: warn
+      properties:
+        log_level:
+          type: string
+        state:
+          enum:
+          - trace
+          - debug
+          - info
+          - warn
+          - error
+          type: string
       type: object
     MountInfo:
       example:

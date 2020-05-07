@@ -53,8 +53,8 @@ pub type ApiResponse = std::result::Result<ApiResponsePayload, ApiError>;
 #[allow(clippy::large_enum_variant)]
 pub enum ApiRequest {
     DaemonInfo(Sender<ApiResponse>),
-
     Mount(MountInfo, Sender<ApiResponse>),
+    ConfigureDaemon(DaemonConf, Sender<ApiResponse>),
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -71,6 +71,11 @@ pub struct MountInfo {
     pub mountpoint: String,
 }
 
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct DaemonConf {
+    pub log_level: String,
+}
+
 pub fn daemon_info(api_evt: EventFd, api_sender: Sender<ApiRequest>) -> ApiResult<DaemonInfo> {
     let (response_sender, response_receiver) = channel();
 
@@ -84,6 +89,26 @@ pub fn daemon_info(api_evt: EventFd, api_sender: Sender<ApiRequest>) -> ApiResul
 
     match info {
         ApiResponsePayload::DaemonInfo(info) => Ok(info),
+        _ => Err(ApiError::ResponsePayloadType),
+    }
+}
+
+pub fn daemon_configure(
+    api_evt: EventFd,
+    api_sender: Sender<ApiRequest>,
+    conf: DaemonConf,
+) -> ApiResult<()> {
+    let (response_sender, response_receiver) = channel();
+
+    api_sender
+        .send(ApiRequest::ConfigureDaemon(conf, response_sender))
+        .map_err(ApiError::RequestSend)?;
+    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
+
+    let info = response_receiver.recv().map_err(ApiError::ResponseRecv)??;
+
+    match info {
+        ApiResponsePayload::Empty => Ok(()),
         _ => Err(ApiError::ResponsePayloadType),
     }
 }
@@ -120,6 +145,7 @@ pub enum HttpError {
 
     /// Could not mount resource
     Mount(ApiError),
+    Configure(ApiError),
 }
 
 fn error_response(error: HttpError, status: StatusCode) -> Response {
@@ -149,6 +175,24 @@ impl EndpointHandler for InfoHandler {
                     response
                 }
                 Err(e) => error_response(e, StatusCode::InternalServerError),
+            },
+            Method::Put => match &req.body {
+                Some(body) => {
+                    let kv: DaemonConf = match serde_json::from_slice(body.raw())
+                        .map_err(HttpError::SerdeJsonDeserialize)
+                    {
+                        Ok(config) => config,
+                        Err(e) => return error_response(e, StatusCode::BadRequest),
+                    };
+
+                    match daemon_configure(api_notifier, api_sender, kv)
+                        .map_err(HttpError::Configure)
+                    {
+                        Ok(()) => Response::new(Version::Http11, StatusCode::NoContent),
+                        Err(e) => error_response(e, StatusCode::InternalServerError),
+                    }
+                }
+                None => Response::new(Version::Http11, StatusCode::BadRequest),
             },
             _ => Response::new(Version::Http11, StatusCode::BadRequest),
         }

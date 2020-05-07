@@ -243,6 +243,15 @@ impl ApiServer {
                                         io::Error::from(io::ErrorKind::BrokenPipe)
                                     })?;
                                 }
+                                ApiRequest::ConfigureDaemon(conf, sender) => {
+                                    if let Ok(v) = conf.log_level.parse::<log::LevelFilter>() {
+                                        log::set_max_level(v);
+                                        sender.send(Ok(ApiResponsePayload::Empty)).unwrap();
+                                    } else {
+                                        error!("Invalid log level passed, {}", conf.log_level);
+                                        sender.send(Err(ApiError::ResponsePayloadType)).unwrap();
+                                    }
+                                }
                             }
                         }
                         t => {
