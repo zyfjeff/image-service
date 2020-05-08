@@ -16,7 +16,9 @@ use std::io::{Error, Result};
 pub struct Config {
     pub backend_type: String,
     pub backend_config: HashMap<String, String>,
+    #[serde(default)]
     pub cache_type: String,
+    #[serde(default)]
     pub cache_config: HashMap<String, String>,
 }
 

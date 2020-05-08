@@ -48,6 +48,7 @@ impl BlobCacheEntry {
             )
         };
         if res < 0 {
+            error!("read from blob file err! {}", Error::last_os_error());
             return Err(Error::last_os_error());
         }
         Ok(buf)
@@ -63,6 +64,7 @@ impl BlobCacheEntry {
             )
         };
         if res < 0 {
+            error!("write to blob file err! {}", Error::last_os_error());
             return Err(Error::last_os_error());
         }
         Ok(res as usize)
@@ -88,6 +90,7 @@ impl BlobCache {
         let fd =
             unsafe { libc::open(blob_file_path.as_ptr(), libc::O_RDWR | libc::O_CREAT, 0o644) };
         if fd < 0 {
+            error!("open blob file err!");
             return fd;
         }
         fd_table.insert(blk.blob_id.clone(), fd);
@@ -172,6 +175,7 @@ impl RafsCache for BlobCache {
         if let Some(entry) = self.set(blk) {
             return self.entry_read(&entry);
         }
+        error!("blob cache set err");
         Err(Error::from_raw_os_error(libc::EIO))
     }
 
