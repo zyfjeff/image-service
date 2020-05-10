@@ -39,7 +39,7 @@ use fuse_rs::abi::linux_abi::Attr;
 use fuse_rs::api::filesystem::ROOT_ID;
 
 use super::*;
-use crate::einval;
+use crate::{einval, enoent};
 
 pub const INO_FLAG_HARDLINK: u64 = 0x1000;
 pub const INO_FLAG_SYMLINK: u64 = 0x2000;
@@ -374,28 +374,58 @@ impl RafsInode for OndiskInode {
         }
     }
 
-    fn get_symblink(&self) -> Result<&[u8]> {
-        unimplemented!()
+    fn get_symlink(&self, sb: &RafsSuper) -> Result<&[u8]> {
+        sb.s_inodes.get_symlink(self)
     }
 
-    fn get_xattrs(&self) -> Result<HashMap<String, Vec<u8>>> {
-        unimplemented!()
+    fn get_xattrs(&self, sb: &RafsSuper) -> Result<HashMap<String, Vec<u8>>> {
+        sb.s_inodes.get_xattrs(self)
     }
 
-    fn get_child_count(&self) -> Result<usize> {
-        unimplemented!()
+    fn get_child_count(&self, sb: &RafsSuper) -> Result<usize> {
+        match sb.s_meta.s_version {
+            RAFS_SUPER_VERSION_V5 => Ok(self.child_count() as usize),
+            _ => Err(enosys()),
+        }
     }
 
-    fn get_child_by_index(&self, _index: usize) -> Result<&dyn RafsInode> {
-        unimplemented!()
+    fn get_child_by_index<'a, 'b>(
+        &'a self,
+        index: usize,
+        sb: &'b RafsSuper,
+    ) -> Result<&'b dyn RafsInode> {
+        if index >= self.child_count() as usize {
+            return Err(enoent());
+        }
+        match index.checked_add(self.child_index() as usize) {
+            None => Err(enoent()),
+            Some(v) => sb.get_inode(v as Inode),
+        }
     }
 
-    fn get_child_by_name(&self, _target: &str, _sb: &RafsSuper) -> Result<&dyn RafsInode> {
-        unimplemented!()
+    fn get_child_by_name<'a, 'b>(
+        &'a self,
+        target: &str,
+        sb: &'b RafsSuper,
+    ) -> Result<&'b dyn RafsInode> {
+        for idx in self.child_index()..self.child_index() + self.child_count() {
+            let inode = sb.get_inode(idx as Inode)?;
+            if inode.name() == target {
+                return Ok(inode);
+            }
+        }
+
+        Err(enoent())
     }
 
-    fn alloc_bio_desc(&self, _blksize: u32, _size: usize, _offset: u64) -> Result<RafsBioDesc> {
-        unimplemented!()
+    fn alloc_bio_desc(
+        &self,
+        blksize: u32,
+        size: usize,
+        offset: u64,
+        sb: &RafsSuper,
+    ) -> Result<RafsBioDesc> {
+        sb.s_inodes.alloc_bio_desc(blksize, size, offset, self)
     }
 
     fn name(&self) -> &str {
@@ -628,6 +658,7 @@ mod tests {
         sb.set_magic(0x1);
         assert_eq!(sb.magic(), 1);
         assert_eq!(sb.s_magic, 0x1);
+        sb.set_magic(RAFS_SUPER_MAGIC);
         sb.set_version(2);
         assert_eq!(sb.version(), 2);
         sb.set_sb_size(3);
@@ -643,9 +674,10 @@ mod tests {
         sb.validate().unwrap_err();
     }
 
+    #[test]
     fn test_rafs_ondisk_superblock_v5() {
         let mut sb = OndiskSuperBlock::new();
-        sb.set_inode_size(1000);
+        sb.set_inodes_count(1000);
         sb.set_mapping_talbe_entries(1024);
         sb.set_mapping_talbe_offset(RAFS_SUPERBLOCK_SIZE as u64);
 
@@ -666,25 +698,36 @@ mod tests {
         sb.set_magic(0x1);
         assert_eq!(sb.magic(), 1);
         assert_eq!(sb.s_magic, 0x1);
+        sb.validate().unwrap_err();
+        sb.set_magic(RAFS_SUPER_MAGIC);
+
         sb.set_version(2);
         assert_eq!(sb.version(), 2);
+        sb.validate().unwrap_err();
+        sb.set_version(RAFS_SUPER_VERSION_V5);
+
         sb.set_sb_size(3);
         assert_eq!(sb.sb_size(), 3);
+        sb.set_sb_size(RAFS_SUPERBLOCK_SIZE as u32);
         sb.set_inode_size(4);
         assert_eq!(sb.inode_size(), 4);
         sb.set_inode_size(5);
         assert_eq!(sb.inode_size(), 5);
+        sb.set_inode_size(RAFS_INODE_INFO_SIZE as u32);
         sb.set_chunkinfo_size(6);
         assert_eq!(sb.chunkinfo_size(), 6);
+        sb.set_chunkinfo_size(RAFS_CHUNK_INFO_SIZE as u32);
         sb.set_flags(7);
         assert_eq!(sb.flags(), 7);
-        sb.validate().unwrap_err();
+        sb.set_flags(0);
 
-        sb.set_inode_size(2000);
+        sb.validate().unwrap();
+
+        sb.set_inodes_count(2000);
         sb.validate().unwrap_err();
-        sb.set_inode_size(0);
+        sb.set_inodes_count(0);
         sb.validate().unwrap_err();
-        sb.set_inode_size(100);
+        sb.set_inodes_count(100);
 
         sb.set_mapping_talbe_offset(RAFS_SUPERBLOCK_SIZE as u64 + 1);
         sb.validate().unwrap_err();

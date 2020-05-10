@@ -17,7 +17,8 @@ use fuse_rs::api::filesystem::{Entry, ROOT_ID};
 
 use crate::fs::Inode;
 use crate::metadata::layout::{
-    OndiskChunkInfo, OndiskDigest, OndiskInode, RAFS_CHUNK_INFO_SIZE, RAFS_SUPER_VERSION_V5,
+    OndiskChunkInfo, OndiskDigest, OndiskInode, RAFS_CHUNK_INFO_SIZE, RAFS_SUPER_VERSION_V4,
+    RAFS_SUPER_VERSION_V5,
 };
 use crate::metadata::{
     parse_string, RafsChunkInfo, RafsDigest, RafsInode, RafsSuper, RafsSuperInodes, RafsSuperMeta,
@@ -166,8 +167,14 @@ impl RafsSuperInodes for CachedInodes {
         root_inode.load(sb, r)?;
         sb.s_root_inode = root_inode.i_ino;
 
+        if sb.s_version == RAFS_SUPER_VERSION_V4 {
+            sb.s_inodes_count = std::u64::MAX;
+        }
         // Load and cache all inodes starting from the root directory.
         self.load_dir_dfs(root_inode, sb, r)?;
+        if sb.s_version == RAFS_SUPER_VERSION_V4 {
+            sb.s_inodes_count = self.s_inodes.len() as u64;
+        }
 
         // root inode must have ROOT_ID as its inode number
         if sb.s_root_inode != ROOT_ID {
@@ -376,7 +383,7 @@ impl RafsInode for CachedInode {
         }
     }
 
-    fn get_symblink(&self) -> Result<&[u8]> {
+    fn get_symlink(&self, _sb: &RafsSuper) -> Result<&[u8]> {
         if !self.is_symlink() {
             Err(einval())
         } else {
@@ -384,33 +391,56 @@ impl RafsInode for CachedInode {
         }
     }
 
-    fn get_xattrs(&self) -> Result<HashMap<String, Vec<u8>>> {
+    fn get_xattrs(&self, _sb: &RafsSuper) -> Result<HashMap<String, Vec<u8>>> {
         Ok(self.i_xattr.clone())
     }
 
-    fn get_child_count(&self) -> Result<usize> {
+    fn get_child_count(&self, _sb: &RafsSuper) -> Result<usize> {
         Ok(self.i_child.len())
     }
 
-    fn get_child_by_index(&self, index: usize) -> Result<&dyn RafsInode> {
+    fn get_child_by_index<'a, 'b>(
+        &'a self,
+        index: usize,
+        _sb: &'b RafsSuper,
+    ) -> Result<&'b dyn RafsInode> {
         if index >= self.i_child.len() {
             Err(enoent())
         } else {
-            Ok(self.i_child[index].as_ref())
+            // Logically we should do a sb.s_inodes.get(self.i_child[index].ino()),
+            // so a transmute() to avoid the HashMap looking up and it's safe because all inodes
+            // have the same lifetime as the superblock.
+            let inode = self.i_child[index].as_ref();
+            Ok(unsafe { std::mem::transmute::<&'a dyn RafsInode, &'b dyn RafsInode>(inode) })
         }
     }
 
-    fn get_child_by_name(&self, target: &str, _sb: &RafsSuper) -> Result<&dyn RafsInode> {
+    fn get_child_by_name<'a, 'b>(
+        &'a self,
+        target: &str,
+        _sb: &'b RafsSuper,
+    ) -> Result<&'b dyn RafsInode> {
         for inode in self.i_child.iter() {
             if target.eq(inode.name()) {
-                return Ok(inode.as_ref() as &dyn RafsInode);
+                // Logically we should do a sb.s_inodes.get(self.i_child[index].ino()),
+                // so a transmute() to avoid the HashMap looking up and it's safe because all inodes
+                // have the same lifetime as the superblock.
+                return Ok(unsafe {
+                    std::mem::transmute::<&'a dyn RafsInode, &'b dyn RafsInode>(inode.as_ref())
+                });
             }
         }
 
         Err(enoent())
     }
 
-    fn alloc_bio_desc(&self, blksize: u32, size: usize, offset: u64) -> Result<RafsBioDesc> {
+    fn alloc_bio_desc(
+        &self,
+        blksize: u32,
+        size: usize,
+        offset: u64,
+        _sb: &RafsSuper,
+    ) -> Result<RafsBioDesc> {
         let mut desc = RafsBioDesc::new();
         let end = offset + size as u64;
 
@@ -636,6 +666,7 @@ mod tests {
     #[test]
     fn test_rafs_cached_inode_alloc_bio_desc() {
         let mut inode = CachedInode::new();
+        let sb = RafsSuper::new();
 
         inode.set_chunk_cnt(2);
         inode.i_data.push(CachedChunkInfo {
@@ -653,21 +684,21 @@ mod tests {
             c_compr_size: 4096,
         });
 
-        let descs = inode.alloc_bio_desc(4096, 1, 0).unwrap();
+        let descs = inode.alloc_bio_desc(4096, 1, 0, &sb).unwrap();
         assert_eq!(descs.bi_size, 1);
         assert_eq!(descs.bi_vec.len(), 1);
         assert_eq!(descs.bi_vec[0].offset, 0);
         assert_eq!(descs.bi_vec[0].size, 1);
         assert_eq!(descs.bi_vec[0].blksize, 4096);
 
-        let descs = inode.alloc_bio_desc(4096, 1, 4096).unwrap();
+        let descs = inode.alloc_bio_desc(4096, 1, 4096, &sb).unwrap();
         assert_eq!(descs.bi_size, 1);
         assert_eq!(descs.bi_vec.len(), 1);
         assert_eq!(descs.bi_vec[0].offset, 0);
         assert_eq!(descs.bi_vec[0].size, 1);
         assert_eq!(descs.bi_vec[0].blksize, 4096);
 
-        let descs = inode.alloc_bio_desc(4096, 4097, 0).unwrap();
+        let descs = inode.alloc_bio_desc(4096, 4097, 0, &sb).unwrap();
         assert_eq!(descs.bi_size, 4097);
         assert_eq!(descs.bi_vec.len(), 2);
         assert_eq!(descs.bi_vec[0].offset, 0);
@@ -677,7 +708,7 @@ mod tests {
         assert_eq!(descs.bi_vec[1].size, 1);
         assert_eq!(descs.bi_vec[1].blksize, 4096);
 
-        let descs = inode.alloc_bio_desc(4096, 8193, 0).unwrap();
+        let descs = inode.alloc_bio_desc(4096, 8193, 0, &sb).unwrap();
         assert_eq!(descs.bi_size, 8192);
         assert_eq!(descs.bi_vec.len(), 2);
         assert_eq!(descs.bi_vec[0].offset, 0);
@@ -687,17 +718,17 @@ mod tests {
         assert_eq!(descs.bi_vec[1].size, 4096);
         assert_eq!(descs.bi_vec[1].blksize, 4096);
 
-        let descs = inode.alloc_bio_desc(4096, 2, 8191).unwrap();
+        let descs = inode.alloc_bio_desc(4096, 2, 8191, &sb).unwrap();
         assert_eq!(descs.bi_size, 1);
         assert_eq!(descs.bi_vec.len(), 1);
         assert_eq!(descs.bi_vec[0].offset, 4095);
         assert_eq!(descs.bi_vec[0].size, 1);
         assert_eq!(descs.bi_vec[0].blksize, 4096);
 
-        let descs = inode.alloc_bio_desc(4096, 1, 8192).unwrap();
+        let descs = inode.alloc_bio_desc(4096, 1, 8192, &sb).unwrap();
         assert_eq!(descs.bi_size, 0);
 
-        let descs = inode.alloc_bio_desc(4096, 1, 8193).unwrap();
+        let descs = inode.alloc_bio_desc(4096, 1, 8193, &sb).unwrap();
         assert_eq!(descs.bi_size, 0);
     }
 

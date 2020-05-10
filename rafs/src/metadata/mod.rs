@@ -21,12 +21,13 @@ use self::layout::{
 };
 use self::noop::NoopInodes;
 use crate::fs::{Inode, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
-use crate::metadata::layout::RAFS_CHUNK_INFO_SIZE;
+use crate::metadata::direct_map::DirectMapInodes;
+use crate::metadata::layout::{OndiskInode, RAFS_CHUNK_INFO_SIZE};
 use crate::storage::device::RafsBioDesc;
-use crate::{ebadf, einval, RafsIoReader, RafsIoWriter};
+use crate::{ebadf, einval, enosys, RafsIoReader, RafsIoWriter};
 
 pub mod cached;
-//pub(crate) mod direct_map;
+pub mod direct_map;
 pub mod layout;
 pub(crate) mod noop;
 
@@ -35,6 +36,7 @@ pub const RAFS_BLOB_ID_MAX_LENGTH: usize = 72;
 pub const RAFS_INODE_BLOCKSIZE: u32 = 4096;
 pub const RAFS_MAX_NAME: usize = 255;
 pub const RAFS_DEFAULT_BLOCK_SIZE: usize = 1024 * 1024;
+pub const RAFS_MAX_METADATA_SIZE: usize = 0x8000_0000;
 
 /// Cached Rafs super block metadata.
 pub struct RafsSuperMeta {
@@ -58,6 +60,8 @@ pub struct RafsSuperMeta {
 pub struct RafsSuper {
     pub s_meta: RafsSuperMeta,
     pub s_inodes: Box<dyn RafsSuperInodes>,
+    load_inodes: bool,
+    cache_inodes: bool,
 }
 
 impl RafsSuper {
@@ -80,6 +84,8 @@ impl RafsSuper {
                 s_entry_timeout: Duration::from_secs(RAFS_DEFAULT_ENTRY_TIMEOUT),
             },
             s_inodes: Box::new(NoopInodes::new()),
+            load_inodes: true,
+            cache_inodes: false,
         }
     }
 
@@ -119,15 +125,21 @@ impl RafsSuper {
         match sb.version() {
             RAFS_SUPER_VERSION_V4 => {
                 let mut inodes = Box::new(CachedInodes::new());
-
-                self.s_meta.s_inodes_count = std::u64::MAX;
                 inodes.load(&mut self.s_meta, r)?;
                 self.s_inodes.destroy();
                 self.s_inodes = inodes;
             }
             RAFS_SUPER_VERSION_V5 => {
-                // TODO
-                // unimplemented!()
+                if self.load_inodes {
+                    if self.cache_inodes {
+                        unimplemented!();
+                    } else {
+                        let mut inodes = Box::new(DirectMapInodes::new());
+                        inodes.load(&mut self.s_meta, r)?;
+                        self.s_inodes.destroy();
+                        self.s_inodes = inodes;
+                    }
+                }
             }
             _ => return Err(einval()),
         }
@@ -175,6 +187,24 @@ pub trait RafsSuperInodes {
     fn destroy(&mut self);
 
     fn get_inode(&self, ino: Inode) -> Result<&dyn RafsInode>;
+
+    fn get_symlink<'a, 'b>(&'a self, _inode: &'b OndiskInode) -> Result<&'b [u8]> {
+        Err(enosys())
+    }
+
+    fn get_xattrs(&self, _inode: &OndiskInode) -> Result<HashMap<String, Vec<u8>>> {
+        Err(enosys())
+    }
+
+    fn alloc_bio_desc<'a, 'b>(
+        &'a self,
+        _blksize: u32,
+        _size: usize,
+        _offset: u64,
+        _inode: &'b OndiskInode,
+    ) -> Result<RafsBioDesc<'b>> {
+        Err(enosys())
+    }
 }
 
 /// Trait to access Rafs Inode Information.
@@ -187,12 +217,26 @@ pub trait RafsInode {
 
     fn get_entry(&self, sb: &RafsSuperMeta) -> Entry;
     fn get_attr(&self) -> Attr;
-    fn get_symblink(&self) -> Result<&[u8]>;
-    fn get_xattrs(&self) -> Result<HashMap<String, Vec<u8>>>;
-    fn get_child_count(&self) -> Result<usize>;
-    fn get_child_by_index(&self, index: usize) -> Result<&dyn RafsInode>;
-    fn get_child_by_name(&self, target: &str, sb: &RafsSuper) -> Result<&dyn RafsInode>;
-    fn alloc_bio_desc(&self, blksize: u32, size: usize, offset: u64) -> Result<RafsBioDesc>;
+    fn get_symlink(&self, sb: &RafsSuper) -> Result<&[u8]>;
+    fn get_xattrs(&self, sb: &RafsSuper) -> Result<HashMap<String, Vec<u8>>>;
+    fn get_child_count(&self, sb: &RafsSuper) -> Result<usize>;
+    fn get_child_by_index<'a, 'b>(
+        &'a self,
+        index: usize,
+        sb: &'b RafsSuper,
+    ) -> Result<&'b dyn RafsInode>;
+    fn get_child_by_name<'a, 'b>(
+        &'a self,
+        target: &str,
+        sb: &'b RafsSuper,
+    ) -> Result<&'b dyn RafsInode>;
+    fn alloc_bio_desc(
+        &self,
+        blksize: u32,
+        size: usize,
+        offset: u64,
+        sb: &RafsSuper,
+    ) -> Result<RafsBioDesc>;
 
     // Simply accessors below
     fn name(&self) -> &str;
@@ -366,6 +410,16 @@ pub(crate) mod tests {
             let mut data = self.data.lock().unwrap();
             data.0.extend_from_slice(buf);
         }
+
+        pub fn len(&self) -> usize {
+            let data = self.data.lock().unwrap();
+            data.0.len()
+        }
+
+        pub fn as_buf(&self) -> (*const u8, usize) {
+            let data = self.data.lock().unwrap();
+            (data.0.as_ptr(), data.0.len())
+        }
     }
 
     impl Read for CachedIoBuf {
@@ -469,6 +523,7 @@ pub(crate) mod tests {
 
         let mut buf2: Box<dyn RafsIoRead> = Box::new(buf.clone());
         let mut sb2 = RafsSuper::new();
+        sb2.load_inodes = false;
         sb2.load(&mut buf2).unwrap();
 
         assert_eq!(sb.s_meta.s_magic, sb2.s_meta.s_magic);

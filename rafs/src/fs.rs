@@ -140,8 +140,8 @@ impl Rafs {
         }
 
         let mut idx = offset as usize;
-        while idx < rafs_inode.get_child_count()? {
-            let child = rafs_inode.get_child_by_index(idx)?;
+        while idx < rafs_inode.get_child_count(&self.sb)? {
+            let child = rafs_inode.get_child_by_index(idx, &self.sb)?;
             match add_entry(DirEntry {
                 ino: child.ino(),
                 offset: (idx + 1) as u64,
@@ -250,7 +250,7 @@ impl FileSystem for Rafs {
     fn readlink(&self, _ctx: Context, inode: u64) -> Result<Vec<u8>> {
         let rafs_inode = self.sb.get_inode(inode)?;
 
-        rafs_inode.get_symblink().map(|v| v.to_vec())
+        rafs_inode.get_symlink(&self.sb).map(|v| v.to_vec())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -269,7 +269,12 @@ impl FileSystem for Rafs {
         if offset >= rafs_inode.size() {
             return Ok(0);
         }
-        let desc = rafs_inode.alloc_bio_desc(self.sb.s_meta.s_block_size, size as usize, offset)?;
+        let desc = rafs_inode.alloc_bio_desc(
+            self.sb.s_meta.s_block_size,
+            size as usize,
+            offset,
+            &self.sb,
+        )?;
         let start = io_stats::ios_latency_start();
         let r = self.device.read_to(w, desc);
         rafs_inode.stats_update(&self, io_stats::StatsFop::Read, size as usize, &r);
@@ -310,7 +315,7 @@ impl FileSystem for Rafs {
         let rafs_inode = self.sb.get_inode(inode)?;
 
         // Keep for simplicity, not optimized for performance.
-        for (k, v) in rafs_inode.get_xattrs()? {
+        for (k, v) in rafs_inode.get_xattrs(&self.sb)? {
             if key == k {
                 return match size {
                     0 => Ok(GetxattrReply::Count((v.len() + 1) as u32)),
@@ -327,7 +332,7 @@ impl FileSystem for Rafs {
         let mut count = 0;
         let mut buf = Vec::new();
 
-        for (k, _v) in rafs_inode.get_xattrs()? {
+        for (k, _v) in rafs_inode.get_xattrs(&self.sb)? {
             match size {
                 0 => count += k.len() + 1,
                 _ => {
