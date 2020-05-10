@@ -4,6 +4,31 @@
 // found in the LICENSE file.
 
 //! RAFS on disk layout structures.
+//!
+//! # RAFS File System Meta Data Format Version 5
+//! Previously RAFS has different formats for on disk meta data and runtime meta data. So when
+//! initializing an RAFS instance, it will sequentially read and parse the on disk meta data,
+//! build a copy of in memory runtime meta data. This may cause slow startup and cost too much
+//! memory to build in memory meta data.
+//!
+//! The RAFS File System Meta Data Format Version 5 (aka V5) is defined to support directly mapping
+//! RAFS meta data into process as runtime meta data, so we could parse RAFS on disk meta data on
+//! demand. The V5 meta data format has following changes:
+//! 1) file system version number been bumped to 0x500.
+//! 2) Directory inodes will sequentially assign globally unique `child index` to it's child inodes.
+//!    Two fields, "child_index" and "child_count", have been added to the OndiskInode struct.
+//! 3) For inodes with hard link count as 1, the `child index` equals to its assigned inode number.
+//! 4) For inodes with hard link count bigger than 1, the `child index` may be different from the
+//!    assigned inode number. Among those child entries linking to the same inode, there's will be
+//!    one and only one child entry having the inode number as its assigned `child index'.
+//! 5) A child index mapping table is introduced, which is used to map `child index` into offset
+//!    from the base of the super block. The formula to calculate the inode offset is:
+//!      inode_offset_from_sb = child_index_mapping_table[child_index] << 3
+//! 6) The child index mapping table follows the super block by default.
+//!
+//! Giving above definition, we could get the inode object for an inode number or child index as:
+//!    inode_ptr = sb_base_ptr + inode_offset_from_sb(inode_number)
+//!    inode_ptr = sb_base_ptr + inode_offset_from_sb(child_index)
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -22,12 +47,13 @@ pub const INO_FLAG_XATTR: u64 = 0x4000;
 pub const INO_FLAG_ALL: u64 = INO_FLAG_HARDLINK | INO_FLAG_SYMLINK | INO_FLAG_XATTR;
 
 pub const RAFS_SUPERBLOCK_SIZE: usize = 8192;
-pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 32;
+pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 52;
 pub const RAFS_SUPER_MAGIC: u32 = 0x5241_4653;
-pub const RAFS_SUPER_VERSION: u32 = 0x400;
-pub const RAFS_SUPER_MIN_VERSION: u32 = 0x400;
+pub const RAFS_SUPER_VERSION_V4: u32 = 0x400;
+pub const RAFS_SUPER_VERSION_V5: u32 = 0x500;
+pub const RAFS_SUPER_MIN_VERSION: u32 = RAFS_SUPER_VERSION_V4;
 pub const RAFS_INODE_INFO_SIZE: usize = 512;
-pub const RAFS_INODE_INFO_RESERVED_SIZE: usize = RAFS_INODE_INFO_SIZE - 392;
+pub const RAFS_INODE_INFO_RESERVED_SIZE: usize = RAFS_INODE_INFO_SIZE - 400;
 pub const RAFS_CHUNK_INFO_SIZE: usize = 128;
 pub const RAFS_XATTR_ALIGNMENT: usize = 8;
 
@@ -121,6 +147,12 @@ pub struct OndiskSuperBlock {
     s_chunkinfo_size: u32,
     /// superblock flags
     s_flags: u64,
+    /// V5: Number of unique inodes(hard link counts as 1).
+    s_inodes_count: u64,
+    /// V5: Offset of mapping table, related to starting of super block.
+    s_mapping_table_offset: u64,
+    /// V5: Size of mapping table.
+    s_mapping_table_entries: u32,
     /// Unused area.
     s_reserved: [u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
 }
@@ -129,12 +161,15 @@ impl OndiskSuperBlock {
     pub fn new() -> Self {
         OndiskSuperBlock {
             s_magic: u32::to_le(RAFS_SUPER_MAGIC as u32),
-            s_fs_version: u32::to_le(RAFS_SUPER_VERSION),
+            s_fs_version: u32::to_le(RAFS_SUPER_VERSION_V5),
             s_sb_size: u32::to_le(RAFS_SUPERBLOCK_SIZE as u32),
             s_inode_size: u32::to_le(RAFS_INODE_INFO_SIZE as u32),
             s_block_size: u32::to_le(RAFS_DEFAULT_BLOCK_SIZE as u32),
             s_chunkinfo_size: u32::to_le(RAFS_CHUNK_INFO_SIZE as u32),
             s_flags: u64::to_le(0),
+            s_inodes_count: u64::to_le(0),
+            s_mapping_table_entries: u32::to_le(0),
+            s_mapping_table_offset: u64::to_le(0),
             s_reserved: [0u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
         }
     }
@@ -142,12 +177,39 @@ impl OndiskSuperBlock {
     pub fn validate(&self) -> Result<()> {
         if self.magic() != RAFS_SUPER_MAGIC
             || self.version() < RAFS_SUPER_MIN_VERSION as u32
-            || self.version() > RAFS_SUPER_VERSION as u32
+            || self.version() > RAFS_SUPER_VERSION_V5 as u32
             || self.sb_size() != RAFS_SUPERBLOCK_SIZE as u32
             || self.inode_size() != RAFS_INODE_INFO_SIZE as u32
             || self.chunkinfo_size() != RAFS_CHUNK_INFO_SIZE as u32
         {
             return Err(Error::new(ErrorKind::InvalidData, "Invalid superblock"));
+        }
+
+        match self.version() {
+            RAFS_SUPER_VERSION_V4 => {
+                if self.inodes_count() != 0
+                    || self.mapping_table_offset() != 0
+                    || self.mapping_table_entries() != 0
+                {
+                    return Err(Error::new(ErrorKind::InvalidData, "Invalid superblock"));
+                }
+            }
+            RAFS_SUPER_VERSION_V5 => {
+                if self.inodes_count() == 0
+                    || self.mapping_table_offset() < RAFS_SUPERBLOCK_SIZE as u64
+                    || self.mapping_table_offset() & 0x7 != 0
+                    || self.mapping_table_entries() >= (1 << 29)
+                    || self.inodes_count() > self.mapping_table_entries() as u64
+                {
+                    return Err(Error::new(ErrorKind::InvalidData, "Invalid superblock"));
+                }
+            }
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "Invalid superblock version number",
+                ));
+            }
         }
 
         // TODO: validate block_size, flags and reserved.
@@ -162,6 +224,19 @@ impl OndiskSuperBlock {
     impl_pub_getter_setter!(block_size, set_block_size, s_block_size, u32);
     impl_pub_getter_setter!(chunkinfo_size, set_chunkinfo_size, s_chunkinfo_size, u32);
     impl_pub_getter_setter!(flags, set_flags, s_flags, u64);
+    impl_pub_getter_setter!(inodes_count, set_inodes_count, s_inodes_count, u64);
+    impl_pub_getter_setter!(
+        mapping_table_entries,
+        set_mapping_talbe_entries,
+        s_mapping_table_entries,
+        u32
+    );
+    impl_pub_getter_setter!(
+        mapping_table_offset,
+        set_mapping_talbe_offset,
+        s_mapping_table_offset,
+        u64
+    );
 }
 
 impl_metadata_converter!(OndiskSuperBlock);
@@ -201,6 +276,8 @@ pub struct OndiskInode {
     i_flags: u64,
     /// chunks count
     i_chunk_cnt: u64,
+    i_child_index: u32,
+    i_child_count: u32,
     i_reserved: [u8; RAFS_INODE_INFO_RESERVED_SIZE],
 }
 
@@ -224,6 +301,8 @@ impl OndiskInode {
             i_ctime: 0,
             i_flags: 0,
             i_chunk_cnt: 0,
+            i_child_index: 0,
+            i_child_count: 0,
             i_reserved: [0u8; RAFS_INODE_INFO_RESERVED_SIZE],
         }
     }
@@ -359,6 +438,8 @@ impl RafsInode for OndiskInode {
     impl_getter_setter!(ctime, set_ctime, i_ctime, u64);
     impl_getter_setter!(flags, set_flags, i_flags, u64);
     impl_getter_setter!(chunk_cnt, set_chunk_cnt, i_chunk_cnt, u64);
+    impl_getter_setter!(child_index, set_child_index, i_child_index, u32);
+    impl_getter_setter!(child_count, set_child_count, i_child_count, u32);
 }
 
 impl_metadata_converter!(OndiskInode);
@@ -526,8 +607,9 @@ mod tests {
     use std::convert::TryInto;
 
     #[test]
-    fn test_rafs_ondisk_superblock() {
+    fn test_rafs_ondisk_superblock_v4() {
         let mut sb = OndiskSuperBlock::new();
+        sb.set_version(RAFS_SUPER_VERSION_V4);
 
         assert_eq!(
             std::mem::size_of::<OndiskSuperBlock>(),
@@ -535,7 +617,7 @@ mod tests {
         );
 
         assert_eq!(sb.magic(), RAFS_SUPER_MAGIC);
-        assert_eq!(sb.version(), RAFS_SUPER_VERSION as u32);
+        assert_eq!(sb.version(), RAFS_SUPER_VERSION_V4 as u32);
         assert_eq!(sb.sb_size(), RAFS_SUPERBLOCK_SIZE as u32);
         assert_eq!(sb.inode_size(), RAFS_INODE_INFO_SIZE as u32);
         assert_eq!(sb.block_size(), RAFS_DEFAULT_BLOCK_SIZE as u32);
@@ -559,6 +641,61 @@ mod tests {
         sb.set_flags(7);
         assert_eq!(sb.flags(), 7);
         sb.validate().unwrap_err();
+    }
+
+    fn test_rafs_ondisk_superblock_v5() {
+        let mut sb = OndiskSuperBlock::new();
+        sb.set_inode_size(1000);
+        sb.set_mapping_talbe_entries(1024);
+        sb.set_mapping_talbe_offset(RAFS_SUPERBLOCK_SIZE as u64);
+
+        assert_eq!(
+            std::mem::size_of::<OndiskSuperBlock>(),
+            RAFS_SUPERBLOCK_SIZE
+        );
+
+        assert_eq!(sb.magic(), RAFS_SUPER_MAGIC);
+        assert_eq!(sb.version(), RAFS_SUPER_VERSION_V5 as u32);
+        assert_eq!(sb.sb_size(), RAFS_SUPERBLOCK_SIZE as u32);
+        assert_eq!(sb.inode_size(), RAFS_INODE_INFO_SIZE as u32);
+        assert_eq!(sb.block_size(), RAFS_DEFAULT_BLOCK_SIZE as u32);
+        assert_eq!(sb.chunkinfo_size(), RAFS_CHUNK_INFO_SIZE as u32);
+        assert_eq!(sb.flags(), 0);
+        sb.validate().unwrap();
+
+        sb.set_magic(0x1);
+        assert_eq!(sb.magic(), 1);
+        assert_eq!(sb.s_magic, 0x1);
+        sb.set_version(2);
+        assert_eq!(sb.version(), 2);
+        sb.set_sb_size(3);
+        assert_eq!(sb.sb_size(), 3);
+        sb.set_inode_size(4);
+        assert_eq!(sb.inode_size(), 4);
+        sb.set_inode_size(5);
+        assert_eq!(sb.inode_size(), 5);
+        sb.set_chunkinfo_size(6);
+        assert_eq!(sb.chunkinfo_size(), 6);
+        sb.set_flags(7);
+        assert_eq!(sb.flags(), 7);
+        sb.validate().unwrap_err();
+
+        sb.set_inode_size(2000);
+        sb.validate().unwrap_err();
+        sb.set_inode_size(0);
+        sb.validate().unwrap_err();
+        sb.set_inode_size(100);
+
+        sb.set_mapping_talbe_offset(RAFS_SUPERBLOCK_SIZE as u64 + 1);
+        sb.validate().unwrap_err();
+        sb.set_mapping_talbe_offset(RAFS_SUPERBLOCK_SIZE as u64);
+
+        sb.set_mapping_talbe_entries(1 << 30);
+        sb.validate().unwrap_err();
+        sb.set_mapping_talbe_entries(1 << 29);
+        sb.validate().unwrap_err();
+        sb.set_mapping_talbe_entries((1 << 29) - 1);
+        sb.validate().unwrap();
     }
 
     #[test]

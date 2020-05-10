@@ -3,7 +3,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-//! Structs and Traits for RAFS file system metadata management.
+//! Structs and Traits for RAFS file system meta data management.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -16,12 +16,14 @@ use fuse_rs::abi::linux_abi::Attr;
 use fuse_rs::api::filesystem::Entry;
 
 use self::cached::CachedInodes;
-use self::layout::{OndiskDigest, OndiskSuperBlock, INO_FLAG_XATTR, RAFS_SUPER_VERSION};
+use self::layout::{
+    OndiskDigest, OndiskSuperBlock, INO_FLAG_XATTR, RAFS_SUPER_VERSION_V4, RAFS_SUPER_VERSION_V5,
+};
 use self::noop::NoopInodes;
 use crate::fs::{Inode, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
 use crate::metadata::layout::RAFS_CHUNK_INFO_SIZE;
 use crate::storage::device::RafsBioDesc;
-use crate::{einval, RafsIoReader, RafsIoWriter};
+use crate::{ebadf, einval, RafsIoReader, RafsIoWriter};
 
 pub mod cached;
 //pub(crate) mod direct_map;
@@ -46,6 +48,8 @@ pub struct RafsSuperMeta {
     pub s_inodes_count: u64,
     pub s_chunkinfo_size: u32,
     pub s_flags: u64,
+    pub s_mapping_table_entries: u32,
+    pub s_mapping_table_offset: u64,
     pub s_attr_timeout: Duration,
     pub s_entry_timeout: Duration,
 }
@@ -70,6 +74,8 @@ impl RafsSuper {
                 s_blocks_count: 0,
                 s_chunkinfo_size: 0,
                 s_flags: 0,
+                s_mapping_table_entries: 0,
+                s_mapping_table_offset: 0,
                 s_attr_timeout: Duration::from_secs(RAFS_DEFAULT_ATTR_TIMEOUT),
                 s_entry_timeout: Duration::from_secs(RAFS_DEFAULT_ENTRY_TIMEOUT),
             },
@@ -96,19 +102,34 @@ impl RafsSuper {
         self.s_meta.s_chunkinfo_size = sb.chunkinfo_size();
         self.s_meta.s_flags = sb.flags();
         self.s_meta.s_blocks_count = 0;
-        self.s_meta.s_inodes_count = 0;
+        match self.s_meta.s_version {
+            RAFS_SUPER_VERSION_V4 => {
+                self.s_meta.s_inodes_count = std::u64::MAX;
+            }
+            RAFS_SUPER_VERSION_V5 => {
+                self.s_meta.s_inodes_count = sb.inodes_count();
+                self.s_meta.s_mapping_table_entries = sb.mapping_table_entries();
+                self.s_meta.s_mapping_table_offset = sb.mapping_table_offset();
+            }
+            _ => return Err(ebadf()),
+        }
 
         // TODO: how about flags, chunkinfo_size?
 
-        if sb.version() == RAFS_SUPER_VERSION {
-            let mut inodes = Box::new(CachedInodes::new());
+        match sb.version() {
+            RAFS_SUPER_VERSION_V4 => {
+                let mut inodes = Box::new(CachedInodes::new());
 
-            self.s_meta.s_inodes_count = std::u64::MAX;
-            inodes.load(&mut self.s_meta, r)?;
-            self.s_inodes.destroy();
-            self.s_inodes = inodes;
-        } else {
-            return Err(einval());
+                self.s_meta.s_inodes_count = std::u64::MAX;
+                inodes.load(&mut self.s_meta, r)?;
+                self.s_inodes.destroy();
+                self.s_inodes = inodes;
+            }
+            RAFS_SUPER_VERSION_V5 => {
+                // TODO
+                // unimplemented!()
+            }
+            _ => return Err(einval()),
         }
 
         Ok(())
@@ -125,6 +146,15 @@ impl RafsSuper {
         sb.set_block_size(self.s_meta.s_block_size);
         sb.set_chunkinfo_size(self.s_meta.s_chunkinfo_size);
         sb.set_flags(self.s_meta.s_flags);
+        match self.s_meta.s_version {
+            RAFS_SUPER_VERSION_V4 => {}
+            RAFS_SUPER_VERSION_V5 => {
+                sb.set_inodes_count(self.s_meta.s_inodes_count);
+                sb.set_mapping_talbe_entries(self.s_meta.s_mapping_table_entries);
+                sb.set_mapping_talbe_offset(self.s_meta.s_mapping_table_offset);
+            }
+            _ => return Err(einval()),
+        }
         sb.validate()?;
         w.write_all(sb.as_ref())?;
         trace!("written superblock: {}", &sb);
@@ -199,6 +229,10 @@ pub trait RafsInode {
     fn set_flags(&mut self, flags: u64);
     fn chunk_cnt(&self) -> u64;
     fn set_chunk_cnt(&mut self, chunk_cnt: u64);
+    fn child_index(&self) -> u32;
+    fn set_child_index(&mut self, child_count: u32);
+    fn child_count(&self) -> u32;
+    fn set_child_count(&mut self, child_count: u32);
 
     fn is_dir(&self) -> bool {
         self.mode() & libc::S_IFMT == libc::S_IFDIR
@@ -300,7 +334,8 @@ pub fn calc_symlink_size(sz: usize) -> Result<(usize, usize)> {
 pub(crate) mod tests {
     use super::*;
     use crate::metadata::layout::{
-        OndiskInode, RAFS_CHUNK_INFO_SIZE, RAFS_INODE_INFO_SIZE, RAFS_SUPER_MAGIC,
+        OndiskInode, RAFS_CHUNK_INFO_SIZE, RAFS_INODE_INFO_SIZE, RAFS_SUPERBLOCK_SIZE,
+        RAFS_SUPER_MAGIC,
     };
     use crate::{RafsIoRead, RafsIoWrite};
     use fuse_rs::api::filesystem::ROOT_ID;
@@ -367,17 +402,58 @@ pub(crate) mod tests {
     impl RafsIoWrite for CachedIoBuf {}
 
     #[test]
-    fn test_rafs_superblock_load_store() {
+    fn test_rafs_superblock_v4_load_store() {
         let buf = CachedIoBuf::new();
 
         let mut sb = RafsSuper::new();
         sb.s_meta.s_magic = RAFS_SUPER_MAGIC;
-        sb.s_meta.s_version = RAFS_SUPER_VERSION;
+        sb.s_meta.s_version = RAFS_SUPER_VERSION_V4;
         sb.s_meta.s_sb_size = 0x2000;
         sb.s_meta.s_inode_size = RAFS_INODE_INFO_SIZE as u32;
         sb.s_meta.s_block_size = RAFS_DEFAULT_BLOCK_SIZE as u32;
         sb.s_meta.s_chunkinfo_size = RAFS_CHUNK_INFO_SIZE as u32;
         sb.s_meta.s_flags = 1;
+
+        let mut buf1: Box<dyn RafsIoWrite> = Box::new(buf.clone());
+        sb.store(&mut buf1).unwrap();
+
+        let mut ondisk = OndiskInode::new();
+        ondisk.set_name("root").unwrap();
+        ondisk.set_parent(ROOT_ID);
+        ondisk.set_ino(ROOT_ID);
+        ondisk.set_mode(libc::S_IFDIR);
+        buf1.write_all(ondisk.as_ref()).unwrap();
+
+        assert_eq!(buf.data.lock().unwrap().0.len(), 0x2000 + 512);
+
+        let mut buf2: Box<dyn RafsIoRead> = Box::new(buf.clone());
+        let mut sb2 = RafsSuper::new();
+        sb2.load(&mut buf2).unwrap();
+
+        assert_eq!(sb.s_meta.s_magic, sb2.s_meta.s_magic);
+        assert_eq!(sb.s_meta.s_version, sb2.s_meta.s_version);
+        assert_eq!(sb.s_meta.s_sb_size, sb2.s_meta.s_sb_size);
+        assert_eq!(sb.s_meta.s_inode_size, sb2.s_meta.s_inode_size);
+        assert_eq!(sb.s_meta.s_block_size, sb2.s_meta.s_block_size);
+        assert_eq!(sb.s_meta.s_chunkinfo_size, sb2.s_meta.s_chunkinfo_size);
+        assert_eq!(sb.s_meta.s_flags, sb2.s_meta.s_flags);
+    }
+
+    #[test]
+    fn test_rafs_superblock_v5_load_store() {
+        let buf = CachedIoBuf::new();
+
+        let mut sb = RafsSuper::new();
+        sb.s_meta.s_magic = RAFS_SUPER_MAGIC;
+        sb.s_meta.s_version = RAFS_SUPER_VERSION_V5;
+        sb.s_meta.s_sb_size = 0x2000;
+        sb.s_meta.s_inode_size = RAFS_INODE_INFO_SIZE as u32;
+        sb.s_meta.s_block_size = RAFS_DEFAULT_BLOCK_SIZE as u32;
+        sb.s_meta.s_chunkinfo_size = RAFS_CHUNK_INFO_SIZE as u32;
+        sb.s_meta.s_flags = 1;
+        sb.s_meta.s_mapping_table_offset = RAFS_SUPERBLOCK_SIZE as u64;
+        sb.s_meta.s_mapping_table_entries = 1024;
+        sb.s_meta.s_inodes_count = 1000;
 
         let mut buf1: Box<dyn RafsIoWrite> = Box::new(buf.clone());
         sb.store(&mut buf1).unwrap();

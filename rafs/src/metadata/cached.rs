@@ -16,7 +16,9 @@ use fuse_rs::abi::linux_abi::Attr;
 use fuse_rs::api::filesystem::{Entry, ROOT_ID};
 
 use crate::fs::Inode;
-use crate::metadata::layout::{OndiskChunkInfo, OndiskDigest, OndiskInode, RAFS_CHUNK_INFO_SIZE};
+use crate::metadata::layout::{
+    OndiskChunkInfo, OndiskDigest, OndiskInode, RAFS_CHUNK_INFO_SIZE, RAFS_SUPER_VERSION_V5,
+};
 use crate::metadata::{
     parse_string, RafsChunkInfo, RafsDigest, RafsInode, RafsSuper, RafsSuperInodes, RafsSuperMeta,
     RAFS_BLOB_ID_MAX_LENGTH, RAFS_INODE_BLOCKSIZE, RAFS_MAX_NAME,
@@ -208,6 +210,8 @@ pub struct CachedInode {
     i_mtime: u64,
     i_ctime: u64,
     i_chunk_cnt: u64,
+    i_child_index: u32,
+    i_child_count: u32,
 
     /*
     i_atimensec: u64,
@@ -232,7 +236,7 @@ impl CachedInode {
 
         r.read_exact(inode.as_mut())?;
         inode.validate(sb)?;
-        self.copy_from_ondisk(&inode);
+        self.copy_from_ondisk(&inode, sb.s_version);
         trace!("loaded inode: {}", &inode);
 
         Ok(())
@@ -308,7 +312,7 @@ impl CachedInode {
         Ok(())
     }
 
-    fn copy_from_ondisk(&mut self, inode: &OndiskInode) {
+    fn copy_from_ondisk(&mut self, inode: &OndiskInode, fs_version: u32) {
         self.i_ino = inode.ino();
         self.i_name = inode.name().to_string();
         self.i_data_digest = inode.digest().clone();
@@ -326,6 +330,10 @@ impl CachedInode {
         self.i_mtime = inode.mtime();
         self.i_ctime = inode.ctime();
         self.i_chunk_cnt = inode.chunk_cnt();
+        if fs_version == RAFS_SUPER_VERSION_V5 {
+            self.i_child_index = inode.child_index();
+            self.i_child_count = inode.child_count();
+        }
     }
 
     fn add_child(&mut self, child: Arc<CachedInode>) {
@@ -466,6 +474,8 @@ impl RafsInode for CachedInode {
     impl_getter_setter!(ctime, set_ctime, i_ctime, u64);
     impl_getter_setter!(flags, set_flags, i_flags, u64);
     impl_getter_setter!(chunk_cnt, set_chunk_cnt, i_chunk_cnt, u64);
+    impl_getter_setter!(child_index, set_child_index, i_child_index, u32);
+    impl_getter_setter!(child_count, set_child_count, i_child_count, u32);
 }
 
 /// Cached information about an Rafs Data Chunk.
