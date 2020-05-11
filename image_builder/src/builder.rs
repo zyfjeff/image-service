@@ -7,13 +7,14 @@ use crypto::sha2::Sha256;
 
 use std::collections::HashMap;
 use std::fs;
-use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Result};
 use std::os::linux::fs::MetadataExt;
 use std::path::Path;
 
 use rafs::metadata::layout::*;
+use rafs::metadata::{RafsChunkInfo, RafsInode, RafsSuper};
+use rafs::{RafsIoRead, RafsIoWrite};
 
 use crate::node::*;
 
@@ -24,11 +25,13 @@ pub struct Builder {
     /// source root path
     root: String,
     /// blob file writer
-    f_blob: File,
+    f_blob: Box<dyn RafsIoWrite>,
     /// bootstrap file writer
-    f_bootstrap: File,
+    f_bootstrap: Box<dyn RafsIoWrite>,
     /// parent bootstrap file reader
-    f_parent_bootstrap: Option<File>,
+    f_parent_bootstrap: Option<Box<dyn RafsIoRead>>,
+    /// record current blob offset cursor
+    blob_offset: u64,
     /// blob id (user specified or sha256(blob))
     blob_id: String,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
@@ -47,24 +50,28 @@ impl Builder {
         parent_bootstrap_path: String,
         blob_id: String,
     ) -> Result<Builder> {
-        let f_blob = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(blob_path)?;
-        let f_bootstrap = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(bootstrap_path)?;
+        let f_blob = Box::new(
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(blob_path)?,
+        );
+        let f_bootstrap = Box::new(
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(bootstrap_path)?,
+        );
 
-        let f_parent_bootstrap = if parent_bootstrap_path != "" {
-            Some(
+        let f_parent_bootstrap: Option<Box<dyn RafsIoRead>> = if parent_bootstrap_path != "" {
+            Some(Box::new(
                 OpenOptions::new()
                     .read(true)
                     .write(false)
                     .open(parent_bootstrap_path)?,
-            )
+            ))
         } else {
             None
         };
@@ -92,18 +99,18 @@ impl Builder {
     }
 
     fn apply(&mut self) -> Result<()> {
-        let mut bootstrap = self.f_parent_bootstrap.as_ref().unwrap();
-        let mut sb = RafsSuperBlockInfo::new();
-        sb.load(&mut bootstrap)?;
+        let mut parent_bootstrap = self.f_parent_bootstrap.as_mut().unwrap();
+
+        let mut sb = RafsSuper::new();
+        sb.load(&mut parent_bootstrap)?;
 
         let mut nodes: HashMap<u64, Node> = HashMap::new();
         let mut lowers: Vec<Node> = Vec::new();
 
         loop {
-            let mut inode = RafsInodeInfo::new();
+            let mut inode = OndiskInode::new();
 
-            match inode.load(&mut bootstrap) {
-                Ok(0) => break,
+            match inode.load(&mut parent_bootstrap) {
                 Ok(_) => {}
                 Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => break,
                 Err(e) => {
@@ -111,33 +118,33 @@ impl Builder {
                 }
             }
 
-            let mut xattr_chunks = RafsInodeXattrInfos::new();
-            if inode.has_xattr() {
-                xattr_chunks.load(&mut bootstrap)?;
-            }
+            // let mut xattr_chunks = RafsInodeXattrInfos::new();
+            // if inode.has_xattr() {
+            //     xattr_chunks.load(&mut bootstrap)?;
+            // }
 
             let mut chunks = Vec::new();
             if inode.is_reg() {
-                for _ in 0..inode.i_chunk_cnt {
-                    let mut chunk = RafsChunkInfo::new();
-                    chunk.load(&mut bootstrap)?;
+                for _ in 0..inode.chunk_cnt() {
+                    let mut chunk = OndiskChunkInfo::new();
+                    chunk.load(&mut parent_bootstrap)?;
                     chunks.push(chunk);
                 }
             }
 
-            let mut link_chunks = Vec::new();
-            if inode.is_symlink() {
-                let mut link_chunk = RafsLinkDataInfo::new(inode.i_chunk_cnt as usize);
-                link_chunk.load(&mut bootstrap)?;
-                link_chunks.push(link_chunk);
-            }
+            // let mut link_chunks = Vec::new();
+            // if inode.is_symlink() {
+            //     let mut link_chunk = RafsLinkDataInfo::new(inode.i_chunk_cnt as usize);
+            //     link_chunk.load(&mut bootstrap)?;
+            //     link_chunks.push(link_chunk);
+            // }
 
-            let mut path = inode.name.to_owned();
+            let mut path = inode.name().to_owned();
 
             let mut parent = None;
-            if let Some(parent_node) = nodes.get_mut(&inode.i_parent) {
+            if let Some(parent_node) = nodes.get_mut(&inode.parent()) {
                 parent = Some(Box::new(parent_node.clone()));
-                let _path = Path::new(parent_node.path.as_str()).join(inode.name.to_owned());
+                let _path = Path::new(parent_node.path.as_str()).join(inode.name().to_owned());
                 path = _path.to_str().unwrap().to_owned();
             }
 
@@ -160,11 +167,11 @@ impl Builder {
                 overlay,
                 inode: inode.clone(),
                 chunks,
-                link_chunks,
-                xattr_chunks,
+                // link_chunks,
+                // xattr_chunks,
             };
 
-            nodes.insert(inode.i_ino, node.clone());
+            nodes.insert(inode.ino(), node.clone());
             lowers.push(node.clone());
         }
 
@@ -173,15 +180,15 @@ impl Builder {
             let mut _addition = addition.clone();
             _addition.path = addition_path.to_str().unwrap().to_owned();
             if let Some(idx) = self.get_lower_idx(&lowers, _addition.path.clone()) {
-                _addition.inode.i_ino = lowers[idx].inode.i_ino;
-                _addition.inode.i_parent = lowers[idx].inode.i_parent;
+                _addition.inode.set_ino(lowers[idx].inode.ino());
+                _addition.inode.set_parent(lowers[idx].inode.parent());
                 _addition.overlay = Overlay::UpperModification;
                 lowers[idx] = _addition;
             } else if let Some(parent_path) = addition_path.parent() {
                 if let Some(idx) =
                     self.get_lower_idx(&lowers, parent_path.to_str().unwrap().to_owned())
                 {
-                    _addition.inode.i_parent = lowers[idx].inode.i_ino;
+                    _addition.inode.set_parent(lowers[idx].inode.ino());
                     _addition.overlay = Overlay::UpperAddition;
                     lowers.insert(idx + 1, _addition);
                 } else {
@@ -197,23 +204,28 @@ impl Builder {
                 lower.overlay,
                 lower.get_type(),
                 lower.path,
-                lower.inode.i_ino,
-                lower.inode.i_parent
+                lower.inode.ino(),
+                lower.inode.parent(),
             );
             if lower.overlay != Overlay::UpperRemoval && lower.overlay != Overlay::UpperOpaque {
-                lower.dump_bootstrap(&self.f_bootstrap, None)?;
+                lower.dump_bootstrap(&mut self.f_bootstrap, None)?;
             }
         }
 
         Ok(())
     }
 
+<<<<<<< HEAD
     fn dump_superblock(&mut self) -> Result<RafsSuperBlockInfo> {
         debug!("upper building superblock");
+=======
+    fn dump_superblock(&mut self) -> Result<OndiskSuperBlock> {
+        info!("upper building superblock");
+>>>>>>> builder: adapt rafs v5 struct
 
-        let mut sb = RafsSuperBlockInfo::new();
+        let mut sb = OndiskSuperBlock::new();
         // all fields are initilized by RafsSuperBlockInfo::new()
-        sb.s_flags = 0;
+        sb.set_flags(0);
 
         // dump superblock to bootstrap
         sb.store(&mut self.f_bootstrap)?;
@@ -242,7 +254,7 @@ impl Builder {
 
     fn dump_bootstrap(&mut self) -> Result<()> {
         for node in &mut self.additions {
-            node.dump_bootstrap(&self.f_bootstrap, Some(self.blob_id.to_owned()))?;
+            node.dump_bootstrap(&mut self.f_bootstrap, Some(self.blob_id.to_owned()))?;
         }
 
         Ok(())
@@ -251,7 +263,7 @@ impl Builder {
     fn fill_blob_id(&mut self) {
         for node in &mut self.additions {
             for chunk in &mut node.chunks {
-                chunk.blobid = self.blob_id.to_owned();
+                chunk.set_blobid(self.blob_id.as_str()).unwrap();
             }
         }
     }
@@ -262,7 +274,20 @@ impl Builder {
         if parent_node.is_none() {
             let path = file.to_str().unwrap().to_owned();
 
+<<<<<<< HEAD
             let mut root_node = Node::new(self.root.to_owned(), path, None, Overlay::LowerAddition);
+=======
+            let mut root_node = Node::new(
+                self.blob_offset,
+                self.root.to_owned(),
+                path,
+                None,
+                Overlay::LowerAddition,
+            );
+
+            root_node.build(None)?;
+            root_node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
+>>>>>>> builder: adapt rafs v5 struct
 
             root_node.build_inode(None)?;
             self.additions.push(root_node.clone());
@@ -330,6 +355,11 @@ impl Builder {
                     continue;
                 }
 
+<<<<<<< HEAD
+=======
+                node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
+                self.blob_offset = node.blob_offset;
+>>>>>>> builder: adapt rafs v5 struct
                 self.additions.push(node.clone());
 
                 if path.is_dir() {

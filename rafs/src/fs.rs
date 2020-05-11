@@ -189,7 +189,7 @@ impl FileSystem for Rafs {
     type Inode = Inode;
     type Handle = Handle;
 
-    fn init(&self, opts: FsOptions) -> Result<FsOptions> {
+    fn init(&self, _opts: FsOptions) -> Result<FsOptions> {
         Ok(
             // These fuse features are supported by rafs by default.
             FsOptions::ASYNC_READ

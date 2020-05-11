@@ -42,6 +42,7 @@ pub(crate) fn ebadf() -> std::io::Error {
     std::io::Error::from_raw_os_error(libc::EBADF)
 }
 
+#[allow(dead_code)]
 pub(crate) fn enosys() -> std::io::Error {
     std::io::Error::from_raw_os_error(libc::ENOSYS)
 }
@@ -54,6 +55,7 @@ pub(crate) fn enoent() -> std::io::Error {
     std::io::Error::from_raw_os_error(libc::ENOENT)
 }
 
+#[allow(dead_code)]
 pub(crate) fn enoattr() -> std::io::Error {
     std::io::Error::from_raw_os_error(libc::ENODATA)
 }

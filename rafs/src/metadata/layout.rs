@@ -237,6 +237,14 @@ impl OndiskSuperBlock {
         s_mapping_table_offset,
         u64
     );
+
+    pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
+        r.read_exact(self.as_mut())
+    }
+
+    pub fn store(&self, w: &mut RafsIoWriter) -> Result<()> {
+        w.write_all(self.as_ref())
+    }
 }
 
 impl_metadata_converter!(OndiskSuperBlock);
@@ -305,6 +313,14 @@ impl OndiskInode {
             i_child_count: 0,
             i_reserved: [0u8; RAFS_INODE_INFO_RESERVED_SIZE],
         }
+    }
+
+    pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
+        r.read_exact(self.as_mut())
+    }
+
+    pub fn store(&self, w: &mut RafsIoWriter) -> Result<()> {
+        w.write_all(self.as_ref())
     }
 }
 
@@ -508,6 +524,14 @@ impl OndiskChunkInfo {
     pub fn new() -> Self {
         OndiskChunkInfo::default()
     }
+
+    pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
+        r.read_exact(self.as_mut())
+    }
+
+    pub fn store(&self, w: &mut RafsIoWriter) -> Result<()> {
+        w.write_all(self.as_ref())
+    }
 }
 
 impl RafsChunkInfo for OndiskChunkInfo {
@@ -592,6 +616,16 @@ impl OndiskDigest {
         OndiskDigest {
             ..Default::default()
         }
+    }
+
+    pub fn from_buf(buf: &[u8]) -> Self {
+        let mut hash = Sha256::new();
+        let mut hash_buf = [0; RAFS_SHA256_LENGTH];
+        hash.input(buf);
+        hash.result(&mut hash_buf);
+        let mut digest = OndiskDigest::new();
+        digest.data.clone_from_slice(&hash_buf);
+        digest
     }
 }
 
