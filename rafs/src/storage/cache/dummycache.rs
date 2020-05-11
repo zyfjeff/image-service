@@ -31,7 +31,7 @@ impl RafsCache for DummyCache {
     }
 
     fn read(&self, blk: &RafsBlk) -> Result<Vec<u8>> {
-        let mut buf = vec![0u8; blk.compr_size];
+        let mut buf = Vec::new();
         let len = self
             .backend
             .read(&blk.blob_id, &mut buf, blk.blob_offset, blk.compr_size)?;

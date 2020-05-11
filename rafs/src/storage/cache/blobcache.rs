@@ -17,7 +17,6 @@ use crate::storage::cache::RafsCache;
 enum CacheStatus {
     Ready,
     NotReady,
-    Requesting,
 }
 
 #[derive(Clone)]
@@ -59,7 +58,7 @@ impl BlobCacheEntry {
             libc::pwrite(
                 self.fd,
                 src.as_ptr().cast(),
-                src.len(),
+                std::cmp::min(src.len(), self.chunk_info.compr_size),
                 self.chunk_info.blob_offset as i64,
             )
         };
@@ -124,13 +123,9 @@ impl BlobCache {
     }
 
     fn read_from_backend(&self, blk: &RafsBlk) -> io::Result<Vec<u8>> {
-        let mut buf = vec![0u8; blk.compr_size as usize];
-        self.backend.read(
-            &blk.blob_id,
-            &mut buf,
-            blk.blob_offset,
-            blk.compr_size as usize,
-        )?;
+        let mut buf = Vec::new();
+        self.backend
+            .read(&blk.blob_id, &mut buf, blk.blob_offset, blk.compr_size)?;
         Ok(buf)
     }
 
@@ -140,9 +135,8 @@ impl BlobCache {
             let mut chunk_info = entry.lock().unwrap();
             if let CacheStatus::NotReady = chunk_info.status {
                 // do downloading
-                chunk_info.status = CacheStatus::Requesting;
                 let buf = self.read_from_backend(&chunk_info.chunk_info)?;
-                chunk_info.write(&buf)?;
+                chunk_info.write(buf.as_slice())?;
                 chunk_info.status = CacheStatus::Ready;
             }
             (*chunk_info).clone()
@@ -228,8 +222,8 @@ mod blob_cache_tests {
             count: usize,
         ) -> Result<usize> {
             let mut i = 0;
-            while i < buf.len() && i < count {
-                buf[i] = i as u8;
+            while i < count {
+                buf.push(i as u8);
                 i += 1;
             }
             Ok(i)
@@ -254,7 +248,7 @@ mod blob_cache_tests {
             Box::new(MockBackend {}) as Box<dyn BlobBackend + Send + Sync>,
         )
         .unwrap();
-        let mut expect = vec![0u8; 100];
+        let mut expect = Vec::new();
         let block_id = [1u8; 32];
         let blobid = "blobcache";
         // generate init data
