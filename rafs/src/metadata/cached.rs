@@ -9,9 +9,7 @@
 //! file system. And currently the cache layer only supports readonly file systems.
 use std::cmp;
 use std::collections::{BTreeMap, HashMap};
-use std::convert::TryFrom;
-use std::io::{Error, ErrorKind, Result};
-use std::mem::size_of;
+use std::io::{ErrorKind, Result};
 use std::sync::Arc;
 
 use fuse_rs::abi::linux_abi::Attr;
@@ -20,11 +18,11 @@ use fuse_rs::api::filesystem::{Entry, ROOT_ID};
 use crate::fs::Inode;
 use crate::metadata::layout::{OndiskChunkInfo, OndiskDigest, OndiskInode, RAFS_CHUNK_INFO_SIZE};
 use crate::metadata::{
-    calc_symlink_size, parse_string, RafsChunkInfo, RafsDigest, RafsInode, RafsSuper,
-    RafsSuperInodes, RafsSuperMeta, RAFS_BLOB_ID_MAX_LENGTH, RAFS_INODE_BLOCKSIZE, RAFS_MAX_NAME,
+    parse_string, RafsChunkInfo, RafsDigest, RafsInode, RafsSuper, RafsSuperInodes, RafsSuperMeta,
+    RAFS_BLOB_ID_MAX_LENGTH, RAFS_INODE_BLOCKSIZE, RAFS_MAX_NAME,
 };
 use crate::storage::device::{RafsBio, RafsBioDesc};
-use crate::{ebadf, einval, enoent, RafsIoReader, RafsIoWriter};
+use crate::{ebadf, einval, enoent, RafsIoReader};
 
 macro_rules! impl_getter_setter {
     ($G: ident, $S: ident, $F: ident, $U: ty) => {
@@ -240,26 +238,6 @@ impl CachedInode {
         Ok(())
     }
 
-    pub fn store(&self, sb: &RafsSuperMeta, w: &mut RafsIoWriter) -> Result<usize> {
-        let mut inode = OndiskInode::new();
-        let mut count = size_of::<OndiskInode>();
-
-        self.copy_to_ondisk(&mut inode)?;
-        inode.validate(sb)?;
-        w.write_all(inode.as_ref())?;
-        if inode.has_xattr() {
-            count += self.store_xattr(sb, w)?;
-        }
-        if inode.is_symlink() {
-            count += self.store_symlink(sb, w)?;
-        } else if inode.is_reg() {
-            count += self.store_chunkinfo(sb, w)?;
-        }
-        trace!("written inode: {}", &inode);
-
-        Ok(count)
-    }
-
     fn load_xattr(&mut self, _sb: &RafsSuperMeta, _r: &mut RafsIoReader) -> Result<()> {
         /*
         let mut input = vec![0u8; size_of::<u32>()];
@@ -303,10 +281,6 @@ impl CachedInode {
         unimplemented!()
     }
 
-    fn store_xattr(&self, _sb: &RafsSuperMeta, _w: &mut RafsIoWriter) -> Result<usize> {
-        unimplemented!()
-    }
-
     fn load_symlink(&mut self, _sb: &RafsSuperMeta, r: &mut RafsIoReader) -> Result<()> {
         let sz = self.i_chunk_cnt as usize * RAFS_CHUNK_INFO_SIZE;
         if sz == 0 || sz > (libc::PATH_MAX as usize) + RAFS_CHUNK_INFO_SIZE - 1 {
@@ -324,21 +298,6 @@ impl CachedInode {
         }
     }
 
-    fn store_symlink(&self, _sb: &RafsSuperMeta, w: &mut RafsIoWriter) -> Result<usize> {
-        Self::save_symlink(self.i_target.as_bytes(), w)
-    }
-
-    fn save_symlink(data: &[u8], w: &mut RafsIoWriter) -> Result<usize> {
-        let (sz, _) = calc_symlink_size(data.len())?;
-        let mut buf = vec![0; sz];
-
-        buf[..data.len()].copy_from_slice(data);
-        buf[data.len()] = 0;
-        w.write_all(&buf)?;
-
-        Ok(sz)
-    }
-
     fn load_chunkinfo(&mut self, sb: &RafsSuperMeta, r: &mut RafsIoReader) -> Result<()> {
         for _ in 0..self.i_chunk_cnt {
             let mut info = CachedChunkInfo::new();
@@ -347,16 +306,6 @@ impl CachedInode {
         }
 
         Ok(())
-    }
-
-    fn store_chunkinfo(&self, sb: &RafsSuperMeta, w: &mut RafsIoWriter) -> Result<usize> {
-        let mut count = 0;
-
-        for chunk in self.i_data.iter() {
-            count += chunk.store(sb, w)?;
-        }
-
-        Ok(count)
     }
 
     fn copy_from_ondisk(&mut self, inode: &OndiskInode) {
@@ -377,28 +326,6 @@ impl CachedInode {
         self.i_mtime = inode.mtime();
         self.i_ctime = inode.ctime();
         self.i_chunk_cnt = inode.chunk_cnt();
-    }
-
-    fn copy_to_ondisk(&self, inode: &mut OndiskInode) -> Result<()> {
-        inode.set_ino(self.ino());
-        inode.set_name(self.name())?;
-        inode.set_digest(self.digest());
-        inode.set_parent(self.parent());
-        inode.set_mode(self.mode());
-        inode.set_projid(self.projid());
-        inode.set_uid(self.uid());
-        inode.set_gid(self.gid());
-        inode.set_flags(self.flags());
-        inode.set_rdev(self.rdev());
-        inode.set_size(self.size());
-        inode.set_nlink(self.nlink());
-        inode.set_blocks(self.blocks());
-        inode.set_atime(self.atime());
-        inode.set_mtime(self.mtime());
-        inode.set_ctime(self.ctime());
-        inode.set_chunk_cnt(self.chunk_cnt());
-
-        Ok(())
     }
 
     fn add_child(&mut self, child: Arc<CachedInode>) {
@@ -573,15 +500,6 @@ impl CachedChunkInfo {
         Ok(())
     }
 
-    pub fn store(&self, sb: &RafsSuperMeta, w: &mut RafsIoWriter) -> Result<usize> {
-        let ondisk = OndiskChunkInfo::try_from(self)?;
-
-        ondisk.validate(sb)?;
-        w.write_all(ondisk.as_ref())?;
-
-        Ok(size_of::<OndiskChunkInfo>())
-    }
-
     fn copy_from_ondisk(&mut self, chunk: &OndiskChunkInfo) {
         self.c_block_id = chunk.blockid().clone();
         self.c_blob_id = chunk.blobid().to_string();
@@ -648,28 +566,12 @@ impl From<&OndiskChunkInfo> for CachedChunkInfo {
     }
 }
 
-impl TryFrom<&CachedChunkInfo> for OndiskChunkInfo {
-    type Error = Error;
-
-    fn try_from(cached: &CachedChunkInfo) -> std::result::Result<Self, Self::Error> {
-        let mut ondisk = OndiskChunkInfo::new();
-
-        ondisk.set_blockid(cached.blockid());
-        ondisk.set_blobid(cached.blobid())?;
-        ondisk.set_file_offset(cached.file_offset());
-        ondisk.set_blob_offset(cached.blob_offset());
-        ondisk.set_compress_size(cached.compress_size());
-
-        Ok(ondisk)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::super::tests::CachedIoBuf;
     use super::*;
-    use crate::metadata::layout::INO_FLAG_SYMLINK;
-    use crate::metadata::RafsSuper;
+    use crate::metadata::layout::{save_symlink_ondisk, INO_FLAG_SYMLINK};
+    use crate::metadata::{calc_symlink_size, RafsSuper};
     use crate::{RafsIoRead, RafsIoWrite};
 
     #[test]
@@ -873,7 +775,7 @@ mod tests {
         ondisk.set_flags(INO_FLAG_SYMLINK);
         buf.append_buf(ondisk.as_ref());
         let mut buf1: Box<dyn RafsIoWrite> = Box::new(buf.clone());
-        CachedInode::save_symlink("/a/b/d".as_bytes(), &mut buf1).unwrap();
+        save_symlink_ondisk("/a/b/d".as_bytes(), &mut buf1).unwrap();
 
         let mut inodes = CachedInodes::new();
         let mut buf2: Box<dyn RafsIoRead> = Box::new(buf.clone());

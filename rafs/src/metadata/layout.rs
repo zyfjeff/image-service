@@ -509,6 +509,17 @@ impl fmt::Display for OndiskDigest {
     }
 }
 
+pub fn save_symlink_ondisk(data: &[u8], w: &mut RafsIoWriter) -> Result<usize> {
+    let (sz, _) = calc_symlink_size(data.len())?;
+    let mut buf = vec![0; sz];
+
+    buf[..data.len()].copy_from_slice(data);
+    buf[data.len()] = 0;
+    w.write_all(&buf)?;
+
+    Ok(sz)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
