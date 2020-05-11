@@ -96,6 +96,15 @@ impl BlobCache {
         fd
     }
 
+    fn close_all_blob_fd(&self) {
+        for fd in self.fd_table.write().unwrap().values() {
+            let err = unsafe { libc::close(*fd) };
+            if err < 0 {
+                error!("close fd err {}", Error::last_os_error());
+            }
+        }
+    }
+
     fn get(&self, blk: &RafsBlk) -> Option<Box<Arc<Mutex<BlobCacheEntry>>>> {
         match self.cache.read().unwrap().get(&blk.block_id) {
             Some(entry) => Some(Box::new(entry.clone())),
@@ -181,7 +190,11 @@ impl RafsCache for BlobCache {
         true
     }
 
-    fn release(&mut self) {}
+    fn release(&mut self) {
+        // close all blob file fds
+        self.close_all_blob_fd();
+        self.backend.close();
+    }
 }
 
 pub fn new<S: std::hash::BuildHasher>(
