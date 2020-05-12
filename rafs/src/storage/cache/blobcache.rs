@@ -147,6 +147,7 @@ impl BlobCache {
                 let buf = self.read_from_backend(&chunk_info.chunk_info)?;
                 chunk_info.write(buf.as_slice())?;
                 chunk_info.status = CacheStatus::Ready;
+                return Ok(buf);
             }
             (*chunk_info).clone()
         };
@@ -172,10 +173,7 @@ impl RafsCache for BlobCache {
     }
 
     fn read(&self, blk: &RafsBlk) -> io::Result<Vec<u8>> {
-        if let Some(entry) = self.get(blk) {
-            return self.entry_read(&entry);
-        }
-        if let Some(entry) = self.set(blk) {
+        if let Some(entry) = self.get(blk).or(self.set(blk)) {
             return self.entry_read(&entry);
         }
         error!("blob cache set err");
