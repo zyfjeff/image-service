@@ -2,10 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+use nix::sys::uio;
 use std::collections::HashMap;
-use std::ffi::CString;
+use std::fs::{File, OpenOptions};
 use std::io;
 use std::io::Error;
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::fs::RafsBlk;
@@ -23,11 +25,11 @@ enum CacheStatus {
 struct BlobCacheEntry {
     status: CacheStatus,
     chunk_info: RafsBlk,
-    fd: libc::c_int,
+    fd: RawFd,
 }
 
 impl BlobCacheEntry {
-    fn new(chunk: &RafsBlk, fd: libc::c_int) -> BlobCacheEntry {
+    fn new(chunk: &RafsBlk, fd: RawFd) -> BlobCacheEntry {
         BlobCacheEntry {
             status: CacheStatus::NotReady,
             chunk_info: chunk.clone(),
@@ -37,72 +39,52 @@ impl BlobCacheEntry {
 
     fn read(&self) -> io::Result<Vec<u8>> {
         let mut buf = vec![0u8; self.chunk_info.compr_size as usize];
-        let res = unsafe {
-            // we use libc::pread to support concurrent read of blob file
-            libc::pread(
-                self.fd,
-                buf.as_mut_ptr().cast(),
-                buf.len(),
-                self.chunk_info.blob_offset as i64,
-            )
-        };
-        if res < 0 {
-            error!("read from blob file err! {}", Error::last_os_error());
-            return Err(Error::last_os_error());
-        }
+        let nr_read = uio::pread(
+            self.fd,
+            buf.as_mut_slice(),
+            self.chunk_info.blob_offset as i64,
+        )
+        .map_err(|_| Error::last_os_error())?;
+        debug!(
+            "read {}(off={}) bytes from blob file",
+            nr_read, self.chunk_info.blob_offset
+        );
         Ok(buf)
     }
 
     fn write(&self, src: &[u8]) -> io::Result<usize> {
-        let res = unsafe {
-            libc::pwrite(
-                self.fd,
-                src.as_ptr().cast(),
-                std::cmp::min(src.len(), self.chunk_info.compr_size),
-                self.chunk_info.blob_offset as i64,
-            )
-        };
-        if res < 0 {
-            error!("write to blob file err! {}", Error::last_os_error());
-            return Err(Error::last_os_error());
-        }
-        Ok(res as usize)
+        let nr_write = uio::pwrite(self.fd, src, self.chunk_info.blob_offset as i64)
+            .map_err(|_| Error::last_os_error())?;
+        debug!(
+            "write {}(off={}) bytes to blob file",
+            nr_write, self.chunk_info.blob_offset
+        );
+        Ok(nr_write)
     }
 }
 
 pub struct BlobCache {
     cache: RwLock<HashMap<RafsDigest, Arc<Mutex<BlobCacheEntry>>>>,
-    /* we should store libc fds */
-    fd_table: RwLock<HashMap<String, libc::c_int>>,
+    file_table: RwLock<HashMap<String, File>>,
     work_dir: String,
     pub backend: Box<dyn BlobBackend + Sync + Send>,
 }
 
 impl BlobCache {
-    fn get_blob_fd(&self, blk: &RafsBlk) -> libc::c_int {
-        if let Some(fd) = self.fd_table.read().unwrap().get(&blk.blob_id) {
-            return *fd;
+    fn get_blob_fd(&self, blk: &RafsBlk) -> io::Result<RawFd> {
+        if let Some(file) = self.file_table.read().unwrap().get(&blk.blob_id) {
+            return Ok(file.as_raw_fd());
         }
-        let mut fd_table = self.fd_table.write().unwrap();
-        let blob_file_path = CString::new(format!("{}/{}", self.work_dir, blk.blob_id))
-            .expect("Invalid blob file path");
-        let fd =
-            unsafe { libc::open(blob_file_path.as_ptr(), libc::O_RDWR | libc::O_CREAT, 0o644) };
-        if fd < 0 {
-            error!("open blob file err!");
-            return fd;
-        }
-        fd_table.insert(blk.blob_id.clone(), fd);
-        fd
-    }
-
-    fn close_all_blob_fd(&self) {
-        for fd in self.fd_table.write().unwrap().values() {
-            let err = unsafe { libc::close(*fd) };
-            if err < 0 {
-                error!("close fd err {}", Error::last_os_error());
-            }
-        }
+        let mut file_table = self.file_table.write().unwrap();
+        let blob_file_path = format!("{}/{}", self.work_dir, blk.blob_id);
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .read(true)
+            .open(blob_file_path)?;
+        let fd = file.as_raw_fd();
+        file_table.insert(blk.blob_id.clone(), file);
+        Ok(fd)
     }
 
     fn get(&self, blk: &RafsBlk) -> Option<Arc<Mutex<BlobCacheEntry>>> {
@@ -117,10 +99,7 @@ impl BlobCache {
         if let Some(entry) = cache_map.get(&blk.block_id) {
             return Some(entry.clone());
         }
-        let fd = self.get_blob_fd(blk);
-        if fd < 0 {
-            return None;
-        }
+        let fd = self.get_blob_fd(blk).unwrap();
         cache_map.insert(
             blk.block_id.clone(),
             Arc::new(Mutex::new(BlobCacheEntry::new(blk, fd))),
@@ -133,8 +112,13 @@ impl BlobCache {
 
     fn read_from_backend(&self, blk: &RafsBlk) -> io::Result<Vec<u8>> {
         let mut buf = Vec::new();
-        self.backend
+        let res = self
+            .backend
             .read(&blk.blob_id, &mut buf, blk.blob_offset, blk.compr_size)?;
+        if res != blk.compr_size {
+            error!("read from backend err!");
+            return Err(Error::from_raw_os_error(libc::EIO));
+        }
         Ok(buf)
     }
 
@@ -189,8 +173,6 @@ impl RafsCache for BlobCache {
     }
 
     fn release(&mut self) {
-        // close all blob file fds
-        self.close_all_blob_fd();
         self.backend.close();
     }
 }
@@ -205,7 +187,7 @@ pub fn new<S: std::hash::BuildHasher>(
     };
     Ok(BlobCache {
         cache: RwLock::new(HashMap::new()),
-        fd_table: RwLock::new(HashMap::new()),
+        file_table: RwLock::new(HashMap::new()),
         work_dir: String::from(work_dir),
         backend,
     })
