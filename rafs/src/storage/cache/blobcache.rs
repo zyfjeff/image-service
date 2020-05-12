@@ -157,7 +157,7 @@ impl RafsCache for BlobCache {
     }
 
     fn read(&self, blk: &RafsBlk) -> io::Result<Vec<u8>> {
-        if let Some(entry) = self.get(blk).or(self.set(blk)) {
+        if let Some(entry) = self.get(blk).or_else(|| self.set(blk)) {
             return self.entry_read(&entry);
         }
         error!("blob cache set err");
