@@ -105,17 +105,17 @@ impl BlobCache {
         }
     }
 
-    fn get(&self, blk: &RafsBlk) -> Option<Box<Arc<Mutex<BlobCacheEntry>>>> {
+    fn get(&self, blk: &RafsBlk) -> Option<Arc<Mutex<BlobCacheEntry>>> {
         match self.cache.read().unwrap().get(&blk.block_id) {
-            Some(entry) => Some(Box::new(entry.clone())),
+            Some(entry) => Some(entry.clone()),
             None => None,
         }
     }
 
-    fn set(&self, blk: &RafsBlk) -> Option<Box<Arc<Mutex<BlobCacheEntry>>>> {
+    fn set(&self, blk: &RafsBlk) -> Option<Arc<Mutex<BlobCacheEntry>>> {
         let mut cache_map = self.cache.write().unwrap();
         if let Some(entry) = cache_map.get(&blk.block_id) {
-            return Some(Box::new(entry.clone()));
+            return Some(entry.clone());
         }
         let fd = self.get_blob_fd(blk);
         if fd < 0 {
@@ -126,7 +126,7 @@ impl BlobCache {
             Arc::new(Mutex::new(BlobCacheEntry::new(blk, fd))),
         );
         match cache_map.get(&blk.block_id) {
-            Some(entry) => Some(Box::new(entry.clone())),
+            Some(entry) => Some(entry.clone()),
             None => None,
         }
     }
