@@ -13,20 +13,24 @@ A container image acceleration tool.
 
 where the `config.json` is of format like:
 
-oss backend(blob cache):
+oss backend with blobcache:
 ```
 {
   "device_config": {
-    "backend_type": "oss",
-    "backend_config": {
-      "endpoint": "region.aliyuncs.com",
-      "access_key_id": "",
-      "access_key_secret": "",
-      "bucket_name": ""
-    }
-    "cache_type": "blobcache",
-    "cache_config": {
-      "work_dir": "/cache"
+    "backend": {
+      "type": "oss",
+      "config": {
+        "endpoint": "region.aliyuncs.com",
+        "access_key_id": "",
+        "access_key_secret": "",
+        "bucket_name": ""
+      }
+    },
+    "cache": {
+      "type": blobcache",
+      "config": {
+        "work_dir": "/cache"
+      }
     }
   }
 }
@@ -36,10 +40,12 @@ registry backend:
 ```
 {
   "device_config": {
-    "backend_type": "registry",
-    "backend_config": {
-      "host": "user:pass@my-registry:5000",
-      "repo": ""
+    "backend": {
+      "type": "registry",
+      "config": {
+        "host": "user:pass@my-registry:5000",
+        "repo": ""
+      }
     }
   }
 }
