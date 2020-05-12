@@ -253,7 +253,7 @@ mod blob_cache_tests {
     fn test_add() {
         // config
         let mut config = HashMap::new();
-        config.insert(String::from("work_dir"), String::from("."));
+        config.insert(String::from("work_dir"), String::from("/tmp"));
         let blob_cache = blobcache::new(
             &config,
             Box::new(MockBackend {}) as Box<dyn BlobBackend + Send + Sync>,

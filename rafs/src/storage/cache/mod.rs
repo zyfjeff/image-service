@@ -18,7 +18,8 @@ pub trait RafsCache {
     /* flush cache */
     fn flush(&self) -> io::Result<()>;
 
-    /* read a chunk data through cache */
+    /* read a chunk data through cache, always used in compressed cache */
+    /* TODO: interface for decompressed cache with zero copy */
     fn read(&self, blk: &RafsBlk) -> io::Result<Vec<u8>>;
 
     /* write a chunk data through cache */
