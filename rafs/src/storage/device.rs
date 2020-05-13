@@ -4,7 +4,7 @@
 
 use std::cmp;
 use std::io;
-use std::io::{Error, Read, Write};
+use std::io::Error;
 
 use fuse_rs::api::filesystem::{ZeroCopyReader, ZeroCopyWriter};
 use fuse_rs::transport::FileReadWriteVolatile;
@@ -35,11 +35,7 @@ impl RafsDevice {
     }
 
     // Read a range of data from blob into the provided writer
-    pub fn read_to<W: Write + ZeroCopyWriter>(
-        &self,
-        mut w: W,
-        desc: RafsBioDesc,
-    ) -> io::Result<usize> {
+    pub fn read_to(&self, w: &mut dyn ZeroCopyWriter, desc: RafsBioDesc) -> io::Result<usize> {
         let mut count: usize = 0;
         for bio in desc.bi_vec.iter() {
             let mut f = RafsBioDevice::new(bio, &self)?;
@@ -50,11 +46,7 @@ impl RafsDevice {
     }
 
     // Write a range of data to blob from the provided reader
-    pub fn write_from<R: Read + ZeroCopyReader>(
-        &self,
-        mut r: R,
-        desc: RafsBioDesc,
-    ) -> io::Result<usize> {
+    pub fn write_from(&self, r: &mut dyn ZeroCopyReader, desc: RafsBioDesc) -> io::Result<usize> {
         let mut count: usize = 0;
         for bio in desc.bi_vec.iter() {
             let mut f = RafsBioDevice::new(bio, &self)?;

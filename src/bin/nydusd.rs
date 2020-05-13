@@ -25,10 +25,8 @@ use std::{convert, error, fmt, io, process};
 use libc::EFD_NONBLOCK;
 
 use clap::{App, Arg};
-use fuse_rs::api::filesystem::FileSystem;
 use fuse_rs::api::server::Server;
-use fuse_rs::passthrough::passthrough;
-use fuse_rs::passthrough::passthrough::PassthroughFs;
+use fuse_rs::passthrough::{Config, PassthroughFs};
 use fuse_rs::transport::{Error as FuseTransportError, Reader, Writer};
 use fuse_rs::Error as VhostUserFsError;
 use vhost_rs::vhost_user::message::*;
@@ -142,16 +140,6 @@ impl AsRawFd for EpollContext {
     fn as_raw_fd(&self) -> RawFd {
         self.raw_fd
     }
-}
-
-struct VhostUserFsBackend<F: FileSystem + Send + Sync + 'static> {
-    mem: Option<GuestMemoryMmap>,
-    kill_evt: EventFd,
-    vfs: Arc<Vfs<F>>,
-    server: Arc<Server<Arc<Vfs<F>>>>,
-    // handle request from slave to master
-    vu_req: Option<SlaveFsCacheReq>,
-    used_descs: Vec<(u16, u32)>,
 }
 
 struct ApiServer {
@@ -293,8 +281,19 @@ where
     Ok(thread)
 }
 
-impl<F: FileSystem + Send + Sync + 'static> VhostUserFsBackend<F> {
-    fn new(vfs: Vfs<F>) -> Result<Self> {
+#[allow(dead_code)]
+struct VhostUserFsBackend {
+    mem: Option<GuestMemoryMmap>,
+    kill_evt: EventFd,
+    vfs: Arc<Vfs>,
+    server: Arc<Server<Arc<Vfs>>>,
+    // handle request from slave to master
+    vu_req: Option<SlaveFsCacheReq>,
+    used_descs: Vec<(u16, u32)>,
+}
+
+impl VhostUserFsBackend {
+    fn new(vfs: Vfs) -> Result<Self> {
         let fs = Arc::new(vfs);
         Ok(VhostUserFsBackend {
             mem: None,
@@ -319,7 +318,7 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserFsBackend<F> {
 
             let total = self
                 .server
-                .handle_message(reader, writer, self.vu_req.as_mut())
+                .handle_message(reader, writer, None)
                 .map_err(Error::ProcessQueue)?;
 
             self.used_descs.push((head_index, total as u32));
@@ -343,7 +342,7 @@ impl<F: FileSystem + Send + Sync + 'static> VhostUserFsBackend<F> {
     }
 }
 
-impl<F: FileSystem + Send + Sync + 'static> VhostUserBackend for VhostUserFsBackend<F> {
+impl VhostUserBackend for VhostUserFsBackend {
     fn num_queues(&self) -> usize {
         NUM_QUEUES
     }
@@ -471,9 +470,9 @@ fn main() -> Result<()> {
         .value_of("sock")
         .expect("Failed to retrieve vhost-user socket path");
 
-    match cmd_arguments.value_of("shared-dir") {
+    let fs_backend = match cmd_arguments.value_of("shared-dir") {
         Some(shared_dir) => {
-            let fs_cfg = passthrough::Config {
+            let fs_cfg = Config {
                 root_dir: shared_dir.to_string(),
                 do_import: false,
                 ..Default::default()
@@ -483,37 +482,18 @@ fn main() -> Result<()> {
             vfs_opts.no_writeback = true;
 
             let passthrough_fs = PassthroughFs::new(fs_cfg).unwrap();
+            passthrough_fs.import()?;
+
             let fs_backend = Arc::new(RwLock::new(
                 VhostUserFsBackend::new(Vfs::new(vfs_opts)).unwrap(),
             ));
 
             let fs = Arc::clone(&fs_backend.write().unwrap().vfs);
 
-            passthrough_fs.import()?;
-            fs.mount(passthrough_fs, "/").unwrap();
+            fs.mount(Box::new(passthrough_fs), "/").unwrap();
             info!("vfs mounted");
 
-            let mut daemon = VhostUserDaemon::new(
-                String::from("vhost-user-fs-backend"),
-                String::from(sock),
-                fs_backend.clone(),
-            )
-            .unwrap();
-
-            info!("starting fuse daemon");
-            if let Err(e) = daemon.start() {
-                error!("Failed to start daemon: {:?}", e);
-                process::exit(1);
-            }
-
-            if let Err(e) = daemon.wait() {
-                error!("Waiting for daemon failed: {:?}", e);
-            }
-
-            let kill_evt = &fs_backend.read().unwrap().kill_evt;
-            if let Err(e) = kill_evt.write(1) {
-                error!("Error shutting down worker thread: {:?}", e)
-            }
+            fs_backend
         }
         None => {
             let config_file = cmd_arguments
@@ -537,8 +517,9 @@ fn main() -> Result<()> {
                 let mut file = File::open(metadata)?;
                 rafs.import(&mut file)?;
                 info!("rafs mounted");
+
                 let fs = Arc::clone(&fs_backend.write().unwrap().vfs);
-                fs.mount(rafs, "/").unwrap();
+                fs.mount(Box::new(rafs), "/").unwrap();
                 info!("vfs mounted");
             }
 
@@ -553,9 +534,10 @@ fn main() -> Result<()> {
                         let mut file = File::open(&info.source).map_err(ApiError::MountFailure)?;
                         rafs.import(&mut file).map_err(ApiError::MountFailure)?;
                         info!("rafs mounted");
+
                         let vfs = Arc::clone(&backend.write().unwrap().vfs);
 
-                        match vfs.mount(rafs, &info.mountpoint) {
+                        match vfs.mount(Box::new(rafs), &info.mountpoint) {
                             Ok(()) => Ok(ApiResponsePayload::Mount),
                             Err(e) => {
                                 error!("mount {:?} failed {}", info, e);
@@ -568,29 +550,30 @@ fn main() -> Result<()> {
                 )?;
                 info!("api server running at {}", apisock);
             }
-
-            let mut daemon = VhostUserDaemon::new(
-                String::from("vhost-user-fs-backend"),
-                String::from(sock),
-                fs_backend.clone(),
-            )
-            .unwrap();
-
-            info!("starting fuse daemon");
-            if let Err(e) = daemon.start() {
-                error!("Failed to start daemon: {:?}", e);
-                process::exit(1);
-            }
-
-            if let Err(e) = daemon.wait() {
-                error!("Waiting for daemon failed: {:?}", e);
-            }
-
-            let kill_evt = &fs_backend.read().unwrap().kill_evt;
-            if let Err(e) = kill_evt.write(1) {
-                error!("Error shutting down worker thread: {:?}", e)
-            }
+            fs_backend
         }
+    };
+
+    let mut daemon = VhostUserDaemon::new(
+        String::from("vhost-user-fs-backend"),
+        String::from(sock),
+        fs_backend.clone(),
+    )
+    .unwrap();
+
+    info!("starting fuse daemon");
+    if let Err(e) = daemon.start() {
+        error!("Failed to start daemon: {:?}", e);
+        process::exit(1);
+    }
+
+    if let Err(e) = daemon.wait() {
+        error!("Waiting for daemon failed: {:?}", e);
+    }
+
+    let kill_evt = &fs_backend.read().unwrap().kill_evt;
+    if let Err(e) = kill_evt.write(1) {
+        error!("Error shutting down worker thread: {:?}", e)
     }
 
     info!("nydusd quits");

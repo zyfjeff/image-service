@@ -27,7 +27,7 @@ utils = { path = "utils" }
 image_builder = { path = "image_builder" }
 nydus-api = { path = "api" }
 vm-memory = { version = ">=0.2.0", features = ["backend-mmap"] }
-fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git", branch = "master", features = ["vhost-user-fs"] }
+fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git", features = ["vhost-user-fs"] }
 vhost-rs = { git = "https://github.com/cloud-hypervisor/vhost.git", branch = "dragonball", package = "vhost", features = ["vhost-user-slave"] }
 vhost-user-backend = { git = "ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git" }
 

@@ -184,10 +184,13 @@ impl PseudoFs {
         }
     }
 
-    fn do_readdir<F>(&self, parent: u64, size: u32, offset: u64, mut add_entry: F) -> Result<()>
-    where
-        F: FnMut(DirEntry) -> Result<usize>,
-    {
+    fn do_readdir(
+        &self,
+        parent: u64,
+        size: u32,
+        offset: u64,
+        add_entry: &mut dyn FnMut(DirEntry) -> Result<usize>,
+    ) -> Result<()> {
         if size == 0 {
             return Ok(());
         }
@@ -266,34 +269,28 @@ impl FileSystem for PseudoFs {
         Ok((entry.attr, entry.attr_timeout))
     }
 
-    fn readdir<F>(
+    fn readdir(
         &self,
         _ctx: Context,
         inode: u64,
         _: u64,
         size: u32,
         offset: u64,
-        add_entry: F,
-    ) -> Result<()>
-    where
-        F: FnMut(DirEntry) -> Result<usize>,
-    {
+        add_entry: &mut dyn FnMut(DirEntry) -> Result<usize>,
+    ) -> Result<()> {
         self.do_readdir(inode, size, offset, add_entry)
     }
 
-    fn readdirplus<F>(
+    fn readdirplus(
         &self,
         _ctx: Context,
         inode: u64,
         _handle: u64,
         size: u32,
         offset: u64,
-        mut add_entry: F,
-    ) -> Result<()>
-    where
-        F: FnMut(DirEntry, Entry) -> Result<usize>,
-    {
-        self.do_readdir(inode, size, offset, |dir_entry| {
+        add_entry: &mut dyn FnMut(DirEntry, Entry) -> Result<usize>,
+    ) -> Result<()> {
+        self.do_readdir(inode, size, offset, &mut |dir_entry| {
             let entry = self.get_entry(dir_entry.ino);
             add_entry(dir_entry, entry)
         })
@@ -429,20 +426,20 @@ mod tests {
         let _ = fs.mount("/a").unwrap();
         let _ = fs.mount("/b").unwrap();
 
-        fs.readdir(create_fuse_context(), ROOT_ID, 0, 0, 0, |_| Ok(1))
+        fs.readdir(create_fuse_context(), ROOT_ID, 0, 0, 0, &mut |_| Ok(1))
             .unwrap();
-        fs.readdir(create_fuse_context(), ROOT_ID, 0, 1, 0, |_| Ok(1))
+        fs.readdir(create_fuse_context(), ROOT_ID, 0, 1, 0, &mut |_| Ok(1))
             .unwrap();
-        fs.readdir(create_fuse_context(), ROOT_ID, 0, 1, 1, |_| Ok(1))
+        fs.readdir(create_fuse_context(), ROOT_ID, 0, 1, 1, &mut |_| Ok(1))
             .unwrap();
-        fs.readdir(create_fuse_context(), ROOT_ID, 0, 2, 0, |_| Ok(1))
+        fs.readdir(create_fuse_context(), ROOT_ID, 0, 2, 0, &mut |_| Ok(1))
             .unwrap();
-        fs.readdir(create_fuse_context(), ROOT_ID, 0, 3, 0, |_| Ok(1))
+        fs.readdir(create_fuse_context(), ROOT_ID, 0, 3, 0, &mut |_| Ok(1))
             .unwrap();
-        fs.readdir(create_fuse_context(), ROOT_ID, 0, 3, 3, |_| Ok(1))
+        fs.readdir(create_fuse_context(), ROOT_ID, 0, 3, 3, &mut |_| Ok(1))
             .unwrap();
         assert!(fs
-            .readdir(create_fuse_context(), 0x1000, 0, 3, 0, |_| Ok(1))
+            .readdir(create_fuse_context(), 0x1000, 0, 3, 0, &mut |_| Ok(1))
             .is_err());
     }
 

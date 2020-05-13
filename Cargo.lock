@@ -314,7 +314,7 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 [[package]]
 name = "fuse-rs"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git#b36cd994409175bbc643a73bdf5568c6be008945"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git#3c2486ef632789daebaddb0aaba07668c979d06f"
 dependencies = [
  "bitflags",
  "libc",
@@ -1810,7 +1810,7 @@ dependencies = [
 [[package]]
 name = "vhost"
 version = "0.1.0"
-source = "git+https://github.com/cloud-hypervisor/vhost.git?branch=dragonball#d756e08224973cae7d9191e80adaa59b1101b35a"
+source = "git+https://github.com/cloud-hypervisor/vhost.git?branch=dragonball#3e80cf531d278aeb7f947335a4eeca655e0f2c54"
 dependencies = [
  "bitflags",
  "libc",
@@ -1820,7 +1820,7 @@ dependencies = [
 [[package]]
 name = "vhost-user-backend"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git#227a46f49f50ba8eddb251d50d261c0f8763bbc7"
+source = "git+ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git#2990c73ce26db4e5abcea8a4d31ba82c938d5f8f"
 dependencies = [
  "epoll",
  "libc",

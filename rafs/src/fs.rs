@@ -7,7 +7,7 @@
 use serde::Deserialize;
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::CStr;
-use std::io::{Error, ErrorKind, Read, Result, Write};
+use std::io::{Error, ErrorKind, Read, Result};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::{cmp, mem};
@@ -270,17 +270,14 @@ impl RafsSuper {
         Ok(())
     }
 
-    fn do_readdir<F>(
+    fn do_readdir(
         &self,
         ctx: Context,
         inode: Inode,
         size: u32,
         offset: u64,
-        mut add_entry: F,
-    ) -> Result<()>
-    where
-        F: FnMut(DirEntry) -> Result<usize>,
-    {
+        add_entry: &mut dyn FnMut(DirEntry) -> Result<usize>,
+    ) -> Result<()> {
         if size == 0 {
             return Ok(());
         }
@@ -576,12 +573,12 @@ impl FileSystem for Rafs {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn read<W: Write + ZeroCopyWriter>(
+    fn read(
         &self,
         ctx: Context,
         inode: u64,
         handle: u64,
-        w: W,
+        w: &mut dyn ZeroCopyWriter,
         size: u32,
         offset: u64,
         lock_owner: Option<u64>,
@@ -673,37 +670,32 @@ impl FileSystem for Rafs {
         }
     }
 
-    fn readdir<F>(
+    fn readdir(
         &self,
         ctx: Context,
         inode: u64,
         handle: u64,
         size: u32,
         offset: u64,
-        add_entry: F,
-    ) -> Result<()>
-    where
-        F: FnMut(DirEntry) -> Result<usize>,
-    {
+        add_entry: &mut dyn FnMut(DirEntry) -> Result<usize>,
+    ) -> Result<()> {
         self.sb.do_readdir(ctx, inode, size, offset, add_entry)
     }
 
-    fn readdirplus<F>(
+    fn readdirplus(
         &self,
         ctx: Context,
         inode: u64,
         handle: u64,
         size: u32,
         offset: u64,
-        mut add_entry: F,
-    ) -> Result<()>
-    where
-        F: FnMut(DirEntry, Entry) -> Result<usize>,
-    {
-        self.sb.do_readdir(ctx, inode, size, offset, |dir_entry| {
-            let entry = self.sb.get_entry(dir_entry.ino)?;
-            add_entry(dir_entry, entry)
-        })
+        add_entry: &mut dyn FnMut(DirEntry, Entry) -> Result<usize>,
+    ) -> Result<()> {
+        self.sb
+            .do_readdir(ctx, inode, size, offset, &mut |dir_entry| {
+                let entry = self.sb.get_entry(dir_entry.ino)?;
+                add_entry(dir_entry, entry)
+            })
     }
 
     fn releasedir(&self, ctx: Context, inode: u64, flags: u32, handle: u64) -> Result<()> {
