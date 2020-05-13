@@ -227,13 +227,13 @@ impl OndiskSuperBlock {
     impl_pub_getter_setter!(inodes_count, set_inodes_count, s_inodes_count, u64);
     impl_pub_getter_setter!(
         mapping_table_entries,
-        set_mapping_talbe_entries,
+        set_mapping_table_entries,
         s_mapping_table_entries,
         u32
     );
     impl_pub_getter_setter!(
         mapping_table_offset,
-        set_mapping_talbe_offset,
+        set_mapping_table_offset,
         s_mapping_table_offset,
         u64
     );
@@ -712,8 +712,8 @@ mod tests {
     fn test_rafs_ondisk_superblock_v5() {
         let mut sb = OndiskSuperBlock::new();
         sb.set_inodes_count(1000);
-        sb.set_mapping_talbe_entries(1024);
-        sb.set_mapping_talbe_offset(RAFS_SUPERBLOCK_SIZE as u64);
+        sb.set_mapping_table_entries(1024);
+        sb.set_mapping_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
 
         assert_eq!(
             std::mem::size_of::<OndiskSuperBlock>(),
@@ -763,15 +763,15 @@ mod tests {
         sb.validate().unwrap_err();
         sb.set_inodes_count(100);
 
-        sb.set_mapping_talbe_offset(RAFS_SUPERBLOCK_SIZE as u64 + 1);
+        sb.set_mapping_table_offset(RAFS_SUPERBLOCK_SIZE as u64 + 1);
         sb.validate().unwrap_err();
-        sb.set_mapping_talbe_offset(RAFS_SUPERBLOCK_SIZE as u64);
+        sb.set_mapping_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
 
-        sb.set_mapping_talbe_entries(1 << 30);
+        sb.set_mapping_table_entries(1 << 30);
         sb.validate().unwrap_err();
-        sb.set_mapping_talbe_entries(1 << 29);
+        sb.set_mapping_table_entries(1 << 29);
         sb.validate().unwrap_err();
-        sb.set_mapping_talbe_entries((1 << 29) - 1);
+        sb.set_mapping_table_entries((1 << 29) - 1);
         sb.validate().unwrap();
     }
 

@@ -230,7 +230,7 @@ mod tests {
 
         let mut sb = OndiskSuperBlock::new();
         sb.set_inode_size(4);
-        sb.set_mapping_talbe_offset(RAFS_SUPERBLOCK_SIZE as u64);
+        sb.set_mapping_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
         buf.write_all(sb.as_ref()).unwrap();
 
         let mut table = vec![0u8; 32];

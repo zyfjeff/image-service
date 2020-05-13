@@ -162,8 +162,8 @@ impl RafsSuper {
             RAFS_SUPER_VERSION_V4 => {}
             RAFS_SUPER_VERSION_V5 => {
                 sb.set_inodes_count(self.s_meta.s_inodes_count);
-                sb.set_mapping_talbe_entries(self.s_meta.s_mapping_table_entries);
-                sb.set_mapping_talbe_offset(self.s_meta.s_mapping_table_offset);
+                sb.set_mapping_table_entries(self.s_meta.s_mapping_table_entries);
+                sb.set_mapping_table_offset(self.s_meta.s_mapping_table_offset);
             }
             _ => return Err(einval()),
         }

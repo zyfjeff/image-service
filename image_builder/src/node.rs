@@ -39,16 +39,29 @@ impl fmt::Display for Overlay {
     }
 }
 
+impl fmt::Display for Node {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{:?} ino {}, parent {}, childs {}, child index {}",
+            // self.get_type(),
+            self.get_rootfs(),
+            self.inode.ino(),
+            self.inode.parent(),
+            self.inode.child_count(),
+            self.inode.child_index(),
+        )
+    }
+}
+
 #[derive(Clone)]
 pub struct Node {
     /// type
     pub overlay: Overlay,
     /// source path
-    pub root: String,
+    pub root: PathBuf,
     /// file path
-    pub path: String,
-    /// parent dir of file
-    pub parent: Option<Box<Node>>,
+    pub path: PathBuf,
     /// file inode info
     pub inode: OndiskInode,
     /// chunks info of file
@@ -60,64 +73,15 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new(root: String, path: String, parent: Option<Box<Node>>, overlay: Overlay) -> Node {
-        Node {
-            root,
-            path,
-            parent,
-            overlay,
-            inode: OndiskInode::new(),
-            chunks: Vec::new(),
-            // link_chunks: Vec::new(),
-            // xattr_chunks: RafsInodeXattrInfos::new(),
+    pub fn build(&mut self, hardlink_node: Option<Node>) -> Result<bool> {
+        self.build_inode(hardlink_node)?;
+        let file_type = self.get_type();
+        if file_type != "" {
+            info!("upper building {} {:?}", file_type, self.get_rootfs());
+            return Ok(true);
         }
-    }
-
-    pub fn get_type(&self) -> &str {
-        let mut file_type = "";
-
-        if self.is_symlink() {
-            file_type = "symlink";
-        } else if self.is_dir() {
-            file_type = "dir"
-        } else if self.is_reg() {
-            if self.is_hardlink() {
-                file_type = "hardlink";
-            } else {
-                file_type = "file";
-            }
-        }
-
-        file_type
-    }
-
-    pub fn rootfs_path(&self) -> PathBuf {
-        Path::new("/").join(
-            Path::new(self.path.as_str())
-                .strip_prefix(self.root.as_str())
-                .unwrap(),
-        )
-    }
-
-    fn meta(&self) -> Box<dyn MetadataExt> {
-        let path = Path::new(self.path.as_str());
-        Box::new(path.symlink_metadata().unwrap())
-    }
-
-    fn is_dir(&self) -> bool {
-        self.inode.mode() & libc::S_IFMT == libc::S_IFDIR
-    }
-
-    fn is_symlink(&self) -> bool {
-        self.inode.mode() & libc::S_IFMT == libc::S_IFLNK
-    }
-
-    fn is_reg(&self) -> bool {
-        self.inode.mode() & libc::S_IFMT == libc::S_IFREG
-    }
-
-    fn is_hardlink(&self) -> bool {
-        self.inode.nlink() > 1
+        info!("skip build {:?}", self.get_rootfs());
+        Ok(false)
     }
 
     // fn build_inode_xattr(&mut self) -> Result<()> {
@@ -292,7 +256,7 @@ impl Node {
 
         let file_size = self.inode.size();
         let mut inode_hash = Sha256::new();
-        let mut file = File::open(self.path.as_str())?;
+        let mut file = File::open(&self.path)?;
 
         for i in 0..self.inode.chunk_cnt() {
             let mut chunk = OndiskChunkInfo::new();
@@ -387,5 +351,123 @@ impl Node {
         // }
 
         Ok(())
+    }
+
+    pub fn new(blob_offset: u64, root: PathBuf, path: PathBuf, overlay: Overlay) -> Node {
+        Node {
+            blob_offset,
+            root,
+            path,
+            overlay,
+            inode: OndiskInode::new(),
+            chunks: Vec::new(),
+            // link_chunks: Vec::new(),
+            // xattr_chunks: RafsInodeXattrInfos::new(),
+        }
+    }
+
+    fn build_inode_stat(&mut self) -> Result<()> {
+        let meta = self.meta();
+
+        self.inode.set_mode(meta.st_mode());
+        self.inode.set_uid(meta.st_uid());
+        self.inode.set_gid(meta.st_gid());
+        self.inode.set_projid(0);
+        self.inode.set_rdev(meta.st_rdev());
+        self.inode.set_size(meta.st_size());
+        self.inode.set_nlink(meta.st_nlink());
+        self.inode.set_blocks(meta.st_blocks());
+        self.inode.set_atime(meta.st_atime() as u64);
+        self.inode.set_mtime(meta.st_mtime() as u64);
+        self.inode.set_ctime(meta.st_ctime() as u64);
+
+        Ok(())
+    }
+
+    fn build_inode(&mut self, hardlink_node: Option<Node>) -> Result<()> {
+        let meta = self.meta();
+
+        if self.get_rootfs() == PathBuf::from("/") {
+            self.inode.set_name("/")?;
+            self.inode.set_parent(0);
+            self.inode.set_ino(meta.st_ino());
+            self.build_inode_stat()?;
+            return Ok(());
+        }
+
+        let file_name = self.path.file_name().unwrap().to_str().unwrap();
+
+        self.inode.set_name(file_name)?;
+        self.build_inode_stat()?;
+
+        // self.build_inode_xattr()?;
+
+        if self.is_reg() {
+            if self.is_hardlink() {
+                if let Some(hardlink_node) = hardlink_node {
+                    self.inode
+                        .set_flags(self.inode.flags() | INO_FLAG_HARDLINK as u64);
+                    self.inode.set_digest(hardlink_node.inode.digest());
+                    self.inode.set_chunk_cnt(0);
+                    return Ok(());
+                }
+            }
+            let file_size = self.inode.size();
+            let chunk_count = (file_size as f64 / RAFS_DEFAULT_BLOCK_SIZE as f64).ceil() as u64;
+            self.inode.set_chunk_cnt(chunk_count);
+        } else if self.is_symlink() {
+            self.inode
+                .set_flags(self.inode.flags() | INO_FLAG_SYMLINK as u64);
+            let target_path = fs::read_link(&self.path)?;
+            let target_path_str = target_path.to_str().unwrap();
+            let chunk_info_count = (target_path_str.as_bytes().len() as f64
+                / RAFS_CHUNK_INFO_SIZE as f64)
+                .ceil() as usize;
+            self.inode.set_chunk_cnt(chunk_info_count as u64);
+        }
+
+        Ok(())
+    }
+
+    pub fn meta(&self) -> impl MetadataExt {
+        self.path.symlink_metadata().unwrap()
+    }
+
+    pub fn is_dir(&self) -> bool {
+        self.meta().st_mode() & libc::S_IFMT == libc::S_IFDIR
+    }
+
+    pub fn is_symlink(&self) -> bool {
+        self.meta().st_mode() & libc::S_IFMT == libc::S_IFLNK
+    }
+
+    pub fn is_reg(&self) -> bool {
+        self.meta().st_mode() & libc::S_IFMT == libc::S_IFREG
+    }
+
+    pub fn is_hardlink(&self) -> bool {
+        self.meta().st_nlink() > 1
+    }
+
+    pub fn get_type(&self) -> &str {
+        let mut file_type = "";
+
+        if self.is_symlink() {
+            file_type = "symlink";
+        } else if self.is_dir() {
+            file_type = "dir"
+        } else if self.is_reg() {
+            if self.is_hardlink() {
+                file_type = "hardlink";
+            } else {
+                file_type = "file";
+            }
+        }
+
+        file_type
+    }
+
+    pub fn get_rootfs(&self) -> PathBuf {
+        Path::new("/").join(self.path.strip_prefix(&self.root).unwrap())
     }
 }

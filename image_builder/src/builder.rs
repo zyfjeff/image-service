@@ -10,7 +10,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Result};
 use std::os::linux::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rafs::metadata::layout::*;
 use rafs::metadata::{RafsChunkInfo, RafsInode, RafsSuper};
@@ -23,7 +23,7 @@ const OCISPEC_WHITEOUT_OPAQUE: &str = ".wh..wh..opq";
 
 pub struct Builder {
     /// source root path
-    root: String,
+    root: PathBuf,
     /// blob file writer
     f_blob: Box<dyn RafsIoWrite>,
     /// bootstrap file writer
@@ -38,8 +38,8 @@ pub struct Builder {
     inode_map: HashMap<u64, Node>,
     /// mutilple layers build: upper source nodes
     additions: Vec<Node>,
-    removals: HashMap<String, bool>,
-    opaques: HashMap<String, bool>,
+    removals: HashMap<PathBuf, bool>,
+    opaques: HashMap<PathBuf, bool>,
 }
 
 impl Builder {
@@ -77,7 +77,7 @@ impl Builder {
         };
 
         Ok(Builder {
-            root,
+            root: PathBuf::from(root),
             f_blob,
             f_bootstrap,
             f_parent_bootstrap,
@@ -89,7 +89,7 @@ impl Builder {
         })
     }
 
-    fn get_lower_idx(&self, lowers: &[Node], path: String) -> Option<usize> {
+    fn get_lower_idx(&self, lowers: &[Node], path: PathBuf) -> Option<usize> {
         for (idx, lower) in lowers.iter().enumerate() {
             if lower.path == path {
                 return Some(idx);
@@ -139,13 +139,12 @@ impl Builder {
             //     link_chunks.push(link_chunk);
             // }
 
-            let mut path = inode.name().to_owned();
+            let mut path = PathBuf::from(inode.name());
 
             let mut parent = None;
             if let Some(parent_node) = nodes.get_mut(&inode.parent()) {
                 parent = Some(Box::new(parent_node.clone()));
-                let _path = Path::new(parent_node.path.as_str()).join(inode.name().to_owned());
-                path = _path.to_str().unwrap().to_owned();
+                path = parent_node.path.join(inode.name());
             }
 
             let mut overlay = if self.removals.get(&path).is_some() {
@@ -161,9 +160,9 @@ impl Builder {
             }
 
             let node = Node {
-                root: self.root.to_owned(),
+                blob_offset: self.blob_offset,
+                root: self.root.clone(),
                 path: path.clone(),
-                parent,
                 overlay,
                 inode: inode.clone(),
                 chunks,
@@ -176,18 +175,16 @@ impl Builder {
         }
 
         for addition in &self.additions {
-            let addition_path = addition.rootfs_path();
+            let addition_path = addition.get_rootfs();
             let mut _addition = addition.clone();
-            _addition.path = addition_path.to_str().unwrap().to_owned();
+            _addition.path = addition_path.clone();
             if let Some(idx) = self.get_lower_idx(&lowers, _addition.path.clone()) {
                 _addition.inode.set_ino(lowers[idx].inode.ino());
                 _addition.inode.set_parent(lowers[idx].inode.parent());
                 _addition.overlay = Overlay::UpperModification;
                 lowers[idx] = _addition;
             } else if let Some(parent_path) = addition_path.parent() {
-                if let Some(idx) =
-                    self.get_lower_idx(&lowers, parent_path.to_str().unwrap().to_owned())
-                {
+                if let Some(idx) = self.get_lower_idx(&lowers, parent_path.to_path_buf()) {
                     _addition.inode.set_parent(lowers[idx].inode.ino());
                     _addition.overlay = Overlay::UpperAddition;
                     lowers.insert(idx + 1, _addition);
@@ -199,8 +196,8 @@ impl Builder {
         }
 
         for lower in &mut lowers {
-            debug!(
-                "{} {} {} inode {}, parent {}",
+            info!(
+                "{} {} {:?} inode {}, parent {}",
                 lower.overlay,
                 lower.get_type(),
                 lower.path,
@@ -215,13 +212,8 @@ impl Builder {
         Ok(())
     }
 
-<<<<<<< HEAD
-    fn dump_superblock(&mut self) -> Result<RafsSuperBlockInfo> {
-        debug!("upper building superblock");
-=======
     fn dump_superblock(&mut self) -> Result<OndiskSuperBlock> {
         info!("upper building superblock");
->>>>>>> builder: adapt rafs v5 struct
 
         let mut sb = OndiskSuperBlock::new();
         // all fields are initilized by RafsSuperBlockInfo::new()
@@ -252,6 +244,7 @@ impl Builder {
         Ok(blob_hash)
     }
 
+>>>>>>> builder: add source walk
     fn dump_bootstrap(&mut self) -> Result<()> {
         for node in &mut self.additions {
             node.dump_bootstrap(&mut self.f_bootstrap, Some(self.blob_id.to_owned()))?;
@@ -268,6 +261,7 @@ impl Builder {
         }
     }
 
+<<<<<<< HEAD
     fn build_node(&mut self, file: &Path, parent_node: Option<Box<Node>>) -> Result<()> {
         let meta = file.symlink_metadata()?;
 
@@ -277,11 +271,16 @@ impl Builder {
 <<<<<<< HEAD
             let mut root_node = Node::new(self.root.to_owned(), path, None, Overlay::LowerAddition);
 =======
+=======
+    fn dump_blob(&mut self, file: &PathBuf, parent_node: Option<Box<Node>>) -> Result<()> {
+        let meta = file.symlink_metadata()?;
+
+        if parent_node.is_none() {
+>>>>>>> builder: add source walk
             let mut root_node = Node::new(
                 self.blob_offset,
-                self.root.to_owned(),
-                path,
-                None,
+                self.root.clone(),
+                file.clone(),
                 Overlay::LowerAddition,
             );
 
@@ -300,12 +299,11 @@ impl Builder {
         let is_symlink = meta.st_mode() & libc::S_IFMT == libc::S_IFLNK;
 
         if file.is_dir() && !is_symlink {
-            let rootfs_path = Path::new("/").join(file.strip_prefix(self.root.as_str()).unwrap());
-            let rootfs_path = rootfs_path.to_str().unwrap();
+            let rootfs_path = Path::new("/").join(file.strip_prefix(&self.root).unwrap());
 
             let opaque_path = file.join(OCISPEC_WHITEOUT_OPAQUE);
             if opaque_path.metadata().is_ok() {
-                self.opaques.insert(rootfs_path.to_owned(), true);
+                self.opaques.insert(rootfs_path.clone(), true);
             }
 
             for entry in fs::read_dir(file)? {
@@ -315,8 +313,7 @@ impl Builder {
 
                 let mut node = Node::new(
                     self.root.clone(),
-                    path.to_str().unwrap().to_owned(),
-                    parent_node.clone(),
+                    path.clone(),
                     Overlay::UpperAddition,
                 );
 
@@ -331,9 +328,8 @@ impl Builder {
                     if let Some(parent_dir) = path.parent() {
                         let path = parent_dir.join(name);
                         let rootfs_path =
-                            Path::new("/").join(path.strip_prefix(self.root.as_str()).unwrap());
-                        let rootfs_path = rootfs_path.to_str().unwrap();
-                        self.removals.insert(rootfs_path.to_owned(), true);
+                            Path::new("/").join(path.strip_prefix(&self.root).unwrap());
+                        self.removals.insert(rootfs_path.clone(), true);
                         continue;
                     }
                 }
@@ -371,6 +367,7 @@ impl Builder {
         Ok(())
     }
 
+<<<<<<< HEAD
     pub fn build(&mut self) -> Result<String> {
         let root = self.root.clone();
         let root_path = Path::new(root.as_str());
@@ -383,14 +380,110 @@ impl Builder {
 
         if self.blob_id == "" {
             self.blob_id = format!("sha256:{}", blob_hash.result_str());
-        }
+=======
+    fn new_node(&self, path: &PathBuf) -> Node {
+        Node::new(
+            self.blob_offset,
+            self.root.clone(),
+            path.clone(),
+            Overlay::UpperAddition,
+        )
+    }
 
-        if self.f_parent_bootstrap.is_none() {
-            self.dump_bootstrap()?;
-        } else {
-            self.fill_blob_id();
-            self.apply()?;
+    /// Directory walk by BFS
+    pub fn walk_source(&mut self) -> Result<()> {
+        let mut dirs = vec![0];
+        let mut ino: u64 = 1;
+        let mut root_node = self.new_node(&self.root);
+
+        root_node.inode.set_ino(1);
+        self.additions.push(root_node);
+
+        while !dirs.is_empty() {
+            let mut next_dirs = Vec::new();
+
+            for dir_idx in &dirs {
+                let dir_node = self.additions.get_mut(*dir_idx).unwrap();
+                let childs = fs::read_dir(&dir_node.path)?;
+                let dir_ino = dir_node.inode.ino();
+                let mut child_count: usize = 0;
+
+                dir_node.inode.set_child_index((ino + 1) as u32);
+
+                for child in childs {
+                    let entry = &child?;
+                    let path = entry.path();
+                    let mut node = self.new_node(&path);
+
+                    ino += 1;
+                    child_count += 1;
+                    node.inode.set_ino(ino);
+                    node.inode.set_parent(dir_ino);
+
+                    if node.is_dir() && !node.is_symlink() {
+                        next_dirs.push(self.additions.len());
+                    } else {
+                        self.inode_map.insert(node.inode.ino(), node.clone());
+                    }
+
+                    self.additions.push(node);
+                }
+
+                let dir_node = self.additions.get_mut(*dir_idx).unwrap();
+                dir_node.inode.set_child_count(child_count as u32);
+            }
+            dirs = next_dirs;
+>>>>>>> builder: add source walk
         }
+        Ok(())
+    }
+
+    fn dump_mapping_table(&mut self) -> Result<()> {
+        // let mapping_table = Vec::new();
+        for node in &mut self.additions {
+            // mapping_table.push();
+            let data: &[u8] = node.inode.as_ref();
+            info!("{}", data.len());
+        }
+        Ok(())
+    }
+
+    fn dump_superblock(&mut self) -> Result<OndiskSuperBlock> {
+        info!("upper building superblock");
+
+        let mut sb = OndiskSuperBlock::new();
+        let inodes_count = self.inode_map.len() as u64;
+        let mapping_table_entries = RAFS_INODE_INFO_SIZE as u32 * self.additions.len() as u32;
+        sb.set_inodes_count(inodes_count);
+        sb.set_mapping_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
+        sb.set_mapping_table_entries(mapping_table_entries);
+
+        sb.store(&mut self.f_bootstrap)?;
+
+        Ok(sb)
+    }
+
+    pub fn build(&mut self) -> Result<String> {
+        // self.dump_superblock()?;
+
+        // self.dump_blob(root_path, None)?;
+
+        // let blob_hash = self.blob_hash.result_str();
+        // if self.blob_id == "" {
+        //     self.blob_id = format!("sha256:{}", blob_hash);
+        // }
+
+        // if self.f_parent_bootstrap.is_none() {
+        //     self.dump_bootstrap()?;
+        // } else {
+        //     self.fill_blob_id();
+        //     self.apply()?;
+        // }
+
+        self.walk_source()?;
+
+        self.dump_superblock()?;
+        self.dump_mapping_table()?;
 
         Ok(self.blob_id.to_owned())
     }
