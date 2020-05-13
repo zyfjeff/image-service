@@ -51,6 +51,19 @@ registry backend:
 }
 ```
 
+To mount a bootstrap via api, first launch nydusd without a bootstrap:
+```
+./nydusd --apisock api.sock --config config.json --sock vhost-user-fs.sock
+```
+
+Then use curl to call the mount api:
+```
+curl --unix-socket api.sock \
+     -X PUT "http://localhost/api/v1/mount" -H "accept: */*" \
+     -H "Content-Type: application/json" \
+     -d "{\"source\":\"<path-to-bootstrap>`\",\"fstype\":\"rafs\",\"mountpoint\":\"/foo/bar\"}"
+```
+
 
 To start a qemu process, run something like:
 ```
