@@ -775,8 +775,11 @@ impl<F: FileSystem + Send + Sync> FileSystem for Vfs<F> {
         }
     }
 
-    fn releasedir(&self, _ctx: Context, _inode: u64, _flags: u32, _handle: u64) -> Result<()> {
-        Ok(())
+    fn releasedir(&self, ctx: Context, inode: u64, flags: u32, handle: u64) -> Result<()> {
+        match self.get_real_rootfs(inode)? {
+            (Left(fs), idata) => fs.releasedir(ctx, idata.ino, flags, handle),
+            (Right(fs), idata) => fs.releasedir(ctx, idata.ino.into(), flags, handle.into()),
+        }
     }
 
     fn access(&self, ctx: Context, inode: u64, mask: u32) -> Result<()> {
