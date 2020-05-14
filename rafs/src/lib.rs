@@ -10,3 +10,8 @@ pub mod fs;
 #[allow(dead_code)]
 pub mod layout;
 pub mod storage;
+
+#[macro_use]
+extern crate lazy_static;
+#[allow(dead_code)]
+pub mod io_stats;

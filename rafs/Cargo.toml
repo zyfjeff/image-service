@@ -20,5 +20,6 @@ config = "0.10"
 compress = "0.1.2"
 vm-memory = ">=0.2.0"
 fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git" }
+lazy_static = "1.4.0"
 
 utils = { path = "../utils" }

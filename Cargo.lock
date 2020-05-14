@@ -1039,6 +1039,7 @@ dependencies = [
  "config",
  "fuse-rs",
  "httpdate",
+ "lazy_static 1.4.0",
  "libc",
  "log 0.4.8",
  "nix",
