@@ -40,7 +40,6 @@ impl DirectMapping {
     fn from_raw_fd(fd: RawFd) -> Result<Self> {
         let file = unsafe { File::from_raw_fd(fd) };
         let md = file.metadata()?;
-        let _ = file.into_raw_fd();
         let len = md.len();
         if len < RAFS_SUPERBLOCK_SIZE as u64
             || len > RAFS_MAX_METADATA_SIZE as u64
@@ -48,14 +47,13 @@ impl DirectMapping {
         {
             return Err(ebadf());
         }
-
         let size = len as usize;
         let base = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
                 size,
                 libc::PROT_READ,
-                libc::MAP_ANONYMOUS | libc::MAP_NORESERVE | libc::MAP_PRIVATE,
+                libc::MAP_NORESERVE | libc::MAP_PRIVATE,
                 fd,
                 0,
             )
@@ -70,10 +68,8 @@ impl DirectMapping {
         let start = base.wrapping_add(offset as usize);
         let end = start.wrapping_add(size_of::<T>());
 
-        if start < self.base
-            || end < self.base
-            || end > self.end
-            || start as usize & (std::mem::align_of::<T>() - 1) != 0
+        if start < self.base || end < self.base || end > self.end
+        // || start as usize & (std::mem::align_of::<T>() - 1) != 0
         {
             return Err(einval());
         }
@@ -100,10 +96,10 @@ pub struct DirectMapInodes {
 }
 
 impl DirectMapInodes {
-    pub fn new() -> Self {
+    pub fn new(mapping_table: Vec<u32>) -> Self {
         DirectMapInodes {
             mapping: Arc::new(DirectMapping::new()),
-            index_2_offset: Vec::new(),
+            index_2_offset: mapping_table,
         }
     }
 
@@ -111,7 +107,7 @@ impl DirectMapInodes {
         if ino >= self.index_2_offset.len() as u64 {
             return Err(enoent());
         }
-        let offset = u32::from_le(self.index_2_offset[ino as usize]) as usize;
+        let offset = u32::from_le(self.index_2_offset[(ino - 1) as usize]) as usize;
         if offset <= (RAFS_SUPERBLOCK_SIZE >> 3) || offset >= (1usize << 29) {
             Err(enoent())
         } else {
@@ -218,9 +214,9 @@ impl RafsSuperInodes for DirectMapInodes {
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::CachedIoBuf;
     use super::*;
     use crate::metadata::layout::{save_symlink_ondisk, OndiskSuperBlock, INO_FLAG_SYMLINK};
+    use crate::metadata::CachedIoBuf;
     use crate::metadata::{calc_symlink_size, RafsSuper, RAFS_INODE_BLOCKSIZE};
     use fuse_rs::api::filesystem::ROOT_ID;
 
@@ -289,16 +285,17 @@ mod tests {
 
         let (base, size) = buf.as_buf();
         let end = unsafe { base.add(size) };
-        let mut inodes = DirectMapInodes::new();
+        let mut mapping_table: Vec<u32> = Vec::new();
+        mapping_table.push(0);
+        mapping_table.push(0x404);
+        mapping_table.push(0x444);
+        mapping_table.push(0x4a4);
+        mapping_table.push(0x4e4);
+        mapping_table.push(0);
+        mapping_table.push(0);
+        mapping_table.push(0);
+        let mut inodes = DirectMapInodes::new(mapping_table);
         inodes.mapping = Arc::new(DirectMapping { base, end, size });
-        inodes.index_2_offset.push(0);
-        inodes.index_2_offset.push(0x404);
-        inodes.index_2_offset.push(0x444);
-        inodes.index_2_offset.push(0x4a4);
-        inodes.index_2_offset.push(0x4e4);
-        inodes.index_2_offset.push(0);
-        inodes.index_2_offset.push(0);
-        inodes.index_2_offset.push(0);
 
         let mut sb2 = RafsSuper::new();
         sb2.s_inodes = Box::new(inodes);

@@ -93,6 +93,18 @@ impl RafsSuper {
         self.s_inodes.destroy();
     }
 
+    pub fn load_mapping_table(&mut self, r: &mut RafsIoReader) -> Result<Vec<u32>> {
+        let table_entries = self.s_meta.s_mapping_table_entries;
+        let table_size = (table_entries * 4) as usize;
+        let mut data: Vec<u8> = vec![0u8; table_size];
+        r.read_exact(data.as_mut_slice())?;
+        let (_, table, _) = unsafe { data.align_to::<u32>() };
+        if table_entries == table.len() as u32 {
+            return Ok(table.to_vec());
+        }
+        Err(ebadf())
+    }
+
     /// Load RAFS super block and optionally cache inodes.
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
         let mut sb = OndiskSuperBlock::new();
@@ -134,7 +146,8 @@ impl RafsSuper {
                     if self.cache_inodes {
                         unimplemented!();
                     } else {
-                        let mut inodes = Box::new(DirectMapInodes::new());
+                        let mapping_table = self.load_mapping_table(r)?;
+                        let mut inodes = Box::new(DirectMapInodes::new(mapping_table));
                         inodes.load(&mut self.s_meta, r)?;
                         self.s_inodes.destroy();
                         self.s_inodes = inodes;
@@ -374,6 +387,79 @@ pub fn calc_symlink_size(sz: usize) -> Result<(usize, usize)> {
     }
 }
 
+use crate::{RafsIoRead, RafsIoWrite};
+use std::io::{Read, Write};
+use std::os::unix::io::{AsRawFd, RawFd};
+use std::sync::{Arc, Mutex};
+
+#[derive(Clone)]
+pub struct CachedIoBuf {
+    data: Arc<Mutex<(Vec<u8>, usize)>>,
+}
+
+impl CachedIoBuf {
+    pub fn new() -> Self {
+        CachedIoBuf {
+            data: Arc::new(Mutex::new((Vec::new(), 0))),
+        }
+    }
+
+    pub fn set_buf(&mut self, buf: &[u8]) {
+        let mut data = self.data.lock().unwrap();
+        data.1 = 0;
+        data.0.clear();
+        data.0.extend_from_slice(buf);
+    }
+
+    pub fn append_buf(&mut self, buf: &[u8]) {
+        let mut data = self.data.lock().unwrap();
+        data.0.extend_from_slice(buf);
+    }
+
+    pub fn len(&self) -> usize {
+        let data = self.data.lock().unwrap();
+        data.0.len()
+    }
+
+    pub fn as_buf(&self) -> (*const u8, usize) {
+        let data = self.data.lock().unwrap();
+        (data.0.as_ptr(), data.0.len())
+    }
+}
+
+impl Read for CachedIoBuf {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        let mut data = self.data.lock().unwrap();
+        let min = std::cmp::min(data.0.len() - data.1, buf.len());
+        if min > 0 {
+            buf[..min].copy_from_slice(&data.0[data.1..data.1 + min]);
+            data.1 += min;
+        }
+
+        Ok(min)
+    }
+}
+
+impl Write for CachedIoBuf {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        self.append_buf(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl AsRawFd for CachedIoBuf {
+    fn as_raw_fd(&self) -> RawFd {
+        0
+    }
+}
+
+impl RafsIoRead for CachedIoBuf {}
+impl RafsIoWrite for CachedIoBuf {}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -383,77 +469,6 @@ pub(crate) mod tests {
     };
     use crate::{RafsIoRead, RafsIoWrite};
     use fuse_rs::api::filesystem::ROOT_ID;
-    use std::io::{Read, Write};
-    use std::os::unix::io::{AsRawFd, RawFd};
-    use std::sync::{Arc, Mutex};
-
-    #[derive(Clone)]
-    pub struct CachedIoBuf {
-        data: Arc<Mutex<(Vec<u8>, usize)>>,
-    }
-
-    impl CachedIoBuf {
-        pub fn new() -> Self {
-            CachedIoBuf {
-                data: Arc::new(Mutex::new((Vec::new(), 0))),
-            }
-        }
-
-        pub fn set_buf(&mut self, buf: &[u8]) {
-            let mut data = self.data.lock().unwrap();
-            data.1 = 0;
-            data.0.clear();
-            data.0.extend_from_slice(buf);
-        }
-
-        pub fn append_buf(&mut self, buf: &[u8]) {
-            let mut data = self.data.lock().unwrap();
-            data.0.extend_from_slice(buf);
-        }
-
-        pub fn len(&self) -> usize {
-            let data = self.data.lock().unwrap();
-            data.0.len()
-        }
-
-        pub fn as_buf(&self) -> (*const u8, usize) {
-            let data = self.data.lock().unwrap();
-            (data.0.as_ptr(), data.0.len())
-        }
-    }
-
-    impl Read for CachedIoBuf {
-        fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-            let mut data = self.data.lock().unwrap();
-            let min = std::cmp::min(data.0.len() - data.1, buf.len());
-            if min > 0 {
-                buf[..min].copy_from_slice(&data.0[data.1..data.1 + min]);
-                data.1 += min;
-            }
-
-            Ok(min)
-        }
-    }
-
-    impl Write for CachedIoBuf {
-        fn write(&mut self, buf: &[u8]) -> Result<usize> {
-            self.append_buf(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    impl AsRawFd for CachedIoBuf {
-        fn as_raw_fd(&self) -> RawFd {
-            0
-        }
-    }
-
-    impl RafsIoRead for CachedIoBuf {}
-    impl RafsIoWrite for CachedIoBuf {}
 
     #[test]
     fn test_rafs_superblock_v4_load_store() {

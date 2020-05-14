@@ -251,9 +251,9 @@ impl_metadata_converter!(OndiskSuperBlock);
 
 impl fmt::Display for OndiskSuperBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "superblock: magic {:x}, version {:x}, sb_size {:x}, inode_size {:x}, block_size {:x}, chunkinfo_size {:x}, flags {:x}",
+        write!(f, "superblock: magic {:x}, version {:x}, sb_size {:x}, inode_size {:x}, block_size {:x}, chunkinfo_size {:x}, flags {:x}, inode_count {}",
                self.magic(), self.version(), self.sb_size(), self.inode_size(), self.block_size(),
-               self.chunkinfo_size(), self.flags())
+               self.chunkinfo_size(), self.flags(), self.s_inodes_count)
     }
 }
 
@@ -663,6 +663,10 @@ pub fn save_symlink_ondisk(data: &[u8], w: &mut RafsIoWriter) -> Result<usize> {
     w.write_all(&buf)?;
 
     Ok(sz)
+}
+
+pub fn save_mapping_table(data: &[u8], w: &mut RafsIoWriter) -> Result<()> {
+    w.write_all(data)
 }
 
 #[cfg(test)]

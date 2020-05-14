@@ -240,15 +240,12 @@ impl Node {
     ) -> Result<OndiskDigest> {
         let mut inode_digest = OndiskDigest::new();
 
-        // if self.is_symlink() {
-        //     let target_path = fs::read_link(self.path.as_str())?;
-        //     let target_path_str = target_path.to_str().unwrap();
-        //     let mut chunk = RafsLinkDataInfo::new(self.inode.i_chunk_cnt as usize);
-        //     chunk.target = String::from(target_path_str);
-        //     // stash symlink chunk
-        //     self.link_chunks.push(chunk);
-        //     return Ok(inode_digest);
-        // }
+        if self.is_symlink() {
+            let target_path = fs::read_link(&self.path)?;
+            let target_path_str = target_path.to_str().unwrap();
+            save_symlink_ondisk(target_path_str.as_bytes(), f_blob)?;
+            return Ok(inode_digest);
+        }
 
         if self.is_dir() {
             return Ok(inode_digest);
@@ -384,13 +381,9 @@ impl Node {
         Ok(())
     }
 
-    fn build_inode(&mut self, hardlink_node: Option<Node>) -> Result<()> {
-        let meta = self.meta();
-
+    pub fn build_inode(&mut self, hardlink_node: Option<Node>) -> Result<()> {
         if self.get_rootfs() == PathBuf::from("/") {
             self.inode.set_name("/")?;
-            self.inode.set_parent(0);
-            self.inode.set_ino(meta.st_ino());
             self.build_inode_stat()?;
             return Ok(());
         }

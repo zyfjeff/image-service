@@ -608,10 +608,9 @@ impl From<&OndiskChunkInfo> for CachedChunkInfo {
 
 #[cfg(test)]
 mod tests {
-    use super::super::tests::CachedIoBuf;
     use super::*;
     use crate::metadata::layout::{save_symlink_ondisk, INO_FLAG_SYMLINK};
-    use crate::metadata::{calc_symlink_size, RafsSuper};
+    use crate::metadata::{calc_symlink_size, CachedIoBuf, RafsSuper};
     use crate::{RafsIoRead, RafsIoWrite};
 
     #[test]

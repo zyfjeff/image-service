@@ -397,6 +397,8 @@ impl Builder {
         let mut root_node = self.new_node(&self.root);
 
         root_node.inode.set_ino(1);
+        self.inode_map
+            .insert(root_node.inode.ino(), root_node.clone());
         self.additions.push(root_node);
 
         while !dirs.is_empty() {
@@ -422,10 +424,8 @@ impl Builder {
 
                     if node.is_dir() && !node.is_symlink() {
                         next_dirs.push(self.additions.len());
-                    } else {
-                        self.inode_map.insert(node.inode.ino(), node.clone());
                     }
-
+                    self.inode_map.insert(node.inode.ino(), node.clone());
                     self.additions.push(node);
                 }
 
@@ -438,13 +438,32 @@ impl Builder {
         Ok(())
     }
 
-    fn dump_mapping_table(&mut self) -> Result<()> {
-        // let mapping_table = Vec::new();
+    fn dump_inode_info(&mut self) -> Result<()> {
         for node in &mut self.additions {
-            // mapping_table.push();
-            let data: &[u8] = node.inode.as_ref();
-            info!("{}", data.len());
+            node.dump_bootstrap(&mut self.f_bootstrap, Some(self.blob_id.clone()))?;
         }
+        Ok(())
+    }
+
+    fn dump_mapping_table(&mut self, sb: &OndiskSuperBlock) -> Result<()> {
+        let table_entries = sb.mapping_table_entries() as usize;
+        let table_size =
+            table_entries + (RAFS_XATTR_ALIGNMENT - (table_entries & (RAFS_XATTR_ALIGNMENT - 1)));
+
+        let mut mapping_table: Vec<u32> = vec![0; table_size];
+        let mut inode_offset = RAFS_SUPERBLOCK_SIZE as u32;
+
+        for (idx, node) in &mut self.additions.iter_mut().enumerate() {
+            let offset = (table_size * 4 + inode_offset as usize) >> 3;
+            mapping_table[idx] = offset as u32;
+            node.build_inode(None)?;
+            inode_offset += RAFS_INODE_INFO_SIZE as u32;
+            node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
+            inode_offset += (node.chunks.len() * RAFS_CHUNK_INFO_SIZE) as u32;
+        }
+
+        let (_, table, _) = unsafe { mapping_table.align_to::<u8>() };
+        save_mapping_table(table, &mut self.f_bootstrap)?;
         Ok(())
     }
 
@@ -453,7 +472,7 @@ impl Builder {
 
         let mut sb = OndiskSuperBlock::new();
         let inodes_count = self.inode_map.len() as u64;
-        let mapping_table_entries = RAFS_INODE_INFO_SIZE as u32 * self.additions.len() as u32;
+        let mapping_table_entries = self.additions.len() as u32;
         sb.set_inodes_count(inodes_count);
         sb.set_mapping_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
         sb.set_mapping_table_entries(mapping_table_entries);
@@ -482,9 +501,65 @@ impl Builder {
 
         self.walk_source()?;
 
-        self.dump_superblock()?;
-        self.dump_mapping_table()?;
+        let sb = self.dump_superblock()?;
+        self.dump_mapping_table(&sb)?;
+        self.dump_inode_info()?;
 
         Ok(self.blob_id.to_owned())
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use std::io::Result;
+
+    #[test]
+    fn test_builder() -> Result<()> {
+        let f_blob = Box::new(
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open("/home/imeoer/blob")?,
+        );
+        let f_bootstrap = Box::new(
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open("/home/imeoer/bootstrap")?,
+        );
+
+        let mut builder = super::Builder {
+            root: PathBuf::from("/home/imeoer/parent"),
+            f_blob: f_blob,
+            f_bootstrap: f_bootstrap,
+            f_parent_bootstrap: None,
+            blob_offset: 0,
+            blob_id: String::from(""),
+            blob_hash: Sha256::new(),
+            inode_map: HashMap::new(),
+            additions: Vec::new(),
+            removals: HashMap::new(),
+            opaques: HashMap::new(),
+        };
+        builder.build()?;
+
+        let f_bootstrap = Box::new(
+            OpenOptions::new()
+                .write(false)
+                .create(false)
+                .read(true)
+                .open("/home/imeoer/bootstrap")?,
+        );
+
+        let mut f_bootstrap: Box<dyn RafsIoRead> = f_bootstrap;
+        let mut sb = RafsSuper::new();
+        sb.load(&mut f_bootstrap).unwrap();
+        let inode = sb.get_inode(1)?;
+        println!("inode {:?} {} {}", inode.name(), inode.size(), inode.ino());
+
+        Ok(())
     }
 }
