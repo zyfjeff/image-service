@@ -15,6 +15,8 @@ use std::{cmp, mem};
 use fuse_rs::abi::linux_abi::*;
 use fuse_rs::api::filesystem::*;
 
+use crate::io_stats;
+use crate::io_stats::{InodeStatsCounter, StatsFop};
 use crate::layout::*;
 use crate::storage::device::*;
 use crate::storage::*;
@@ -59,11 +61,34 @@ struct RafsInode {
     i_data: Vec<RafsBlk>,
     // dir
     i_child: Vec<(Inode, String)>,
+    counter: Arc<Option<io_stats::InodeIOStats>>,
+}
+
+impl RafsInode {
+    fn stats_update<T>(&self, fop: StatsFop, bsize: usize, r: &Result<T>) {
+        io_stats::ios_global_update(io_stats::StatsFop::Read, bsize, &r);
+        if let Some(c) = self.counter.as_ref() {
+            match r {
+                Ok(v) => {
+                    c.stats_fop_inc(fop.clone());
+                    c.stats_cumulative(fop, bsize);
+                }
+                Err(_) => {
+                    c.stats_fop_err_inc(fop);
+                }
+            };
+        }
+    }
 }
 
 impl RafsInode {
     fn new() -> Self {
         RafsInode {
+            counter: if io_stats::ios_enable() {
+                Arc::new(Some(io_stats::InodeIOStats::default()))
+            } else {
+                Arc::new(None)
+            },
             ..Default::default()
         }
     }
@@ -367,7 +392,7 @@ impl Rafs {
         Ok(())
     }
 
-    // umount a prviously mounted rafs virtual path
+    // umount a previously mounted rafs virtual path
     pub fn destroy(&mut self) -> Result<()> {
         info! {"Destroy rafs"}
         self.sb.destroy()?;
@@ -570,7 +595,9 @@ impl FileSystem for Rafs {
     ) -> Result<(libc::stat64, Duration)> {
         let inodes = self.sb.s_inodes.read().unwrap();
         let rafs_inode = inodes.get(&inode).ok_or_else(enoent)?;
-        Ok((rafs_inode.get_attr().into(), self.sb.s_attr_timeout))
+        let r = Ok((rafs_inode.get_attr().into(), self.sb.s_attr_timeout));
+        rafs_inode.stats_update(StatsFop::Stat, 0, &r);
+        r
     }
 
     fn readlink(&self, ctx: Context, inode: u64) -> Result<Vec<u8>> {
@@ -603,7 +630,9 @@ impl FileSystem for Rafs {
         }
         let desc = rafs_inode.alloc_bio_desc(self.sb.s_block_size, size as usize, offset)?;
 
-        self.device.read_to(w, desc)
+        let r = self.device.read_to(w, desc);
+        rafs_inode.stats_update(io_stats::StatsFop::Read, size as usize, &r);
+        r
     }
 
     fn release(
