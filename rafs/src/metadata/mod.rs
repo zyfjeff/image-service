@@ -5,9 +5,12 @@
 
 //! Structs and Traits for RAFS file system meta data management.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
+use std::fmt::Write;
 use std::io::Result;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crypto::digest::Digest;
@@ -17,7 +20,8 @@ use fuse_rs::api::filesystem::Entry;
 
 use self::cached::CachedInodes;
 use self::layout::{
-    OndiskDigest, OndiskSuperBlock, INO_FLAG_XATTR, RAFS_SUPER_VERSION_V4, RAFS_SUPER_VERSION_V5,
+    OndiskBlobTable, OndiskDigest, OndiskInodeTable, OndiskSuperBlock, INO_FLAG_XATTR,
+    RAFS_SUPER_VERSION_V4, RAFS_SUPER_VERSION_V5,
 };
 use self::noop::NoopInodes;
 use crate::fs::{Inode, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
@@ -50,8 +54,10 @@ pub struct RafsSuperMeta {
     pub s_inodes_count: u64,
     pub s_chunkinfo_size: u32,
     pub s_flags: u64,
-    pub s_mapping_table_entries: u32,
-    pub s_mapping_table_offset: u64,
+    pub s_inode_table_entries: u32,
+    pub s_inode_table_offset: u64,
+    pub s_blob_table_entries: u32,
+    pub s_blob_table_offset: u64,
     pub s_attr_timeout: Duration,
     pub s_entry_timeout: Duration,
 }
@@ -78,8 +84,10 @@ impl RafsSuper {
                 s_blocks_count: 0,
                 s_chunkinfo_size: 0,
                 s_flags: 0,
-                s_mapping_table_entries: 0,
-                s_mapping_table_offset: 0,
+                s_inode_table_entries: 0,
+                s_inode_table_offset: 0,
+                s_blob_table_entries: 0,
+                s_blob_table_offset: 0,
                 s_attr_timeout: Duration::from_secs(RAFS_DEFAULT_ATTR_TIMEOUT),
                 s_entry_timeout: Duration::from_secs(RAFS_DEFAULT_ENTRY_TIMEOUT),
             },
@@ -91,18 +99,6 @@ impl RafsSuper {
 
     pub fn destroy(&mut self) {
         self.s_inodes.destroy();
-    }
-
-    pub fn load_mapping_table(&mut self, r: &mut RafsIoReader) -> Result<Vec<u32>> {
-        let table_entries = self.s_meta.s_mapping_table_entries;
-        let table_size = (table_entries * 4) as usize;
-        let mut data: Vec<u8> = vec![0u8; table_size];
-        r.read_exact(data.as_mut_slice())?;
-        let (_, table, _) = unsafe { data.align_to::<u32>() };
-        if table_entries == table.len() as u32 {
-            return Ok(table.to_vec());
-        }
-        Err(ebadf())
     }
 
     /// Load RAFS super block and optionally cache inodes.
@@ -126,8 +122,8 @@ impl RafsSuper {
             }
             RAFS_SUPER_VERSION_V5 => {
                 self.s_meta.s_inodes_count = sb.inodes_count();
-                self.s_meta.s_mapping_table_entries = sb.mapping_table_entries();
-                self.s_meta.s_mapping_table_offset = sb.mapping_table_offset();
+                self.s_meta.s_inode_table_entries = sb.inode_table_entries();
+                self.s_meta.s_inode_table_offset = sb.inode_table_offset();
             }
             _ => return Err(ebadf()),
         }
@@ -146,9 +142,19 @@ impl RafsSuper {
                     if self.cache_inodes {
                         unimplemented!();
                     } else {
-                        let mapping_table = self.load_mapping_table(r)?;
-                        let mut inodes = Box::new(DirectMapInodes::new(mapping_table));
+                        let mut inode_table =
+                            OndiskInodeTable::new(sb.inode_table_entries() as usize);
+                        inode_table.load(r)?;
+
+                        let mut blob_table = OndiskBlobTable::new(sb.blob_table_entries() as usize);
+                        blob_table.load(r)?;
+
+                        let mut inodes = Box::new(DirectMapInodes::new(
+                            Arc::new(inode_table),
+                            Arc::new(blob_table),
+                        ));
                         inodes.load(&mut self.s_meta, r)?;
+
                         self.s_inodes.destroy();
                         self.s_inodes = inodes;
                     }
@@ -175,8 +181,8 @@ impl RafsSuper {
             RAFS_SUPER_VERSION_V4 => {}
             RAFS_SUPER_VERSION_V5 => {
                 sb.set_inodes_count(self.s_meta.s_inodes_count);
-                sb.set_mapping_table_entries(self.s_meta.s_mapping_table_entries);
-                sb.set_mapping_table_offset(self.s_meta.s_mapping_table_offset);
+                sb.set_inode_table_entries(self.s_meta.s_inode_table_entries);
+                sb.set_inode_table_offset(self.s_meta.s_inode_table_offset);
             }
             _ => return Err(einval()),
         }
@@ -201,6 +207,8 @@ pub trait RafsSuperInodes {
 
     fn get_inode(&self, ino: Inode) -> Result<&dyn RafsInode>;
 
+    fn get_blob_id<'a>(&'a self, index: u32) -> Result<&'a OndiskDigest>;
+
     fn get_symlink<'a, 'b>(&'a self, _inode: &'b OndiskInode) -> Result<&'b [u8]> {
         Err(enosys())
     }
@@ -209,13 +217,13 @@ pub trait RafsSuperInodes {
         Err(enosys())
     }
 
-    fn alloc_bio_desc<'a, 'b>(
+    fn alloc_bio_desc<'a>(
         &'a self,
         _blksize: u32,
         _size: usize,
         _offset: u64,
-        _inode: &'b OndiskInode,
-    ) -> Result<RafsBioDesc<'b>> {
+        _inode: &OndiskInode,
+    ) -> Result<RafsBioDesc<'a>> {
         Err(enosys())
     }
 }
@@ -243,13 +251,13 @@ pub trait RafsInode {
         target: &str,
         sb: &'b RafsSuper,
     ) -> Result<&'b dyn RafsInode>;
-    fn alloc_bio_desc(
-        &self,
+    fn alloc_bio_desc<'a>(
+        &'a self,
         blksize: u32,
         size: usize,
         offset: u64,
-        sb: &RafsSuper,
-    ) -> Result<RafsBioDesc>;
+        sb: &'a RafsSuper,
+    ) -> Result<RafsBioDesc<'a>>;
 
     // Simply accessors below
     fn name(&self) -> &str;
@@ -320,12 +328,12 @@ pub trait RafsChunkInfo {
     /// must validate it before accessing any fields of the object.
     fn validate(&self, sb: &RafsSuperMeta) -> Result<()>;
 
-    fn blockid(&self) -> &OndiskDigest;
-    fn blockid_mut(&mut self) -> &mut OndiskDigest;
-    fn set_blockid(&mut self, digest: &OndiskDigest);
+    fn block_id(&self) -> &OndiskDigest;
+    fn block_id_mut(&mut self) -> &mut OndiskDigest;
+    fn set_block_id(&mut self, digest: &OndiskDigest);
 
-    fn blobid(&self) -> &str;
-    fn set_blobid(&mut self, blobid: &str) -> Result<()>;
+    fn blob_index(&self) -> u32;
+    fn set_blob_index(&mut self, blob_index: u32);
 
     fn file_offset(&self) -> u64;
     fn set_file_offset(&mut self, val: u64);
@@ -346,7 +354,7 @@ pub trait RafsDigest {
     fn validate(&self) -> Result<()>;
 
     /// Get size of Rafs SHA256 message digest data.
-    fn size() -> usize {
+    fn size(&self) -> usize {
         RAFS_SHA256_LENGTH
     }
 
@@ -363,6 +371,14 @@ pub trait RafsDigest {
 
     /// Get a mutable reference to the underlying data.
     fn data_mut(&mut self) -> &mut [u8];
+
+    fn as_str(&self) -> Result<Cow<str>> {
+        let mut ret = String::new();
+        for c in self.data() {
+            write!(ret, "{:02x}", c).map_err(|_| einval())?;
+        }
+        Ok(Cow::Owned(ret))
+    }
 }
 
 pub fn parse_string(buf: &[u8]) -> Result<&str> {
@@ -387,87 +403,86 @@ pub fn calc_symlink_size(sz: usize) -> Result<(usize, usize)> {
     }
 }
 
-use crate::{RafsIoRead, RafsIoWrite};
-use std::io::{Read, Write};
-use std::os::unix::io::{AsRawFd, RawFd};
-use std::sync::{Arc, Mutex};
-
-#[derive(Clone)]
-pub struct CachedIoBuf {
-    data: Arc<Mutex<(Vec<u8>, usize)>>,
-}
-
-impl CachedIoBuf {
-    pub fn new() -> Self {
-        CachedIoBuf {
-            data: Arc::new(Mutex::new((Vec::new(), 0))),
-        }
-    }
-
-    pub fn set_buf(&mut self, buf: &[u8]) {
-        let mut data = self.data.lock().unwrap();
-        data.1 = 0;
-        data.0.clear();
-        data.0.extend_from_slice(buf);
-    }
-
-    pub fn append_buf(&mut self, buf: &[u8]) {
-        let mut data = self.data.lock().unwrap();
-        data.0.extend_from_slice(buf);
-    }
-
-    pub fn len(&self) -> usize {
-        let data = self.data.lock().unwrap();
-        data.0.len()
-    }
-
-    pub fn as_buf(&self) -> (*const u8, usize) {
-        let data = self.data.lock().unwrap();
-        (data.0.as_ptr(), data.0.len())
-    }
-}
-
-impl Read for CachedIoBuf {
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        let mut data = self.data.lock().unwrap();
-        let min = std::cmp::min(data.0.len() - data.1, buf.len());
-        if min > 0 {
-            buf[..min].copy_from_slice(&data.0[data.1..data.1 + min]);
-            data.1 += min;
-        }
-
-        Ok(min)
-    }
-}
-
-impl Write for CachedIoBuf {
-    fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        self.append_buf(buf);
-        Ok(buf.len())
-    }
-
-    fn flush(&mut self) -> Result<()> {
-        Ok(())
-    }
-}
-
-impl AsRawFd for CachedIoBuf {
-    fn as_raw_fd(&self) -> RawFd {
-        0
-    }
-}
-
-impl RafsIoRead for CachedIoBuf {}
-impl RafsIoWrite for CachedIoBuf {}
-
 #[cfg(test)]
 pub(crate) mod tests {
+    use crate::{RafsIoRead, RafsIoWrite};
+    use std::io::{Read, Write};
+    use std::os::unix::io::{AsRawFd, RawFd};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone)]
+    pub struct CachedIoBuf {
+        data: Arc<Mutex<(Vec<u8>, usize)>>,
+    }
+
+    impl CachedIoBuf {
+        pub fn new() -> Self {
+            CachedIoBuf {
+                data: Arc::new(Mutex::new((Vec::new(), 0))),
+            }
+        }
+
+        pub fn set_buf(&mut self, buf: &[u8]) {
+            let mut data = self.data.lock().unwrap();
+            data.1 = 0;
+            data.0.clear();
+            data.0.extend_from_slice(buf);
+        }
+
+        pub fn append_buf(&mut self, buf: &[u8]) {
+            let mut data = self.data.lock().unwrap();
+            data.0.extend_from_slice(buf);
+        }
+
+        pub fn len(&self) -> usize {
+            let data = self.data.lock().unwrap();
+            data.0.len()
+        }
+
+        pub fn as_buf(&self) -> (*const u8, usize) {
+            let data = self.data.lock().unwrap();
+            (data.0.as_ptr(), data.0.len())
+        }
+    }
+
+    impl Read for CachedIoBuf {
+        fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+            let mut data = self.data.lock().unwrap();
+            let min = std::cmp::min(data.0.len() - data.1, buf.len());
+            if min > 0 {
+                buf[..min].copy_from_slice(&data.0[data.1..data.1 + min]);
+                data.1 += min;
+            }
+
+            Ok(min)
+        }
+    }
+
+    impl Write for CachedIoBuf {
+        fn write(&mut self, buf: &[u8]) -> Result<usize> {
+            self.append_buf(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    impl AsRawFd for CachedIoBuf {
+        fn as_raw_fd(&self) -> RawFd {
+            0
+        }
+    }
+
+    impl RafsIoRead for CachedIoBuf {}
+    impl RafsIoWrite for CachedIoBuf {}
+
     use super::*;
     use crate::metadata::layout::{
         OndiskInode, RAFS_CHUNK_INFO_SIZE, RAFS_INODE_INFO_SIZE, RAFS_SUPERBLOCK_SIZE,
         RAFS_SUPER_MAGIC,
     };
-    use crate::{RafsIoRead, RafsIoWrite};
     use fuse_rs::api::filesystem::ROOT_ID;
 
     #[test]
@@ -520,8 +535,8 @@ pub(crate) mod tests {
         sb.s_meta.s_block_size = RAFS_DEFAULT_BLOCK_SIZE as u32;
         sb.s_meta.s_chunkinfo_size = RAFS_CHUNK_INFO_SIZE as u32;
         sb.s_meta.s_flags = 1;
-        sb.s_meta.s_mapping_table_offset = RAFS_SUPERBLOCK_SIZE as u64;
-        sb.s_meta.s_mapping_table_entries = 1024;
+        sb.s_meta.s_inode_table_offset = RAFS_SUPERBLOCK_SIZE as u64;
+        sb.s_meta.s_inode_table_entries = 1024;
         sb.s_meta.s_inodes_count = 1000;
 
         let mut buf1: Box<dyn RafsIoWrite> = Box::new(buf.clone());

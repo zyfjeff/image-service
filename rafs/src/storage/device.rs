@@ -15,6 +15,7 @@ use crate::layout::RafsSuperBlockInfo;
 use crate::storage::cache::RafsCache;
 use crate::storage::factory;
 use crate::metadata::RafsChunkInfo;
+use crate::metadata::{RafsChunkInfo, RafsDigest};
 use crate::storage::backend::*;
 
 static ZEROS: &[u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
@@ -127,7 +128,7 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
         if self.buf.is_empty() {
             let mut buf = Vec::new();
             let len = self.dev.b.read(
-                &self.bio.chunkinfo.blobid(),
+                &self.bio.blob_id.as_str()?,
                 &mut buf,
                 self.bio.chunkinfo.blob_offset(),
                 self.bio.chunkinfo.compress_size() as usize,
@@ -178,7 +179,7 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
         let compressed = utils::compress(&buf)?;
         self.dev
             .b
-            .write(&self.bio.chunkinfo.blobid(), &compressed, offset)?;
+            .write(&self.bio.blob_id.as_str()?, &compressed, offset)?;
         // Need to return slice length because that's what upper layer asks to write
         Ok(slice.len())
     }
@@ -226,6 +227,8 @@ impl RafsBioDesc<'_> {
 pub struct RafsBio<'a> {
     /// Reference to the chunk.
     pub chunkinfo: &'a dyn RafsChunkInfo,
+    /// blob id of chunk
+    pub blob_id: &'a dyn RafsDigest,
     /// offset within the block
     pub offset: u32,
     /// size of data to transfer
@@ -235,9 +238,16 @@ pub struct RafsBio<'a> {
 }
 
 impl<'a> RafsBio<'a> {
-    pub fn new(chunkinfo: &'a dyn RafsChunkInfo, offset: u32, size: usize, blksize: u32) -> Self {
+    pub fn new(
+        chunkinfo: &'a dyn RafsChunkInfo,
+        blob_id: &'a dyn RafsDigest,
+        offset: u32,
+        size: usize,
+        blksize: u32,
+    ) -> Self {
         RafsBio {
             chunkinfo,
+            blob_id,
             offset,
             size,
             blksize,

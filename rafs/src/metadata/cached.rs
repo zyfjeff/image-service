@@ -196,6 +196,10 @@ impl RafsSuperInodes for CachedInodes {
             .map(|i| i.as_ref() as &dyn RafsInode)
             .ok_or_else(enoent)
     }
+
+    fn get_blob_id<'a>(&'a self, _index: u32) -> Result<&'a OndiskDigest> {
+        unimplemented!() // TODO
+    }
 }
 
 #[derive(Default, Clone, Debug)]
@@ -434,13 +438,13 @@ impl RafsInode for CachedInode {
         Err(enoent())
     }
 
-    fn alloc_bio_desc(
-        &self,
+    fn alloc_bio_desc<'a>(
+        &'a self,
         blksize: u32,
         size: usize,
         offset: u64,
-        _sb: &RafsSuper,
-    ) -> Result<RafsBioDesc> {
+        _sb: &'a RafsSuper,
+    ) -> Result<RafsBioDesc<'a>> {
         let mut desc = RafsBioDesc::new();
         let end = offset + size as u64;
 
@@ -450,10 +454,13 @@ impl RafsInode for CachedInode {
             } else if blk.file_offset() >= end {
                 break;
             }
+
+            let blob_id = _sb.s_inodes.get_blob_id(blk.blob_index())?;
             let file_start = cmp::max(blk.file_offset(), offset);
             let file_end = cmp::min(blk.file_offset() + blksize as u64, end);
             let bio = RafsBio::new(
                 blk,
+                blob_id, // TODO
                 (file_start - blk.file_offset()) as u32,
                 (file_end - file_start) as usize,
                 blksize,
@@ -514,7 +521,7 @@ pub struct CachedChunkInfo {
     // block hash
     c_block_id: OndiskDigest,
     // blob containing the block
-    c_blob_id: String,
+    c_blob_index: u32,
     // position of the block within the file
     c_file_offset: u64,
     // offset of the block within the blob
@@ -541,8 +548,8 @@ impl CachedChunkInfo {
     }
 
     fn copy_from_ondisk(&mut self, chunk: &OndiskChunkInfo) {
-        self.c_block_id = chunk.blockid().clone();
-        self.c_blob_id = chunk.blobid().to_string();
+        self.c_block_id = chunk.block_id().clone();
+        self.c_blob_index = chunk.blob_index();
         self.c_blob_offset = chunk.blob_offset();
         self.c_file_offset = chunk.file_offset();
         self.c_compr_size = chunk.compress_size();
@@ -552,43 +559,22 @@ impl CachedChunkInfo {
 impl RafsChunkInfo for CachedChunkInfo {
     fn validate(&self, _sb: &RafsSuperMeta) -> Result<()> {
         self.c_block_id.validate()?;
-        if self.c_blob_id.len() >= RAFS_BLOB_ID_MAX_LENGTH {
-            return Err(einval());
-        }
-
-        // TODO: validate file_offset, blob_offset, compress_size
-
         Ok(())
     }
 
-    fn blockid(&self) -> &OndiskDigest {
+    fn block_id(&self) -> &OndiskDigest {
         &self.c_block_id
     }
 
-    fn blockid_mut(&mut self) -> &mut OndiskDigest {
+    fn block_id_mut(&mut self) -> &mut OndiskDigest {
         &mut self.c_block_id
     }
 
-    fn set_blockid(&mut self, digest: &OndiskDigest) {
+    fn set_block_id(&mut self, digest: &OndiskDigest) {
         self.c_block_id = *digest;
     }
 
-    fn blobid(&self) -> &str {
-        // Assume the caller has validated the object by calling self.validate()
-        &self.c_blob_id
-    }
-
-    fn set_blobid(&mut self, blobid: &str) -> Result<()> {
-        let len = blobid.len();
-        if len >= RAFS_BLOB_ID_MAX_LENGTH {
-            return Err(einval());
-        }
-
-        self.c_blob_id = blobid.to_string();
-
-        Ok(())
-    }
-
+    impl_getter_setter!(blob_index, set_blob_index, c_blob_index, u32);
     impl_getter_setter!(file_offset, set_file_offset, c_file_offset, u64);
     impl_getter_setter!(blob_offset, set_blob_offset, c_blob_offset, u64);
     impl_getter_setter!(compress_size, set_compress_size, c_compr_size, u32);
@@ -597,8 +583,8 @@ impl RafsChunkInfo for CachedChunkInfo {
 impl From<&OndiskChunkInfo> for CachedChunkInfo {
     fn from(info: &OndiskChunkInfo) -> Self {
         CachedChunkInfo {
-            c_block_id: info.blockid().clone(),
-            c_blob_id: info.blobid().to_string(),
+            c_block_id: info.block_id().clone(),
+            c_blob_index: info.blob_index(),
             c_file_offset: info.file_offset(),
             c_blob_offset: info.blob_offset(),
             c_compr_size: info.compress_size(),

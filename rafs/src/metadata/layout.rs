@@ -47,7 +47,7 @@ pub const INO_FLAG_XATTR: u64 = 0x4000;
 pub const INO_FLAG_ALL: u64 = INO_FLAG_HARDLINK | INO_FLAG_SYMLINK | INO_FLAG_XATTR;
 
 pub const RAFS_SUPERBLOCK_SIZE: usize = 8192;
-pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 52;
+pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 64;
 pub const RAFS_SUPER_MAGIC: u32 = 0x5241_4653;
 pub const RAFS_SUPER_VERSION_V4: u32 = 0x400;
 pub const RAFS_SUPER_VERSION_V5: u32 = 0x500;
@@ -149,10 +149,14 @@ pub struct OndiskSuperBlock {
     s_flags: u64,
     /// V5: Number of unique inodes(hard link counts as 1).
     s_inodes_count: u64,
-    /// V5: Offset of mapping table, related to starting of super block.
-    s_mapping_table_offset: u64,
-    /// V5: Size of mapping table.
-    s_mapping_table_entries: u32,
+    /// V5: Offset of inode table
+    s_inode_table_offset: u64,
+    /// V5: Size of inode table.
+    s_inode_table_entries: u32,
+    /// V5: Offset of inode table
+    s_blob_table_offset: u64,
+    /// V5: Size of inode table.
+    s_blob_table_entries: u32,
     /// Unused area.
     s_reserved: [u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
 }
@@ -168,8 +172,10 @@ impl OndiskSuperBlock {
             s_chunkinfo_size: u32::to_le(RAFS_CHUNK_INFO_SIZE as u32),
             s_flags: u64::to_le(0),
             s_inodes_count: u64::to_le(0),
-            s_mapping_table_entries: u32::to_le(0),
-            s_mapping_table_offset: u64::to_le(0),
+            s_inode_table_entries: u32::to_le(0),
+            s_inode_table_offset: u64::to_le(0),
+            s_blob_table_entries: u32::to_le(0),
+            s_blob_table_offset: u64::to_le(0),
             s_reserved: [0u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
         }
     }
@@ -188,18 +194,18 @@ impl OndiskSuperBlock {
         match self.version() {
             RAFS_SUPER_VERSION_V4 => {
                 if self.inodes_count() != 0
-                    || self.mapping_table_offset() != 0
-                    || self.mapping_table_entries() != 0
+                    || self.inode_table_offset() != 0
+                    || self.inode_table_entries() != 0
                 {
                     return Err(Error::new(ErrorKind::InvalidData, "Invalid superblock"));
                 }
             }
             RAFS_SUPER_VERSION_V5 => {
                 if self.inodes_count() == 0
-                    || self.mapping_table_offset() < RAFS_SUPERBLOCK_SIZE as u64
-                    || self.mapping_table_offset() & 0x7 != 0
-                    || self.mapping_table_entries() >= (1 << 29)
-                    || self.inodes_count() > self.mapping_table_entries() as u64
+                    || self.inode_table_offset() < RAFS_SUPERBLOCK_SIZE as u64
+                    || self.inode_table_offset() & 0x7 != 0
+                    || self.inode_table_entries() >= (1 << 29)
+                    || self.inodes_count() > self.inode_table_entries() as u64
                 {
                     return Err(Error::new(ErrorKind::InvalidData, "Invalid superblock"));
                 }
@@ -226,15 +232,27 @@ impl OndiskSuperBlock {
     impl_pub_getter_setter!(flags, set_flags, s_flags, u64);
     impl_pub_getter_setter!(inodes_count, set_inodes_count, s_inodes_count, u64);
     impl_pub_getter_setter!(
-        mapping_table_entries,
-        set_mapping_table_entries,
-        s_mapping_table_entries,
+        inode_table_entries,
+        set_inode_table_entries,
+        s_inode_table_entries,
         u32
     );
     impl_pub_getter_setter!(
-        mapping_table_offset,
-        set_mapping_table_offset,
-        s_mapping_table_offset,
+        inode_table_offset,
+        set_inode_table_offset,
+        s_inode_table_offset,
+        u64
+    );
+    impl_pub_getter_setter!(
+        blob_table_entries,
+        set_blob_table_entries,
+        s_blob_table_entries,
+        u32
+    );
+    impl_pub_getter_setter!(
+        blob_table_offset,
+        set_blob_table_offset,
+        s_blob_table_offset,
         u64
     );
 
@@ -254,6 +272,93 @@ impl fmt::Display for OndiskSuperBlock {
         write!(f, "superblock: magic {:x}, version {:x}, sb_size {:x}, inode_size {:x}, block_size {:x}, chunkinfo_size {:x}, flags {:x}, inode_count {}",
                self.magic(), self.version(), self.sb_size(), self.inode_size(), self.block_size(),
                self.chunkinfo_size(), self.flags(), self.s_inodes_count)
+    }
+}
+
+#[repr(C)]
+#[derive(Clone)]
+pub struct OndiskInodeTable {
+    data: Vec<u32>,
+}
+
+impl OndiskInodeTable {
+    pub fn new(entries: usize) -> Self {
+        let table_size = entries + (RAFS_XATTR_ALIGNMENT - (entries & (RAFS_XATTR_ALIGNMENT - 1)));
+        OndiskInodeTable {
+            data: vec![0; table_size],
+        }
+    }
+
+    pub fn set(&mut self, ino: Inode, inode_offset: u32) -> Result<()> {
+        let offset = (self.data.len() * std::mem::size_of::<u32>() + inode_offset as usize) >> 3;
+
+        if ino > self.data.len() as u64 {
+            return Err(enoent());
+        }
+        self.data[(ino - 1) as usize] = offset as u32;
+
+        Ok(())
+    }
+
+    pub fn get(&self, ino: Inode) -> Result<u32> {
+        if ino > self.data.len() as u64 {
+            return Err(enoent());
+        }
+        let offset = u32::from_le(self.data[(ino - 1) as usize]) as usize;
+        if offset <= (RAFS_SUPERBLOCK_SIZE >> 3) || offset >= (1usize << 29) {
+            return Err(enoent());
+        }
+        Ok((offset << 3) as u32)
+    }
+
+    pub fn store(&self, w: &mut RafsIoWriter) -> Result<()> {
+        let (_, data, _) = unsafe { self.data.align_to::<u8>() };
+        w.write_all(data)
+    }
+
+    pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
+        let (_, data, _) = unsafe { self.data.align_to_mut::<u8>() };
+        r.read_exact(data)?;
+        Ok(())
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Debug)]
+pub struct OndiskBlobTable {
+    data: Vec<OndiskDigest>,
+}
+
+impl OndiskBlobTable {
+    pub fn new(entries: usize) -> Self {
+        OndiskBlobTable {
+            data: vec![OndiskDigest::new(); entries],
+        }
+    }
+
+    pub fn set(&mut self, index: u32, digest: OndiskDigest) -> Result<()> {
+        if index > (self.data.len() - 1) as u32 {
+            return Err(enoent());
+        }
+        self.data[index as usize] = digest;
+        Ok(())
+    }
+
+    pub fn get(&self, index: u32) -> Result<&OndiskDigest> {
+        if index > (self.data.len() - 1) as u32 {
+            return Err(enoent());
+        }
+        Ok(&self.data[index as usize])
+    }
+
+    pub fn store(&self, w: &mut RafsIoWriter) -> Result<()> {
+        self.data.iter().map(|d| w.write_all(&d.data)).collect()
+    }
+
+    pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
+        let (_, data, _) = unsafe { self.data.align_to_mut::<u8>() };
+        r.read_exact(data)?;
+        Ok(())
     }
 }
 
@@ -434,13 +539,13 @@ impl RafsInode for OndiskInode {
         Err(enoent())
     }
 
-    fn alloc_bio_desc(
-        &self,
+    fn alloc_bio_desc<'a>(
+        &'a self,
         blksize: u32,
         size: usize,
         offset: u64,
-        sb: &RafsSuper,
-    ) -> Result<RafsBioDesc> {
+        sb: &'a RafsSuper,
+    ) -> Result<RafsBioDesc<'a>> {
         sb.s_inodes.alloc_bio_desc(blksize, size, offset, self)
     }
 
@@ -507,9 +612,9 @@ impl fmt::Display for OndiskInode {
 #[derive(Clone, Copy)]
 pub struct OndiskChunkInfo {
     /// sha256(chunk), [char; RAFS_SHA256_LENGTH]
-    blockid: OndiskDigest,
-    /// random string, [char; RAFS_BLOB_ID_MAX_LENGTH]
-    blobid: [u8; RAFS_BLOB_ID_MAX_LENGTH],
+    block_id: OndiskDigest,
+    /// blob index (blob_digest = blob_mapping_table[blob_index])
+    blob_index: u32,
     /// file position of block, with fixed block length
     file_offset: u64,
     /// blob offset
@@ -517,7 +622,7 @@ pub struct OndiskChunkInfo {
     /// compressed size
     compress_size: u32,
     /// reserved
-    reserved: u32,
+    reserved: u64,
 }
 
 impl OndiskChunkInfo {
@@ -536,43 +641,23 @@ impl OndiskChunkInfo {
 
 impl RafsChunkInfo for OndiskChunkInfo {
     fn validate(&self, _sb: &RafsSuperMeta) -> Result<()> {
-        self.blockid.validate()?;
-        parse_string(&self.blobid)?;
-
-        // TODO: validate file_offset, blob_offset, compress_size
-
+        self.block_id.validate()?;
         Ok(())
     }
 
-    fn blockid(&self) -> &OndiskDigest {
-        &self.blockid
+    fn block_id(&self) -> &OndiskDigest {
+        &self.block_id
     }
 
-    fn blockid_mut(&mut self) -> &mut OndiskDigest {
-        &mut self.blockid
+    fn block_id_mut(&mut self) -> &mut OndiskDigest {
+        &mut self.block_id
     }
 
-    fn set_blockid(&mut self, digest: &OndiskDigest) {
-        self.blockid = *digest;
+    fn set_block_id(&mut self, digest: &OndiskDigest) {
+        self.block_id = *digest;
     }
 
-    fn blobid(&self) -> &str {
-        // Assume the caller has validated the object by calling self.validate()
-        parse_string(&self.blobid).unwrap()
-    }
-
-    fn set_blobid(&mut self, blobid: &str) -> Result<()> {
-        let len = blobid.len();
-        if len >= RAFS_BLOB_ID_MAX_LENGTH {
-            return Err(einval());
-        }
-
-        self.blobid[..len].copy_from_slice(blobid.as_bytes());
-        self.blobid[len] = 0;
-
-        Ok(())
-    }
-
+    impl_getter_setter!(blob_index, set_blob_index, blob_index, u32);
     impl_getter_setter!(file_offset, set_file_offset, file_offset, u64);
     impl_getter_setter!(blob_offset, set_blob_offset, blob_offset, u64);
     impl_getter_setter!(compress_size, set_compress_size, compress_size, u32);
@@ -583,8 +668,8 @@ impl_metadata_converter!(OndiskChunkInfo);
 impl Default for OndiskChunkInfo {
     fn default() -> Self {
         OndiskChunkInfo {
-            blockid: OndiskDigest::default(),
-            blobid: [0; RAFS_BLOB_ID_MAX_LENGTH],
+            block_id: OndiskDigest::default(),
+            blob_index: 0,
             file_offset: 0,
             blob_offset: 0,
             compress_size: 0,
@@ -597,8 +682,8 @@ impl fmt::Display for OndiskChunkInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "chunkinfo blockid: {}, blobid: {} file offset: {}, blob offset: {}, compressed size: {}",
-            self.blockid(), self.blobid(), self.file_offset(), self.blob_offset(),
+            "chunkinfo block_id: {}, blob_index: {} file offset: {}, blob offset: {}, compressed size: {}",
+            self.block_id(), self.blob_index(), self.file_offset(), self.blob_offset(),
             self.compress_size()
         )
     }
@@ -665,10 +750,6 @@ pub fn save_symlink_ondisk(data: &[u8], w: &mut RafsIoWriter) -> Result<usize> {
     Ok(sz)
 }
 
-pub fn save_mapping_table(data: &[u8], w: &mut RafsIoWriter) -> Result<()> {
-    w.write_all(data)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -716,8 +797,8 @@ mod tests {
     fn test_rafs_ondisk_superblock_v5() {
         let mut sb = OndiskSuperBlock::new();
         sb.set_inodes_count(1000);
-        sb.set_mapping_table_entries(1024);
-        sb.set_mapping_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
+        sb.set_inode_table_entries(1024);
+        sb.set_inode_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
 
         assert_eq!(
             std::mem::size_of::<OndiskSuperBlock>(),
@@ -767,15 +848,15 @@ mod tests {
         sb.validate().unwrap_err();
         sb.set_inodes_count(100);
 
-        sb.set_mapping_table_offset(RAFS_SUPERBLOCK_SIZE as u64 + 1);
+        sb.set_inode_table_offset(RAFS_SUPERBLOCK_SIZE as u64 + 1);
         sb.validate().unwrap_err();
-        sb.set_mapping_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
+        sb.set_inode_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
 
-        sb.set_mapping_table_entries(1 << 30);
+        sb.set_inode_table_entries(1 << 30);
         sb.validate().unwrap_err();
-        sb.set_mapping_table_entries(1 << 29);
+        sb.set_inode_table_entries(1 << 29);
         sb.validate().unwrap_err();
-        sb.set_mapping_table_entries((1 << 29) - 1);
+        sb.set_inode_table_entries((1 << 29) - 1);
         sb.validate().unwrap();
     }
 
@@ -867,7 +948,7 @@ mod tests {
         assert_eq!(std::mem::size_of_val(&chunk), 128);
         assert_eq!(std::mem::align_of_val(&chunk), 8);
         assert_eq!(chunk.blockid().data() as *const [u8] as *const u8, ptr);
-        assert_eq!(ptr, &chunk.blockid.data as *const u8);
+        assert_eq!(ptr, &chunk.block_id.data as *const u8);
 
         assert_eq!(chunk.blob_offset, 0);
         assert_eq!(chunk.file_offset, 0);

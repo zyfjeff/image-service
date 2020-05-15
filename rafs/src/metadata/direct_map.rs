@@ -7,14 +7,14 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Error, Result};
 use std::mem::size_of;
-use std::os::unix::io::{FromRawFd, IntoRawFd, RawFd};
+use std::os::unix::io::{FromRawFd, RawFd};
 use std::slice;
 use std::sync::Arc;
 
 use crate::fs::Inode;
 use crate::metadata::layout::{
-    OndiskChunkInfo, OndiskInode, RAFS_CHUNK_INFO_SIZE, RAFS_INODE_INFO_SIZE, RAFS_SUPERBLOCK_SIZE,
-    RAFS_XATTR_ALIGNMENT,
+    OndiskBlobTable, OndiskChunkInfo, OndiskDigest, OndiskInode, OndiskInodeTable,
+    RAFS_CHUNK_INFO_SIZE, RAFS_INODE_INFO_SIZE, RAFS_SUPERBLOCK_SIZE, RAFS_XATTR_ALIGNMENT,
 };
 use crate::metadata::{
     parse_string, RafsChunkInfo, RafsInode, RafsSuperInodes, RafsSuperMeta, RAFS_MAX_METADATA_SIZE,
@@ -65,7 +65,7 @@ impl DirectMapping {
     }
 
     fn cast_to_ref<'a, 'b, T>(&'a self, base: *const u8, offset: usize) -> Result<&'b T> {
-        let start = base.wrapping_add(offset as usize);
+        let start = base.wrapping_add(offset);
         let end = start.wrapping_add(size_of::<T>());
 
         if start < self.base || end < self.base || end > self.end
@@ -92,35 +92,30 @@ impl Drop for DirectMapping {
 pub struct DirectMapInodes {
     // TODO: use ArcSwap here to support swapping underlying metadata file.
     mapping: Arc<DirectMapping>,
-    index_2_offset: Vec<u32>,
+    inode_table: Arc<OndiskInodeTable>,
+    blob_table: Arc<OndiskBlobTable>,
 }
 
 impl DirectMapInodes {
-    pub fn new(mapping_table: Vec<u32>) -> Self {
+    pub fn new(inode_table: Arc<OndiskInodeTable>, blob_table: Arc<OndiskBlobTable>) -> Self {
         DirectMapInodes {
             mapping: Arc::new(DirectMapping::new()),
-            index_2_offset: mapping_table,
+            inode_table,
+            blob_table,
         }
     }
 
     fn get_inode_internal(&self, ino: Inode) -> Result<&OndiskInode> {
-        if ino >= self.index_2_offset.len() as u64 {
-            return Err(enoent());
-        }
-        let offset = u32::from_le(self.index_2_offset[(ino - 1) as usize]) as usize;
-        if offset <= (RAFS_SUPERBLOCK_SIZE >> 3) || offset >= (1usize << 29) {
-            Err(enoent())
-        } else {
-            self.mapping
-                .cast_to_ref::<OndiskInode>(self.mapping.base, offset << 3)
-        }
+        let offset = self.inode_table.get(ino)?;
+        self.mapping
+            .cast_to_ref::<OndiskInode>(self.mapping.base, offset as usize)
     }
 
-    fn get_chunk_info<'a, 'b>(
-        &'a self,
-        inode: &'b OndiskInode,
-        idx: u64,
-    ) -> Result<&'b OndiskChunkInfo> {
+    fn get_blob_id<'a>(&'a self, blob_index: u32) -> Result<&'a OndiskDigest> {
+        self.blob_table.get(blob_index)
+    }
+
+    fn get_chunk_info(&self, inode: &OndiskInode, idx: u64) -> Result<&OndiskChunkInfo> {
         let ptr = inode as *const OndiskInode as *const u8;
         let chunk = ptr
             .wrapping_add(size_of::<OndiskInode>() + size_of::<OndiskChunkInfo>() * idx as usize);
@@ -151,6 +146,10 @@ impl RafsSuperInodes for DirectMapInodes {
         Ok(inode as &dyn RafsInode)
     }
 
+    fn get_blob_id<'a>(&'a self, index: u32) -> Result<&'a OndiskDigest> {
+        self.blob_table.get(index)
+    }
+
     fn get_symlink<'a, 'b>(&'a self, inode: &'b OndiskInode) -> Result<&'b [u8]> {
         let inode = self.get_inode_internal(inode.ino())?;
         let sz = inode.chunk_cnt() as usize * RAFS_CHUNK_INFO_SIZE;
@@ -177,13 +176,13 @@ impl RafsSuperInodes for DirectMapInodes {
         unimplemented!()
     }
 
-    fn alloc_bio_desc<'a, 'b>(
+    fn alloc_bio_desc<'a>(
         &'a self,
         blksize: u32,
         size: usize,
         offset: u64,
-        inode: &'b OndiskInode,
-    ) -> Result<RafsBioDesc<'b>> {
+        inode: &OndiskInode,
+    ) -> Result<RafsBioDesc<'a>> {
         let mut desc = RafsBioDesc::new();
         let end = offset + size as u64;
 
@@ -195,10 +194,12 @@ impl RafsSuperInodes for DirectMapInodes {
                 break;
             }
 
+            let blob_id = self.get_blob_id(blk.blob_index())?;
             let file_start = cmp::max(blk.file_offset(), offset);
             let file_end = cmp::min(blk.file_offset() + blksize as u64, end);
             let bio = RafsBio::new(
                 blk,
+                blob_id,
                 (file_start - blk.file_offset()) as u32,
                 (file_end - file_start) as usize,
                 blksize,
@@ -215,7 +216,9 @@ impl RafsSuperInodes for DirectMapInodes {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::layout::{save_symlink_ondisk, OndiskSuperBlock, INO_FLAG_SYMLINK};
+    use crate::metadata::layout::{
+        save_symlink_ondisk, OndiskInodeTable, OndiskSuperBlock, INO_FLAG_SYMLINK,
+    };
     use crate::metadata::CachedIoBuf;
     use crate::metadata::{calc_symlink_size, RafsSuper, RAFS_INODE_BLOCKSIZE};
     use fuse_rs::api::filesystem::ROOT_ID;
@@ -226,7 +229,7 @@ mod tests {
 
         let mut sb = OndiskSuperBlock::new();
         sb.set_inode_size(4);
-        sb.set_mapping_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
+        sb.set_inode_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
         buf.write_all(sb.as_ref()).unwrap();
 
         let mut table = vec![0u8; 32];
@@ -285,16 +288,12 @@ mod tests {
 
         let (base, size) = buf.as_buf();
         let end = unsafe { base.add(size) };
-        let mut mapping_table: Vec<u32> = Vec::new();
-        mapping_table.push(0);
-        mapping_table.push(0x404);
-        mapping_table.push(0x444);
-        mapping_table.push(0x4a4);
-        mapping_table.push(0x4e4);
-        mapping_table.push(0);
-        mapping_table.push(0);
-        mapping_table.push(0);
-        let mut inodes = DirectMapInodes::new(mapping_table);
+        let mut mapping_table = OndiskInodeTable::new(4);
+        mapping_table.set(ROOT_ID, 0x404).unwrap();
+        mapping_table.set(ROOT_ID + 1, 0x444).unwrap();
+        mapping_table.set(ROOT_ID + 2, 0x4a4).unwrap();
+        mapping_table.set(ROOT_ID + 3, 0x4e4).unwrap();
+        let mut inodes = DirectMapInodes::new(Arc::new(mapping_table));
         inodes.mapping = Arc::new(DirectMapping { base, end, size });
 
         let mut sb2 = RafsSuper::new();
@@ -308,8 +307,8 @@ mod tests {
         sb2.s_meta.s_flags = sb.flags();
         sb2.s_meta.s_blocks_count = 0;
         sb2.s_meta.s_inodes_count = sb.inodes_count();
-        sb2.s_meta.s_mapping_table_entries = sb.mapping_table_entries();
-        sb2.s_meta.s_mapping_table_offset = sb.mapping_table_offset();
+        sb2.s_meta.s_inode_table_entries = sb.inode_table_entries();
+        sb2.s_meta.s_inode_table_offset = sb.inode_table_offset();
 
         let inode = sb2.s_inodes.get_inode(ROOT_ID).unwrap();
         assert_eq!(inode.ino(), ROOT_ID);

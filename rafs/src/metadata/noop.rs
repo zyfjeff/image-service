@@ -6,7 +6,7 @@
 
 use std::io::Result;
 
-use super::{RafsSuperInodes, RafsSuperMeta};
+use super::{OndiskDigest, RafsSuperInodes, RafsSuperMeta};
 use crate::metadata::RafsInode;
 use crate::RafsIoReader;
 
@@ -26,6 +26,10 @@ impl RafsSuperInodes for NoopInodes {
     fn destroy(&mut self) {}
 
     fn get_inode(&self, _ino: u64) -> Result<&dyn RafsInode> {
+        unimplemented!()
+    }
+
+    fn get_blob_id<'a>(&'a self, _index: u32) -> Result<&'a OndiskDigest> {
         unimplemented!()
     }
 }

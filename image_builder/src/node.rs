@@ -273,7 +273,7 @@ impl Node {
 
             // calc chunk digest
             let digest = OndiskDigest::from_buf(chunk_data.as_slice());
-            chunk.set_blockid(&digest);
+            chunk.set_block_id(&digest);
 
             // compress chunk data
             let compressed = utils::compress(&chunk_data)?;
@@ -298,7 +298,7 @@ impl Node {
             f_blob.write_all(&compressed)?;
 
             // calc inode digest
-            inode_hash.input(&chunk.blockid().data());
+            inode_hash.input(&chunk.block_id().data());
 
             // stash chunk
             self.chunks.push(chunk);
@@ -326,7 +326,7 @@ impl Node {
     pub fn dump_bootstrap(
         &mut self,
         f_bootstrap: &mut Box<dyn RafsIoWrite>,
-        blob_id: Option<String>,
+        blob_index: u32,
     ) -> Result<()> {
         // dump inode info to bootstrap
         self.inode.store(f_bootstrap)?;
@@ -336,9 +336,7 @@ impl Node {
 
         // dump chunk info to bootstrap
         for chunk in &mut self.chunks {
-            if let Some(blob_id) = &blob_id {
-                chunk.set_blobid(blob_id.as_str())?;
-            }
+            chunk.set_blob_index(blob_index);
             chunk.store(f_bootstrap)?;
         }
 

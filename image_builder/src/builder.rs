@@ -205,13 +205,14 @@ impl Builder {
                 lower.inode.parent(),
             );
             if lower.overlay != Overlay::UpperRemoval && lower.overlay != Overlay::UpperOpaque {
-                lower.dump_bootstrap(&mut self.f_bootstrap, None)?;
+                lower.dump_bootstrap(&mut self.f_bootstrap, 0)?;
             }
         }
 
         Ok(())
     }
 
+<<<<<<< HEAD
     fn dump_superblock(&mut self) -> Result<OndiskSuperBlock> {
         info!("upper building superblock");
 
@@ -361,10 +362,14 @@ impl Builder {
                 if path.is_dir() {
                     self.build_node(&path, Some(Box::new(node)))?;
                 }
+=======
+    fn fill_blob_id(&mut self) {
+        for node in &mut self.additions {
+            for chunk in &mut node.chunks {
+                chunk.set_blob_index(0);
+>>>>>>> rafs v5: add inode & blob table
             }
         }
-
-        Ok(())
     }
 
 <<<<<<< HEAD
@@ -395,6 +400,7 @@ impl Builder {
         let mut dirs = vec![0];
         let mut ino: u64 = 1;
         let mut root_node = self.new_node(&self.root);
+        root_node.build_inode(None)?;
 
         root_node.inode.set_ino(1);
         self.inode_map
@@ -416,6 +422,7 @@ impl Builder {
                     let entry = &child?;
                     let path = entry.path();
                     let mut node = self.new_node(&path);
+                    node.build_inode(None)?;
 
                     ino += 1;
                     child_count += 1;
@@ -435,75 +442,71 @@ impl Builder {
             dirs = next_dirs;
 >>>>>>> builder: add source walk
         }
+
         Ok(())
     }
 
-    fn dump_inode_info(&mut self) -> Result<()> {
+    fn dump_blob_table_and_bootstrap(&mut self) -> Result<()> {
+        let mut blob_table = OndiskBlobTable::new(1);
+        blob_table.set(0, OndiskDigest::from_buf(self.blob_id.as_bytes()))?;
+        blob_table.store(&mut self.f_bootstrap)?;
+
         for node in &mut self.additions {
-            node.dump_bootstrap(&mut self.f_bootstrap, Some(self.blob_id.clone()))?;
+            node.dump_bootstrap(&mut self.f_bootstrap, 0)?;
         }
+
         Ok(())
     }
 
-    fn dump_mapping_table(&mut self, sb: &OndiskSuperBlock) -> Result<()> {
-        let table_entries = sb.mapping_table_entries() as usize;
-        let table_size =
-            table_entries + (RAFS_XATTR_ALIGNMENT - (table_entries & (RAFS_XATTR_ALIGNMENT - 1)));
-
-        let mut mapping_table: Vec<u32> = vec![0; table_size];
+    fn dump_inode_table_and_blob(&mut self) -> Result<()> {
+        let mut inode_table = OndiskInodeTable::new(self.additions.len());
         let mut inode_offset = RAFS_SUPERBLOCK_SIZE as u32;
 
-        for (idx, node) in &mut self.additions.iter_mut().enumerate() {
-            let offset = (table_size * 4 + inode_offset as usize) >> 3;
-            mapping_table[idx] = offset as u32;
-            node.build_inode(None)?;
+        for node in &mut self.additions {
+            inode_table.set(node.inode.ino(), inode_offset)?;
             inode_offset += RAFS_INODE_INFO_SIZE as u32;
             node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
             inode_offset += (node.chunks.len() * RAFS_CHUNK_INFO_SIZE) as u32;
         }
 
-        let (_, table, _) = unsafe { mapping_table.align_to::<u8>() };
-        save_mapping_table(table, &mut self.f_bootstrap)?;
+        inode_table.store(&mut self.f_bootstrap)?;
+
         Ok(())
     }
 
-    fn dump_superblock(&mut self) -> Result<OndiskSuperBlock> {
+    fn dump_superblock(&mut self) -> Result<()> {
+        
         info!("upper building superblock");
 
         let mut sb = OndiskSuperBlock::new();
         let inodes_count = self.inode_map.len() as u64;
-        let mapping_table_entries = self.additions.len() as u32;
+        let inode_table_entries = self.additions.len() as u32;
         sb.set_inodes_count(inodes_count);
-        sb.set_mapping_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
-        sb.set_mapping_table_entries(mapping_table_entries);
+        sb.set_inode_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
+        sb.set_inode_table_entries(inode_table_entries);
 
         sb.store(&mut self.f_bootstrap)?;
 
-        Ok(sb)
+        Ok(())
     }
 
     pub fn build(&mut self) -> Result<String> {
-        // self.dump_superblock()?;
-
-        // self.dump_blob(root_path, None)?;
-
-        // let blob_hash = self.blob_hash.result_str();
-        // if self.blob_id == "" {
-        //     self.blob_id = format!("sha256:{}", blob_hash);
-        // }
-
-        // if self.f_parent_bootstrap.is_none() {
-        //     self.dump_bootstrap()?;
-        // } else {
-        //     self.fill_blob_id();
-        //     self.apply()?;
-        // }
+        let blob_hash = self.blob_hash.result_str();
+        if self.blob_id == "" {
+            self.blob_id = format!("sha256:{}", blob_hash);
+        }
 
         self.walk_source()?;
 
-        let sb = self.dump_superblock()?;
-        self.dump_mapping_table(&sb)?;
-        self.dump_inode_info()?;
+        self.dump_superblock()?;
+        self.dump_inode_table_and_blob()?;
+
+        if self.f_parent_bootstrap.is_none() {
+            self.dump_blob_table_and_bootstrap()?;
+        } else {
+            self.fill_blob_id();
+            self.apply()?;
+        }
 
         Ok(self.blob_id.to_owned())
     }
@@ -557,8 +560,12 @@ pub(crate) mod tests {
         let mut f_bootstrap: Box<dyn RafsIoRead> = f_bootstrap;
         let mut sb = RafsSuper::new();
         sb.load(&mut f_bootstrap).unwrap();
-        let inode = sb.get_inode(1)?;
-        println!("inode {:?} {} {}", inode.name(), inode.size(), inode.ino());
+
+        for i in 1..15 {
+            let inode = sb.get_inode(i)?;
+            let desc = inode.alloc_bio_desc(0, 4, 0, &sb)?;
+            println!("inode {:?} {} {}", inode.name(), inode.size(), inode.ino());
+        }
 
         Ok(())
     }
