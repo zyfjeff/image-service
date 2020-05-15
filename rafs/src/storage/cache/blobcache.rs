@@ -4,7 +4,7 @@
 
 use nix::sys::uio;
 use std::collections::HashMap;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::io::Error;
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -181,10 +181,15 @@ pub fn new<S: std::hash::BuildHasher>(
     config: &HashMap<String, String, S>,
     backend: Box<dyn BlobBackend + Sync + Send>,
 ) -> io::Result<BlobCache> {
-    let work_dir = match config.get("work_dir") {
-        Some(dir) => dir,
-        None => ".",
-    };
+    let work_dir = config
+        .get("work_dir")
+        .map_or(Ok("."), |p| -> io::Result<&str> {
+            if fs::metadata(p)?.is_dir() {
+                Ok(p.as_str())
+            } else {
+                Err(Error::from_raw_os_error(libc::ENOTDIR))
+            }
+        })?;
     Ok(BlobCache {
         cache: RwLock::new(HashMap::new()),
         file_table: RwLock::new(HashMap::new()),
