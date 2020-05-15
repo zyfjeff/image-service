@@ -56,6 +56,10 @@ type VhostUserBackendResult<T> = std::result::Result<T, std::io::Error>;
 
 #[derive(Debug)]
 enum Error {
+    /// Invalid arguments provided.
+    InvalidArguments(String),
+    /// Invalid config provided
+    InvalidConfig(String),
     /// Failed to handle event other than input event.
     HandleEventNotEpollIn,
     /// Failed to handle unknown event.
@@ -72,11 +76,20 @@ enum Error {
     EventFdClone(io::Error),
     /// Cannot spawn a new thread
     ThreadSpawn(io::Error),
+    /// Failure to initialize file system
+    FsInitFailure(io::Error),
+    /// Daemon related error
+    DaemonFailure(String),
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "vhost_user_fs_error: {:?}", self)
+        match self {
+            Error::InvalidArguments(s) => write!(f, "Invalid argument: {}", s),
+            Error::InvalidConfig(s) => write!(f, "Invalid config: {}", s),
+            Error::DaemonFailure(s) => write!(f, "Daemon error: {}", s),
+            _ => write!(f, "vhost_user_fs_error: {:?}", self),
+        }
     }
 }
 
@@ -466,9 +479,9 @@ fn main() -> Result<()> {
         .unwrap();
 
     // Retrieve arguments
-    let sock = cmd_arguments
-        .value_of("sock")
-        .expect("Failed to retrieve vhost-user socket path");
+    let sock = cmd_arguments.value_of("sock").ok_or_else(|| {
+        Error::InvalidArguments("Failed to retrieve vhost-user socket path".to_string())
+    })?;
 
     let fs_backend = match cmd_arguments.value_of("shared-dir") {
         Some(shared_dir) => {
@@ -481,32 +494,32 @@ fn main() -> Result<()> {
             vfs_opts.no_open = false;
             vfs_opts.no_writeback = true;
 
-            let passthrough_fs = PassthroughFs::new(fs_cfg).unwrap();
+            let passthrough_fs = PassthroughFs::new(fs_cfg).map_err(Error::FsInitFailure)?;
             passthrough_fs.import()?;
 
-            let fs_backend = Arc::new(RwLock::new(
-                VhostUserFsBackend::new(Vfs::new(vfs_opts)).unwrap(),
-            ));
+            let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(Vfs::new(vfs_opts))?));
 
             let fs = Arc::clone(&fs_backend.write().unwrap().vfs);
 
-            fs.mount(Box::new(passthrough_fs), "/").unwrap();
+            fs.mount(Box::new(passthrough_fs), "/")?;
             info!("vfs mounted");
 
             fs_backend
         }
         None => {
-            let config_file = cmd_arguments
-                .value_of("config")
-                .expect("config file must be provided");
+            let config_file = cmd_arguments.value_of("config").ok_or_else(|| {
+                Error::InvalidArguments("config file must be provided".to_string())
+            })?;
             let metadata = cmd_arguments.value_of("metadata").unwrap_or_default();
             let apisock = cmd_arguments.value_of("apisock").unwrap_or_default();
 
             let mut settings = config::Config::new();
             settings
                 .merge(config::File::from(Path::new(config_file)))
-                .expect("failed to open config file");
-            let rafs_conf: RafsConfig = settings.try_into().expect("Invalid config");
+                .map_err(|e| Error::InvalidConfig(e.to_string()))?;
+            let rafs_conf: RafsConfig = settings
+                .try_into()
+                .map_err(|e| Error::InvalidConfig(e.to_string()))?;
 
             let fs_backend = Arc::new(RwLock::new(
                 VhostUserFsBackend::new(Vfs::new(VfsOptions::default())).unwrap(),
@@ -519,7 +532,7 @@ fn main() -> Result<()> {
                 info!("rafs mounted");
 
                 let fs = Arc::clone(&fs_backend.write().unwrap().vfs);
-                fs.mount(Box::new(rafs), "/").unwrap();
+                fs.mount(Box::new(rafs), "/")?;
                 info!("vfs mounted");
             }
 
@@ -559,7 +572,7 @@ fn main() -> Result<()> {
         String::from(sock),
         fs_backend.clone(),
     )
-    .unwrap();
+    .map_err(|e| Error::DaemonFailure(format!("{:?}", e)))?;
 
     info!("starting fuse daemon");
     if let Err(e) = daemon.start() {

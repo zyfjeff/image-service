@@ -763,7 +763,7 @@ impl FileSystem for Vfs {
     fn releasedir(&self, ctx: Context, inode: u64, flags: u32, handle: u64) -> Result<()> {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.releasedir(ctx, idata.ino, flags, handle),
-            (Right(fs), idata) => fs.releasedir(ctx, idata.ino.into(), flags, handle.into()),
+            (Right(fs), idata) => fs.releasedir(ctx, idata.ino, flags, handle),
         }
     }
 
