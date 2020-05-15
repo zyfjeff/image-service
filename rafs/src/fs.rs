@@ -83,14 +83,20 @@ impl RafsInode {
 
 impl RafsInode {
     fn new() -> Self {
-        RafsInode {
-            counter: if io_stats::ios_enable() {
+        let inode = RafsInode {
+            counter: if io_stats::ios_files_enabled() {
                 Arc::new(Some(io_stats::InodeIOStats::default()))
             } else {
                 Arc::new(None)
             },
             ..Default::default()
-        }
+        };
+
+        io_stats::COUNTERS
+            .write()
+            .unwrap()
+            .push(inode.counter.clone());
+        inode
     }
 
     fn init(&mut self, info: &RafsInodeInfo) {

@@ -258,3 +258,24 @@ impl EndpointHandler for MetricsHandler {
         }
     }
 }
+
+pub struct MetricsFilesHandler {}
+
+impl EndpointHandler for MetricsFilesHandler {
+    fn handle_request(
+        &self,
+        req: &Request,
+        _api_notifier: EventFd,
+        _api_sender: Sender<ApiRequest>,
+    ) -> Response {
+        match req.method() {
+            Method::Get => {
+                let mut response = Response::new(Version::Http11, StatusCode::OK);
+                let m = io_stats::export_files_stats();
+                response.set_body(Body::new(m));
+                response
+            }
+            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+        }
+    }
+}

@@ -16,7 +16,9 @@ use std::thread;
 use micro_http::{HttpServer, MediaType, Request, Response, StatusCode, Version};
 use vmm_sys_util::eventfd::EventFd;
 
-use crate::http_endpoint::{ApiRequest, InfoHandler, MetricsHandler, MountHandler};
+use crate::http_endpoint::{
+    ApiRequest, InfoHandler, MetricsFilesHandler, MetricsHandler, MountHandler,
+};
 
 const HTTP_ROOT: &str = "/api/v1";
 
@@ -57,6 +59,7 @@ lazy_static! {
         r.routes.insert(endpoint!("/daemon"), Box::new(InfoHandler{}));
         r.routes.insert(endpoint!("/mount"), Box::new(MountHandler{}));
         r.routes.insert(endpoint!("/metrics"), Box::new(MetricsHandler{}));
+        r.routes.insert(endpoint!("/metrics/files"), Box::new(MetricsFilesHandler{}));
         r
     };
 }
