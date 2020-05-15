@@ -205,9 +205,11 @@ impl Vfs {
             }
         };
 
-        debug!(
+        trace!(
             "vfs hash inode index {} ino {} fuse ino {}",
-            index, inode, ino
+            index,
+            inode,
+            ino
         );
         ino
     }
