@@ -15,6 +15,7 @@ use std::io::{Error, Result};
 #[derive(Default, Clone, Deserialize)]
 pub struct Config {
     pub backend: BackendConfig,
+    #[serde(default)]
     pub cache: CacheConfig,
 }
 
