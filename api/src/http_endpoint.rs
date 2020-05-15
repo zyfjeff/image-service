@@ -15,6 +15,7 @@ use serde_json::Error as SerdeError;
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::http::EndpointHandler;
+use rafs::io_stats;
 
 /// API errors are sent back from the VMM API server through the ApiResponse.
 #[derive(Debug)]
@@ -232,6 +233,27 @@ impl EndpointHandler for MountHandler {
                 }
             }
 
+            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+        }
+    }
+}
+
+pub struct MetricsHandler {}
+
+impl EndpointHandler for MetricsHandler {
+    fn handle_request(
+        &self,
+        req: &Request,
+        _api_notifier: EventFd,
+        _api_sender: Sender<ApiRequest>,
+    ) -> Response {
+        match req.method() {
+            Method::Get => {
+                let mut response = Response::new(Version::Http11, StatusCode::OK);
+                let m = serde_json::to_string(io_stats::ios()).unwrap();
+                response.set_body(Body::new(m));
+                response
+            }
             _ => Response::new(Version::Http11, StatusCode::BadRequest),
         }
     }

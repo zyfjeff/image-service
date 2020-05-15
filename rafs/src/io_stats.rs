@@ -27,7 +27,7 @@ pub enum StatsFop {
 /// 1K; 4K; 16K; 64K, 128K.
 const BLOCK_READ_COUNT_MAX: usize = 5;
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct GlobalIOStats {
     // Whether to enable each file accounting switch.
     // As fop accounting might consume much memory space, it is disabled by default.
@@ -50,7 +50,7 @@ pub struct GlobalIOStats {
     last_fop_tp: AtomicUsize,
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize)]
 pub struct InodeIOStats {
     // Total open number of this file.
     nr_open: AtomicUsize,
