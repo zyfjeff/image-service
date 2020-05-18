@@ -298,7 +298,6 @@ where
 struct VhostUserFsBackend {
     mem: Option<GuestMemoryMmap>,
     kill_evt: EventFd,
-    vfs: Arc<Vfs>,
     server: Arc<Server<Arc<Vfs>>>,
     // handle request from slave to master
     vu_req: Option<SlaveFsCacheReq>,
@@ -306,13 +305,11 @@ struct VhostUserFsBackend {
 }
 
 impl VhostUserFsBackend {
-    fn new(vfs: Vfs) -> Result<Self> {
-        let fs = Arc::new(vfs);
+    fn new(vfs: Arc<Vfs>) -> Result<Self> {
         Ok(VhostUserFsBackend {
             mem: None,
             kill_evt: EventFd::new(EFD_NONBLOCK).map_err(Error::Epoll)?,
-            server: Arc::new(Server::new(fs.clone())),
-            vfs: fs,
+            server: Arc::new(Server::new(vfs)),
             vu_req: None,
             used_descs: Vec::with_capacity(QUEUE_SIZE),
         })
@@ -479,98 +476,87 @@ fn main() -> Result<()> {
         .unwrap();
 
     // Retrieve arguments
-    let sock = cmd_arguments.value_of("sock").ok_or_else(|| {
-        Error::InvalidArguments("Failed to retrieve vhost-user socket path".to_string())
-    })?;
+    // sock means vhost-user-backend only
+    let sock = cmd_arguments.value_of("sock").unwrap_or_default();
+    // shared-dir means fs passthrough
+    let shared_dir = cmd_arguments.value_of("shared-dir").unwrap_or_default();
+    let config = cmd_arguments
+        .value_of("config")
+        .ok_or_else(|| Error::InvalidArguments("config file is not provided".to_string()))?;
+    // metadata means rafs only
+    let metadata = cmd_arguments.value_of("metadata").unwrap_or_default();
+    // apisock means admin api socket support
+    let apisock = cmd_arguments.value_of("apisock").unwrap_or_default();
 
-    let fs_backend = match cmd_arguments.value_of("shared-dir") {
-        Some(shared_dir) => {
-            let fs_cfg = Config {
-                root_dir: shared_dir.to_string(),
-                do_import: false,
-                ..Default::default()
-            };
-            let mut vfs_opts = VfsOptions::default();
-            vfs_opts.no_open = false;
-            vfs_opts.no_writeback = true;
+    // Some basic validation
+    if !sock.is_empty() && !metadata.is_empty() {
+        return Err(io::Error::from(Error::InvalidArguments(
+            "sock and metadata cannot be set at the same time".to_string(),
+        )));
+    }
 
-            let passthrough_fs = PassthroughFs::new(fs_cfg).map_err(Error::FsInitFailure)?;
-            passthrough_fs.import()?;
+    let mut settings = config::Config::new();
+    settings
+        .merge(config::File::from(Path::new(config)))
+        .map_err(|e| Error::InvalidConfig(e.to_string()))?;
+    let rafs_conf: RafsConfig = settings
+        .try_into()
+        .map_err(|e| Error::InvalidConfig(e.to_string()))?;
 
-            let fs_backend = Arc::new(RwLock::new(VhostUserFsBackend::new(Vfs::new(vfs_opts))?));
+    let vfs = Vfs::new(VfsOptions::default());
+    if !shared_dir.is_empty() {
+        let mut vfs_opts = VfsOptions::default();
+        vfs_opts.no_open = false;
+        vfs_opts.no_writeback = true;
+        let fs_cfg = Config {
+            root_dir: shared_dir.to_string(),
+            do_import: false,
+            ..Default::default()
+        };
+        let passthrough_fs = PassthroughFs::new(fs_cfg).map_err(Error::FsInitFailure)?;
+        passthrough_fs.import()?;
+        vfs.mount(Box::new(passthrough_fs), "/")?;
+        info!("vfs mounted");
+    } else if !metadata.is_empty() {
+        let mut rafs = Rafs::new(rafs_conf.clone());
+        rafs.import(&mut File::open(metadata)?)?;
+        info!("rafs mounted");
+        vfs.mount(Box::new(rafs), "/")?;
+        info!("vfs mounted");
+    }
 
-            let fs = Arc::clone(&fs_backend.write().unwrap().vfs);
-
-            fs.mount(Box::new(passthrough_fs), "/")?;
-            info!("vfs mounted");
-
-            fs_backend
-        }
-        None => {
-            let config_file = cmd_arguments.value_of("config").ok_or_else(|| {
-                Error::InvalidArguments("config file must be provided".to_string())
-            })?;
-            let metadata = cmd_arguments.value_of("metadata").unwrap_or_default();
-            let apisock = cmd_arguments.value_of("apisock").unwrap_or_default();
-
-            let mut settings = config::Config::new();
-            settings
-                .merge(config::File::from(Path::new(config_file)))
-                .map_err(|e| Error::InvalidConfig(e.to_string()))?;
-            let rafs_conf: RafsConfig = settings
-                .try_into()
-                .map_err(|e| Error::InvalidConfig(e.to_string()))?;
-
-            let fs_backend = Arc::new(RwLock::new(
-                VhostUserFsBackend::new(Vfs::new(VfsOptions::default())).unwrap(),
-            ));
-
-            if metadata != "" {
+    let vfs = Arc::new(vfs);
+    if apisock != "" {
+        let vfs = Arc::clone(&vfs);
+        start_api_server(
+            "nydusd".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+            apisock.to_string(),
+            move |info| {
                 let mut rafs = Rafs::new(rafs_conf.clone());
-                let mut file = File::open(metadata)?;
-                rafs.import(&mut file)?;
+                let mut file = File::open(&info.source).map_err(ApiError::MountFailure)?;
+                rafs.import(&mut file).map_err(ApiError::MountFailure)?;
                 info!("rafs mounted");
 
-                let fs = Arc::clone(&fs_backend.write().unwrap().vfs);
-                fs.mount(Box::new(rafs), "/")?;
-                info!("vfs mounted");
-            }
+                match vfs.mount(Box::new(rafs), &info.mountpoint) {
+                    Ok(()) => Ok(ApiResponsePayload::Mount),
+                    Err(e) => {
+                        error!("mount {:?} failed {}", info, e);
+                        Err(ApiError::MountFailure(io::Error::from(
+                            io::ErrorKind::InvalidData,
+                        )))
+                    }
+                }
+            },
+        )?;
+        info!("api server running at {}", apisock);
+    }
 
-            if apisock != "" {
-                let backend = Arc::clone(&fs_backend);
-                start_api_server(
-                    "nydusd".to_string(),
-                    env!("CARGO_PKG_VERSION").to_string(),
-                    apisock.to_string(),
-                    move |info| {
-                        let mut rafs = Rafs::new(rafs_conf.clone());
-                        let mut file = File::open(&info.source).map_err(ApiError::MountFailure)?;
-                        rafs.import(&mut file).map_err(ApiError::MountFailure)?;
-                        info!("rafs mounted");
-
-                        let vfs = Arc::clone(&backend.write().unwrap().vfs);
-
-                        match vfs.mount(Box::new(rafs), &info.mountpoint) {
-                            Ok(()) => Ok(ApiResponsePayload::Mount),
-                            Err(e) => {
-                                error!("mount {:?} failed {}", info, e);
-                                Err(ApiError::MountFailure(io::Error::from(
-                                    io::ErrorKind::InvalidData,
-                                )))
-                            }
-                        }
-                    },
-                )?;
-                info!("api server running at {}", apisock);
-            }
-            fs_backend
-        }
-    };
-
+    let backend = Arc::new(RwLock::new(VhostUserFsBackend::new(vfs)?));
     let mut daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),
         String::from(sock),
-        fs_backend.clone(),
+        backend.clone(),
     )
     .map_err(|e| Error::DaemonFailure(format!("{:?}", e)))?;
 
@@ -584,7 +570,7 @@ fn main() -> Result<()> {
         error!("Waiting for daemon failed: {:?}", e);
     }
 
-    let kill_evt = &fs_backend.read().unwrap().kill_evt;
+    let kill_evt = &backend.read().unwrap().kill_evt;
     if let Err(e) = kill_evt.write(1) {
         error!("Error shutting down worker thread: {:?}", e)
     }
