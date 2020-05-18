@@ -15,7 +15,6 @@ use serde_json::Error as SerdeError;
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::http::EndpointHandler;
-use rafs::io_stats;
 
 /// API errors are sent back from the VMM API server through the ApiResponse.
 #[derive(Debug)]
@@ -46,6 +45,12 @@ pub enum ApiResponsePayload {
 
     /// Vmm ping response
     Mount,
+
+    /// Nydus filesystem global metrics
+    FsGlobalMetrics(String),
+
+    /// Nydus filesystem per-file metrics
+    FsFilesMetrics(String),
 }
 
 /// This is the response sent by the API server through the mpsc channel.
@@ -56,6 +61,8 @@ pub enum ApiRequest {
     DaemonInfo(Sender<ApiResponse>),
     Mount(MountInfo, Sender<ApiResponse>),
     ConfigureDaemon(DaemonConf, Sender<ApiResponse>),
+    ExportGlobalMetrics(Sender<ApiResponse>),
+    ExportFilesMetrics(Sender<ApiResponse>),
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -131,6 +138,38 @@ pub fn mount_info(
 
     match info {
         ApiResponsePayload::Mount => Ok(()),
+        _ => Err(ApiError::ResponsePayloadType),
+    }
+}
+
+pub fn export_global_stats(api_evt: EventFd, api_sender: Sender<ApiRequest>) -> ApiResult<String> {
+    let (response_sender, response_receiver) = channel();
+
+    api_sender
+        .send(ApiRequest::ExportGlobalMetrics(response_sender))
+        .map_err(ApiError::RequestSend)?;
+    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
+
+    let info = response_receiver.recv().map_err(ApiError::ResponseRecv)??;
+
+    match info {
+        ApiResponsePayload::FsGlobalMetrics(info) => Ok(info),
+        _ => Err(ApiError::ResponsePayloadType),
+    }
+}
+
+pub fn export_files_stats(api_evt: EventFd, api_sender: Sender<ApiRequest>) -> ApiResult<String> {
+    let (response_sender, response_receiver) = channel();
+
+    api_sender
+        .send(ApiRequest::ExportFilesMetrics(response_sender))
+        .map_err(ApiError::RequestSend)?;
+    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
+
+    let info = response_receiver.recv().map_err(ApiError::ResponseRecv)??;
+
+    match info {
+        ApiResponsePayload::FsFilesMetrics(info) => Ok(info),
         _ => Err(ApiError::ResponsePayloadType),
     }
 }
@@ -244,15 +283,19 @@ impl EndpointHandler for MetricsHandler {
     fn handle_request(
         &self,
         req: &Request,
-        _api_notifier: EventFd,
-        _api_sender: Sender<ApiRequest>,
+        api_notifier: EventFd,
+        api_sender: Sender<ApiRequest>,
     ) -> Response {
         match req.method() {
             Method::Get => {
-                let mut response = Response::new(Version::Http11, StatusCode::OK);
-                let m = serde_json::to_string(io_stats::ios()).unwrap();
-                response.set_body(Body::new(m));
-                response
+                match export_global_stats(api_notifier, api_sender).map_err(HttpError::Info) {
+                    Ok(info) => {
+                        let mut response = Response::new(Version::Http11, StatusCode::OK);
+                        response.set_body(Body::new(info));
+                        response
+                    }
+                    Err(e) => error_response(e, StatusCode::InternalServerError),
+                }
             }
             _ => Response::new(Version::Http11, StatusCode::BadRequest),
         }
@@ -265,15 +308,19 @@ impl EndpointHandler for MetricsFilesHandler {
     fn handle_request(
         &self,
         req: &Request,
-        _api_notifier: EventFd,
-        _api_sender: Sender<ApiRequest>,
+        api_notifier: EventFd,
+        api_sender: Sender<ApiRequest>,
     ) -> Response {
         match req.method() {
             Method::Get => {
-                let mut response = Response::new(Version::Http11, StatusCode::OK);
-                let m = io_stats::export_files_stats();
-                response.set_body(Body::new(m));
-                response
+                match export_files_stats(api_notifier, api_sender).map_err(HttpError::Info) {
+                    Ok(info) => {
+                        let mut response = Response::new(Version::Http11, StatusCode::OK);
+                        response.set_body(Body::new(info));
+                        response
+                    }
+                    Err(e) => error_response(e, StatusCode::InternalServerError),
+                }
             }
             _ => Response::new(Version::Http11, StatusCode::BadRequest),
         }

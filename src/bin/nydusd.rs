@@ -11,6 +11,7 @@ extern crate clap;
 #[macro_use]
 extern crate log;
 extern crate config;
+extern crate rafs;
 extern crate stderrlog;
 
 use std::fs::File;
@@ -38,6 +39,7 @@ use vmm_sys_util::eventfd::EventFd;
 use nydus_api::http::start_http_thread;
 use nydus_api::http_endpoint::{ApiError, ApiRequest, ApiResponsePayload, DaemonInfo, MountInfo};
 use rafs::fs::{Rafs, RafsConfig};
+use rafs::io_stats;
 use vfs::vfs::{Vfs, VfsOptions};
 
 const VIRTIO_F_VERSION_1: u32 = 32;
@@ -251,6 +253,30 @@ impl ApiServer {
                                     } else {
                                         error!("Invalid log level passed, {}", conf.log_level);
                                         sender.send(Err(ApiError::ResponsePayloadType)).unwrap();
+                                    }
+                                }
+                                ApiRequest::ExportGlobalMetrics(sender) => {
+                                    // TODO: Perhaps, just delegate serializing to io-stats?
+                                    let m = match serde_json::to_string(io_stats::ios()) {
+                                        Ok(s) => s,
+                                        Err(e) => {
+                                            format!("Failed in serializing global metrics {}", e)
+                                        }
+                                    };
+                                    // Even failed in sending, never leave this loop?
+                                    if let Err(e) =
+                                        sender.send(Ok(ApiResponsePayload::FsGlobalMetrics(m)))
+                                    {
+                                        error!("send API response failed {}", e);
+                                    }
+                                }
+                                ApiRequest::ExportFilesMetrics(sender) => {
+                                    // TODO: Perhaps, just delegate serializing to io-stats?
+                                    let m = io_stats::export_files_stats();
+                                    if let Err(e) =
+                                        sender.send(Ok(ApiResponsePayload::FsFilesMetrics(m)))
+                                    {
+                                        error!("send API response failed {}", e);
                                     }
                                 }
                             }
