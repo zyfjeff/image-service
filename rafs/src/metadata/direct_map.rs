@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use crate::fs::Inode;
 use crate::metadata::layout::{
-    OndiskBlobTable, OndiskChunkInfo, OndiskDigest, OndiskInode, OndiskInodeTable,
-    RAFS_CHUNK_INFO_SIZE, RAFS_INODE_INFO_SIZE, RAFS_SUPERBLOCK_SIZE, RAFS_XATTR_ALIGNMENT,
+    OndiskBlobTable, OndiskChunkInfo, OndiskDigest, OndiskInode, OndiskInodeTable, RAFS_ALIGNMENT,
+    RAFS_CHUNK_INFO_SIZE, RAFS_INODE_INFO_SIZE, RAFS_SUPERBLOCK_SIZE,
 };
 use crate::metadata::{
     parse_string, RafsChunkInfo, RafsInode, RafsSuperInodes, RafsSuperMeta, RAFS_MAX_METADATA_SIZE,
@@ -43,7 +43,7 @@ impl DirectMapping {
         let len = md.len();
         if len < RAFS_SUPERBLOCK_SIZE as u64
             || len > RAFS_MAX_METADATA_SIZE as u64
-            || len & (RAFS_XATTR_ALIGNMENT as u64 - 1) != 0
+            || len & (RAFS_ALIGNMENT as u64 - 1) != 0
         {
             return Err(ebadf());
         }

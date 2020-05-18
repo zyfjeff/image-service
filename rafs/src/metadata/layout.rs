@@ -23,7 +23,7 @@
 //!    one and only one child entry having the inode number as its assigned `child index'.
 //! 5) A child index mapping table is introduced, which is used to map `child index` into offset
 //!    from the base of the super block. The formula to calculate the inode offset is:
-//!      inode_offset_from_sb = child_index_mapping_table[child_index] << 3
+//!      inode_offset_from_sb = inode_table[child_index] << 3
 //! 6) The child index mapping table follows the super block by default.
 //!
 //! Giving above definition, we could get the inode object for an inode number or child index as:
@@ -55,7 +55,7 @@ pub const RAFS_SUPER_MIN_VERSION: u32 = RAFS_SUPER_VERSION_V4;
 pub const RAFS_INODE_INFO_SIZE: usize = 512;
 pub const RAFS_INODE_INFO_RESERVED_SIZE: usize = RAFS_INODE_INFO_SIZE - 400;
 pub const RAFS_CHUNK_INFO_SIZE: usize = 64;
-pub const RAFS_XATTR_ALIGNMENT: usize = 8;
+pub const RAFS_ALIGNMENT: usize = 8;
 
 macro_rules! impl_metadata_converter {
     ($T: ty) => {
@@ -284,7 +284,7 @@ pub struct OndiskInodeTable {
 
 impl OndiskInodeTable {
     pub fn new(entries: usize) -> Self {
-        let table_size = entries + (RAFS_XATTR_ALIGNMENT - (entries & (RAFS_XATTR_ALIGNMENT - 1)));
+        let table_size = entries + (RAFS_ALIGNMENT - (entries & (RAFS_ALIGNMENT - 1)));
         OndiskInodeTable {
             data: vec![0; table_size],
         }
@@ -633,7 +633,7 @@ impl fmt::Display for OndiskInode {
 pub struct OndiskChunkInfo {
     /// sha256(chunk), [char; RAFS_SHA256_LENGTH]
     block_id: OndiskDigest,
-    /// blob index (blob_digest = blob_mapping_table[blob_index])
+    /// blob index (blob_digest = blob_table[blob_index])
     blob_index: u32,
     /// compressed size
     compress_size: u32,
@@ -763,6 +763,54 @@ impl fmt::Display for OndiskDigest {
         for c in self.data[..].iter() {
             write!(f, "{:02x}", c)?;
         }
+        Ok(())
+    }
+}
+
+/// On disk sysmlink data.
+#[repr(C)]
+#[derive(Clone, Default, Debug)]
+pub struct OndiskSymlinkInfo {
+    data: Vec<u8>,
+}
+
+impl OndiskSymlinkInfo {
+    pub fn new() -> Self {
+        OndiskSymlinkInfo {
+            ..Default::default()
+        }
+    }
+
+    pub fn from_raw(data: &[u8]) -> Result<Self> {
+        let raw_size = data.len() + 1;
+        if raw_size > libc::PATH_MAX as usize {
+            return Err(einval());
+        }
+
+        let size = raw_size + (RAFS_ALIGNMENT - (raw_size & (RAFS_ALIGNMENT - 1)));
+        let mut buf = vec![0; size];
+        buf[..data.len()].copy_from_slice(data);
+        // Need one extra padding '0'
+        buf[data.len()] = 0;
+
+        Ok(OndiskSymlinkInfo { data: buf })
+    }
+
+    pub fn count(&self) -> usize {
+        self.data.len() / RAFS_ALIGNMENT
+    }
+
+    pub fn size(&self) -> usize {
+        self.data.len() * std::mem::size_of::<u8>()
+    }
+
+    pub fn store(&mut self, w: &mut RafsIoWriter) -> Result<usize> {
+        w.write_all(&mut self.data)?;
+        Ok(self.data.len())
+    }
+
+    pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
+        r.read_exact(&mut self.data)?;
         Ok(())
     }
 }

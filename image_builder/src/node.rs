@@ -67,7 +67,7 @@ pub struct Node {
     /// chunks info of file
     pub chunks: Vec<OndiskChunkInfo>,
     // chunks info of symlink file
-    // pub link_chunks: Vec<RafsLinkDataInfo>,
+    pub link_chunk: Option<OndiskSymlinkInfo>,
     // xattr info of file
     // pub xattr_chunks: RafsInodeXattrInfos,
 }
@@ -328,22 +328,22 @@ impl Node {
         f_bootstrap: &mut Box<dyn RafsIoWrite>,
         blob_index: u32,
     ) -> Result<()> {
-        // dump inode info to bootstrap
+        // dump inode info
         self.inode.store(f_bootstrap)?;
 
-        // dump inode xattr to bootstrap
+        // dump inode xattr
         // self.xattr_chunks.store(f_bootstrap)?;
 
-        // dump chunk info to bootstrap
+        // dump chunk info
         for chunk in &mut self.chunks {
             chunk.set_blob_index(blob_index);
             chunk.store(f_bootstrap)?;
         }
 
-        // or dump symlink chunk info to bootstrap
-        // for chunk in &self.link_chunks {
-        //     chunk.store(f_bootstrap)?;
-        // }
+        // dump symlink chunk info
+        if let Some(link_chunk) = &mut self.link_chunk {
+            link_chunk.store(f_bootstrap)?;
+        }
 
         Ok(())
     }
@@ -356,7 +356,7 @@ impl Node {
             overlay,
             inode: OndiskInode::new(),
             chunks: Vec::new(),
-            // link_chunks: Vec::new(),
+            link_chunk: None,
             // xattr_chunks: RafsInodeXattrInfos::new(),
         }
     }
@@ -410,11 +410,9 @@ impl Node {
             self.inode
                 .set_flags(self.inode.flags() | INO_FLAG_SYMLINK as u64);
             let target_path = fs::read_link(&self.path)?;
-            let target_path_str = target_path.to_str().unwrap();
-            let chunk_info_count = (target_path_str.as_bytes().len() as f64
-                / RAFS_CHUNK_INFO_SIZE as f64)
-                .ceil() as usize;
-            self.inode.set_chunk_cnt(chunk_info_count as u64);
+            let link_chunk = OndiskSymlinkInfo::from_raw(target_path.to_str().unwrap().as_bytes())?;
+            self.inode.set_chunk_cnt(link_chunk.count() as u64);
+            self.link_chunk = Some(link_chunk);
         }
 
         Ok(())

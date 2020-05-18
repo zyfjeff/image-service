@@ -166,7 +166,7 @@ impl Builder {
                 overlay,
                 inode: inode.clone(),
                 chunks,
-                // link_chunks,
+                link_chunk: None,
                 // xattr_chunks,
             };
 
@@ -396,7 +396,7 @@ impl Builder {
     }
 
     /// Directory walk by BFS
-    pub fn walk_source(&mut self) -> Result<()> {
+    pub fn walk(&mut self) -> Result<()> {
         let mut dirs = vec![0];
         let mut ino: u64 = 1;
         let mut root_node = self.new_node(&self.root);
@@ -447,16 +447,19 @@ impl Builder {
     }
 
     fn dump(&mut self) -> Result<()> {
+        // inode table
         let inode_table_entries = self.additions.len() as u32;
         let mut inode_table = OndiskInodeTable::new(inode_table_entries as usize);
         let inode_table_size = inode_table.size();
         let inode_table_offset = RAFS_SUPERBLOCK_SIZE as u64;
 
+        // blob table
         let blob_table_entries: usize = 1;
         let blob_table = OndiskBlobTable::new(blob_table_entries);
         let blob_table_size = blob_table.size();
         let blob_table_offset = (RAFS_SUPERBLOCK_SIZE + inode_table_size) as u64;
 
+        // super block
         let mut super_block = OndiskSuperBlock::new();
         let inodes_count = self.inode_map.len() as u64;
         super_block.set_inodes_count(inodes_count);
@@ -465,17 +468,22 @@ impl Builder {
         super_block.set_blob_table_offset(blob_table_offset);
         super_block.set_blob_table_entries(blob_table_entries as u32);
 
+        // dump blob
         let mut inode_offset = (RAFS_SUPERBLOCK_SIZE + inode_table_size + blob_table_size) as u32;
         for node in &mut self.additions {
             inode_table.set(node.inode.ino(), inode_offset)?;
             inode_offset += RAFS_INODE_INFO_SIZE as u32;
             node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
             inode_offset += (node.chunks.len() * RAFS_CHUNK_INFO_SIZE) as u32;
+            if let Some(link_chunk) = &node.link_chunk {
+                inode_offset += link_chunk.size() as u32;
+            }
         }
         let blob_id = OndiskDigest::from_raw(&mut self.blob_hash);
         let mut blob_table = OndiskBlobTable::new(1);
         blob_table.set(0, blob_id)?;
 
+        // dump bootstrap
         super_block.store(&mut self.f_bootstrap)?;
         inode_table.store(&mut self.f_bootstrap)?;
         blob_table.store(&mut self.f_bootstrap)?;
@@ -506,7 +514,7 @@ impl Builder {
     }
 
     pub fn build(&mut self) -> Result<String> {
-        self.walk_source()?;
+        self.walk()?;
         self.dump()?;
 
         Ok(self.blob_id.to_owned())
@@ -559,12 +567,11 @@ pub(crate) mod tests {
         );
 
         let mut f_bootstrap: Box<dyn RafsIoRead> = f_bootstrap;
-        let mut sb = RafsSuper::new();
-        sb.load(&mut f_bootstrap).unwrap();
+        let mut super_block = RafsSuper::new();
+        super_block.load(&mut f_bootstrap).unwrap();
 
         for i in 1..15 {
-            let inode = sb.get_inode(i)?;
-            let desc = inode.alloc_bio_desc(0, 4, 0, &sb)?;
+            let inode = super_block.get_inode(i)?;
             println!("inode {:?} {} {}", inode.name(), inode.size(), inode.ino());
         }
 
