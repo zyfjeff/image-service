@@ -11,9 +11,10 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex, RwLock};
 
 use crate::fs::RafsBlk;
-use crate::layout::RafsDigest;
+use crate::layout::{RafsDigest, RafsSuperBlockInfo};
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::RafsCache;
+use crate::storage::device::RafsBuffer;
 
 #[derive(Clone)]
 enum CacheStatus {
@@ -67,6 +68,7 @@ pub struct BlobCache {
     cache: RwLock<HashMap<RafsDigest, Arc<Mutex<BlobCacheEntry>>>>,
     file_table: RwLock<HashMap<String, File>>,
     work_dir: String,
+    blksize: u32,
     pub backend: Box<dyn BlobBackend + Sync + Send>,
 }
 
@@ -122,20 +124,30 @@ impl BlobCache {
         Ok(buf)
     }
 
-    fn entry_read(&self, entry: &Arc<Mutex<BlobCacheEntry>>) -> io::Result<Vec<u8>> {
+    fn entry_read(&self, entry: &Arc<Mutex<BlobCacheEntry>>) -> io::Result<RafsBuffer> {
         let b_entry = {
             // need mutex lock protection
             let mut chunk_info = entry.lock().unwrap();
             if let CacheStatus::NotReady = chunk_info.status {
+                // check on local disk
+                if let Ok(buf) = chunk_info.read().map_or_else(
+                    |e| Err(e),
+                    |b| utils::decompress(b.as_slice(), self.blksize),
+                ) {
+                    if chunk_info.chunk_info.block_id == RafsDigest::from_buf(buf.as_slice()) {
+                        chunk_info.status = CacheStatus::Ready;
+                        return Ok(RafsBuffer::new_decompressed(buf));
+                    }
+                }
                 // do downloading
                 let buf = self.read_from_backend(&chunk_info.chunk_info)?;
                 chunk_info.write(buf.as_slice())?;
                 chunk_info.status = CacheStatus::Ready;
-                return Ok(buf);
+                return Ok(RafsBuffer::new_compressed(buf));
             }
             (*chunk_info).clone()
         };
-        b_entry.read()
+        Ok(RafsBuffer::new_compressed(b_entry.read()?))
     }
 }
 
@@ -143,6 +155,11 @@ impl RafsCache for BlobCache {
     /* whether has a block data */
     fn has(&self, blk: &RafsBlk) -> bool {
         self.cache.read().unwrap().contains_key(&blk.block_id)
+    }
+
+    fn init(&mut self, sb_info: &RafsSuperBlockInfo) -> io::Result<()> {
+        self.blksize = sb_info.s_block_size;
+        Ok(())
     }
 
     /* evict block data */
@@ -156,7 +173,7 @@ impl RafsCache for BlobCache {
         Err(Error::from_raw_os_error(libc::ENOSYS))
     }
 
-    fn read(&self, blk: &RafsBlk) -> io::Result<Vec<u8>> {
+    fn read(&self, blk: &RafsBlk) -> io::Result<RafsBuffer> {
         if let Some(entry) = self.get(blk).or_else(|| self.set(blk)) {
             return self.entry_read(&entry);
         }
@@ -195,6 +212,7 @@ pub fn new<S: std::hash::BuildHasher>(
         file_table: RwLock::new(HashMap::new()),
         work_dir: String::from(work_dir),
         backend,
+        blksize: (1024u32 * 1024u32),
     })
 }
 

@@ -11,6 +11,7 @@ use fuse_rs::transport::FileReadWriteVolatile;
 use vm_memory::VolatileSlice;
 
 use crate::fs::RafsBlk;
+use crate::layout::RafsSuperBlockInfo;
 use crate::storage::cache::RafsCache;
 use crate::storage::factory;
 
@@ -27,6 +28,10 @@ impl RafsDevice {
         RafsDevice {
             rw_layer: factory::new_rw_layer(&config).unwrap(),
         }
+    }
+
+    pub fn init(&mut self, sb_info: &RafsSuperBlockInfo) -> io::Result<()> {
+        self.rw_layer.init(sb_info)
     }
 
     pub fn close(&mut self) -> io::Result<()> {
@@ -54,6 +59,35 @@ impl RafsDevice {
             count += r.read_to(&mut f, bio.size, offset)?;
         }
         Ok(count)
+    }
+}
+
+pub struct RafsBuffer {
+    buf: Vec<u8>,
+    compressed: bool,
+}
+
+impl RafsBuffer {
+    pub fn new_compressed(buf: Vec<u8>) -> RafsBuffer {
+        RafsBuffer {
+            buf,
+            compressed: true,
+        }
+    }
+
+    pub fn new_decompressed(buf: Vec<u8>) -> RafsBuffer {
+        RafsBuffer {
+            buf,
+            compressed: false,
+        }
+    }
+
+    fn decompressed(self, f: &dyn Fn(&[u8]) -> io::Result<Vec<u8>>) -> io::Result<Vec<u8>> {
+        if self.compressed {
+            f(self.buf.as_slice())
+        } else {
+            Ok(self.buf)
+        }
     }
 }
 
@@ -92,12 +126,11 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
 
     fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
         if self.buf.is_empty() {
-            let rbuf = self.dev.rw_layer.read(&self.bio.blkinfo.clone())?;
-            if !self.dev.rw_layer.compressed() {
-                self.buf = rbuf; // move
-            } else {
-                self.buf = utils::decompress(&rbuf, self.bio.blksize)?;
-            }
+            self.buf = self
+                .dev
+                .rw_layer
+                .read(&self.bio.blkinfo.clone())?
+                .decompressed(&|b| utils::decompress(b, self.bio.blksize))?;
         }
 
         let count = cmp::min(

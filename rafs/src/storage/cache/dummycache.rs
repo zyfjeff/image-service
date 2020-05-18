@@ -3,8 +3,10 @@
 // found in the LICENSE file.
 
 use crate::fs::RafsBlk;
+use crate::layout::RafsSuperBlockInfo;
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::RafsCache;
+use crate::storage::device::RafsBuffer;
 use std::io::{Error, Result};
 
 pub struct DummyCache {
@@ -22,6 +24,10 @@ impl RafsCache for DummyCache {
         true
     }
 
+    fn init(&mut self, _sb_info: &RafsSuperBlockInfo) -> Result<()> {
+        Ok(())
+    }
+
     fn evict(&self, _blk: &RafsBlk) -> Result<()> {
         Ok(())
     }
@@ -30,7 +36,7 @@ impl RafsCache for DummyCache {
         Ok(())
     }
 
-    fn read(&self, blk: &RafsBlk) -> Result<Vec<u8>> {
+    fn read(&self, blk: &RafsBlk) -> Result<RafsBuffer> {
         let mut buf = Vec::new();
         let len = self
             .backend
@@ -38,7 +44,7 @@ impl RafsCache for DummyCache {
         if len != blk.compr_size {
             return Err(Error::from_raw_os_error(libc::EIO));
         }
-        Ok(buf)
+        Ok(RafsBuffer::new_compressed(buf))
     }
 
     fn write(&self, blk: &RafsBlk, buf: &[u8]) -> Result<usize> {

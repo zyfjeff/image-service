@@ -228,6 +228,16 @@ impl RafsSuper {
         Ok(())
     }
 
+    fn to_super_block_info(&self) -> RafsSuperBlockInfo {
+        RafsSuperBlockInfo {
+            s_magic: self.s_magic,
+            s_fs_version: self.s_version,
+            s_inode_size: self.s_inode_size,
+            s_block_size: self.s_block_size,
+            ..Default::default()
+        }
+    }
+
     fn hash_inode(&self, ino: RafsInode) -> Result<()> {
         let mut skip = false;
         if ino.is_hardlink() {
@@ -351,6 +361,7 @@ impl Rafs {
             self.sb.destroy()?;
             Err(e)
         })?;
+        self.device.init(&self.sb.to_super_block_info())?;
         self.initialized = true;
         info!("rafs imported");
         Ok(())
