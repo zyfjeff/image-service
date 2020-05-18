@@ -130,10 +130,10 @@ impl BlobCache {
             let mut chunk_info = entry.lock().unwrap();
             if let CacheStatus::NotReady = chunk_info.status {
                 // check on local disk
-                if let Ok(buf) = chunk_info.read().map_or_else(
-                    |e| Err(e),
-                    |b| utils::decompress(b.as_slice(), self.blksize),
-                ) {
+                if let Some(buf) = chunk_info
+                    .read()
+                    .map_or(None, |b| utils::decompress(b.as_slice(), self.blksize).ok())
+                {
                     if chunk_info.chunk_info.block_id == RafsDigest::from_buf(buf.as_slice()) {
                         chunk_info.status = CacheStatus::Ready;
                         return Ok(RafsBuffer::new_decompressed(buf));
