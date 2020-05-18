@@ -13,7 +13,7 @@ use std::os::linux::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use rafs::metadata::layout::*;
-use rafs::metadata::{RafsChunkInfo, RafsInode, RafsSuper};
+use rafs::metadata::{RafsChunkInfo, RafsInode, RafsSuper, RAFS_SHA256_LENGTH};
 use rafs::{RafsIoRead, RafsIoWrite};
 
 use crate::node::*;
@@ -446,31 +446,41 @@ impl Builder {
         Ok(())
     }
 
-    fn dump_blob_table_and_bootstrap(&mut self) -> Result<()> {
-        let mut blob_table = OndiskBlobTable::new(1);
-        blob_table.set(0, OndiskDigest::from_buf(self.blob_id.as_bytes()))?;
-        blob_table.store(&mut self.f_bootstrap)?;
+    fn dump(&mut self) -> Result<()> {
+        let inode_table_entries = self.additions.len() as u32;
+        let mut inode_table = OndiskInodeTable::new(inode_table_entries as usize);
+        let inode_table_size = inode_table.size();
+        let inode_table_offset = RAFS_SUPERBLOCK_SIZE as u64;
 
-        for node in &mut self.additions {
-            node.dump_bootstrap(&mut self.f_bootstrap, 0)?;
-        }
+        let blob_table_entries: usize = 1;
+        let blob_table = OndiskBlobTable::new(blob_table_entries);
+        let blob_table_size = blob_table.size();
+        let blob_table_offset = (RAFS_SUPERBLOCK_SIZE + inode_table_size) as u64;
 
-        Ok(())
-    }
+        let mut super_block = OndiskSuperBlock::new();
+        let inodes_count = self.inode_map.len() as u64;
+        super_block.set_inodes_count(inodes_count);
+        super_block.set_inode_table_offset(inode_table_offset);
+        super_block.set_inode_table_entries(inode_table_entries);
+        super_block.set_blob_table_offset(blob_table_offset);
+        super_block.set_blob_table_entries(blob_table_entries as u32);
 
-    fn dump_inode_table_and_blob(&mut self) -> Result<()> {
-        let mut inode_table = OndiskInodeTable::new(self.additions.len());
-        let mut inode_offset = RAFS_SUPERBLOCK_SIZE as u32;
-
+        let mut inode_offset = (RAFS_SUPERBLOCK_SIZE + inode_table_size + blob_table_size) as u32;
         for node in &mut self.additions {
             inode_table.set(node.inode.ino(), inode_offset)?;
             inode_offset += RAFS_INODE_INFO_SIZE as u32;
             node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
             inode_offset += (node.chunks.len() * RAFS_CHUNK_INFO_SIZE) as u32;
         }
+        let blob_id = OndiskDigest::from_raw(&mut self.blob_hash);
+        let mut blob_table = OndiskBlobTable::new(1);
+        blob_table.set(0, blob_id)?;
 
+        super_block.store(&mut self.f_bootstrap)?;
         inode_table.store(&mut self.f_bootstrap)?;
+        blob_table.store(&mut self.f_bootstrap)?;
 
+<<<<<<< HEAD
         Ok(())
     }
 
@@ -486,27 +496,18 @@ impl Builder {
         sb.set_inode_table_entries(inode_table_entries);
 
         sb.store(&mut self.f_bootstrap)?;
+=======
+        for node in &mut self.additions {
+            node.dump_bootstrap(&mut self.f_bootstrap, 0)?;
+        }
+>>>>>>> rafs v5: fix inode build
 
         Ok(())
     }
 
     pub fn build(&mut self) -> Result<String> {
-        let blob_hash = self.blob_hash.result_str();
-        if self.blob_id == "" {
-            self.blob_id = format!("sha256:{}", blob_hash);
-        }
-
         self.walk_source()?;
-
-        self.dump_superblock()?;
-        self.dump_inode_table_and_blob()?;
-
-        if self.f_parent_bootstrap.is_none() {
-            self.dump_blob_table_and_bootstrap()?;
-        } else {
-            self.fill_blob_id();
-            self.apply()?;
-        }
+        self.dump()?;
 
         Ok(self.blob_id.to_owned())
     }

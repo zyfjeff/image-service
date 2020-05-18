@@ -309,7 +309,7 @@ impl Node {
         inode_hash.result(&mut inode_hash_buf);
         inode_digest.data_mut().clone_from_slice(&inode_hash_buf);
 
-        trace!(
+        info!(
             "\tbuilding inode: name {}, ino {}, digest {}, parent {}, chunk_cnt {}",
             self.inode.name(),
             self.inode.ino(),

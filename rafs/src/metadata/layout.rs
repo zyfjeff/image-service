@@ -54,7 +54,7 @@ pub const RAFS_SUPER_VERSION_V5: u32 = 0x500;
 pub const RAFS_SUPER_MIN_VERSION: u32 = RAFS_SUPER_VERSION_V4;
 pub const RAFS_INODE_INFO_SIZE: usize = 512;
 pub const RAFS_INODE_INFO_RESERVED_SIZE: usize = RAFS_INODE_INFO_SIZE - 400;
-pub const RAFS_CHUNK_INFO_SIZE: usize = 128;
+pub const RAFS_CHUNK_INFO_SIZE: usize = 64;
 pub const RAFS_XATTR_ALIGNMENT: usize = 8;
 
 macro_rules! impl_metadata_converter {
@@ -151,10 +151,10 @@ pub struct OndiskSuperBlock {
     s_inodes_count: u64,
     /// V5: Offset of inode table
     s_inode_table_offset: u64,
-    /// V5: Size of inode table.
-    s_inode_table_entries: u32,
     /// V5: Offset of inode table
     s_blob_table_offset: u64,
+    /// V5: Size of inode table.
+    s_inode_table_entries: u32,
     /// V5: Size of inode table.
     s_blob_table_entries: u32,
     /// Unused area.
@@ -260,8 +260,9 @@ impl OndiskSuperBlock {
         r.read_exact(self.as_mut())
     }
 
-    pub fn store(&self, w: &mut RafsIoWriter) -> Result<()> {
-        w.write_all(self.as_ref())
+    pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
+        w.write_all(self.as_ref())?;
+        Ok(self.as_ref().len())
     }
 }
 
@@ -289,12 +290,16 @@ impl OndiskInodeTable {
         }
     }
 
-    pub fn set(&mut self, ino: Inode, inode_offset: u32) -> Result<()> {
-        let offset = (self.data.len() * std::mem::size_of::<u32>() + inode_offset as usize) >> 3;
+    pub fn size(&self) -> usize {
+        self.data.len() * std::mem::size_of::<u32>()
+    }
 
+    pub fn set(&mut self, ino: Inode, inode_offset: u32) -> Result<()> {
         if ino > self.data.len() as u64 {
             return Err(enoent());
         }
+
+        let offset = inode_offset >> 3;
         self.data[(ino - 1) as usize] = offset as u32;
 
         Ok(())
@@ -304,16 +309,19 @@ impl OndiskInodeTable {
         if ino > self.data.len() as u64 {
             return Err(enoent());
         }
+
         let offset = u32::from_le(self.data[(ino - 1) as usize]) as usize;
         if offset <= (RAFS_SUPERBLOCK_SIZE >> 3) || offset >= (1usize << 29) {
             return Err(enoent());
         }
+
         Ok((offset << 3) as u32)
     }
 
-    pub fn store(&self, w: &mut RafsIoWriter) -> Result<()> {
+    pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
         let (_, data, _) = unsafe { self.data.align_to::<u8>() };
-        w.write_all(data)
+        w.write_all(data)?;
+        Ok(data.len())
     }
 
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
@@ -336,6 +344,10 @@ impl OndiskBlobTable {
         }
     }
 
+    pub fn size(&self) -> usize {
+        self.data.len() * RAFS_SHA256_LENGTH
+    }
+
     pub fn set(&mut self, index: u32, digest: OndiskDigest) -> Result<()> {
         if index > (self.data.len() - 1) as u32 {
             return Err(enoent());
@@ -351,8 +363,16 @@ impl OndiskBlobTable {
         Ok(&self.data[index as usize])
     }
 
-    pub fn store(&self, w: &mut RafsIoWriter) -> Result<()> {
-        self.data.iter().map(|d| w.write_all(&d.data)).collect()
+    pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
+        let mut size = 0;
+        self.data
+            .iter()
+            .map(|d| {
+                size += d.data.len();
+                w.write_all(&d.data)
+            })
+            .collect::<Result<()>>()?;
+        Ok(size)
     }
 
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
@@ -615,12 +635,12 @@ pub struct OndiskChunkInfo {
     block_id: OndiskDigest,
     /// blob index (blob_digest = blob_mapping_table[blob_index])
     blob_index: u32,
+    /// compressed size
+    compress_size: u32,
     /// file position of block, with fixed block length
     file_offset: u64,
     /// blob offset
     blob_offset: u64,
-    /// compressed size
-    compress_size: u32,
     /// reserved
     reserved: u64,
 }
@@ -710,6 +730,14 @@ impl OndiskDigest {
         hash.result(&mut hash_buf);
         let mut digest = OndiskDigest::new();
         digest.data.clone_from_slice(&hash_buf);
+        digest
+    }
+
+    pub fn from_raw(sha: &mut Sha256) -> Self {
+        let mut hash = [0; RAFS_SHA256_LENGTH];
+        sha.result(&mut hash);
+        let mut digest = OndiskDigest::new();
+        digest.data.clone_from_slice(&hash);
         digest
     }
 }
