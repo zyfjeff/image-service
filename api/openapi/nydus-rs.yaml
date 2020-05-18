@@ -1,6 +1,7 @@
 openapi: 3.0.1
 info:
-  description: RESTful public-facing management API. The API is accessible through
+  description:
+    RESTful public-facing management API. The API is accessible through
     HTTP calls on specific URLs carrying JSON modeled data.
   license:
     name: Apache 2.0
@@ -8,7 +9,7 @@ info:
   title: Nydus-rs API
   version: 0.1.0
 servers:
-- url: http://localhost/api/v1
+  - url: http://localhost/api/v1
 paths:
   /daemon:
     get:
@@ -18,39 +19,39 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DaemonInfo'
+                $ref: "#/components/schemas/DaemonInfo"
           description: Daemon information
         default:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
           description: Internal Server Error
       summary: Returns general information about a nydus-rs daemon
     put:
-        operationId: configureDaemon
-        responses:
-          "204":
-            content:
-              content: {}
-            description: "Successfully configure the daemon!"
-          "403":
-            content:
-              application/json:
-                schema:
-                  $ref: '#/components/schemas/Error'
-            description: "Can't configure the daemon!"
-          default:
-            content:
-              application/json:
-                schema:
-                  $ref: '#/components/schemas/Error'
-            description: Internal Server Error
-        requestBody:
+      operationId: configureDaemon
+      responses:
+        "204":
+          content:
+            content: {}
+          description: "Successfully configure the daemon!"
+        "403":
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DaemonConf'
+                $ref: "#/components/schemas/Error"
+          description: "Can't configure the daemon!"
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DaemonConf"
   /mount:
     put:
       operationId: createMount
@@ -58,7 +59,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MountInfo'
+              $ref: "#/components/schemas/MountInfo"
         required: true
       responses:
         "204":
@@ -68,16 +69,50 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
           description: The mount action cannot be executed due to bad input
         default:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: "#/components/schemas/Error"
           description: Internal Server Error
       summary: Creates a mount.
       x-codegen-request-body-name: info
+  /metrics:
+    get:
+      operationId: exportRafsMetrics
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RafsMetrics"
+          description: Rafs metrics export
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      summary: Returns Rafs fop stats
+  /metrics/files:
+    get:
+      operationId: exportRafsFilesMetrics
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RafsFilesMetrics"
+          description: Rafs all opened files metrics export
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      summary: Returns Rafs files' fop stats
 components:
   schemas:
     DaemonInfo:
@@ -90,16 +125,16 @@ components:
           type: string
         state:
           enum:
-          - Starting
-          - Running
-          - Stopping
+            - Starting
+            - Running
+            - Stopping
           type: string
         version:
           type: string
       required:
-      - id
-      - state
-      - version
+        - id
+        - state
+        - version
       type: object
     DaemonConf:
       example:
@@ -109,11 +144,11 @@ components:
           type: string
         state:
           enum:
-          - trace
-          - debug
-          - info
-          - warn
-          - error
+            - trace
+            - debug
+            - info
+            - warn
+            - error
           type: string
       type: object
     MountInfo:
@@ -135,9 +170,9 @@ components:
           example: /foo/bar
           type: string
       required:
-      - fstype
-      - mountpoint
-      - source
+        - fstype
+        - mountpoint
+        - source
       type: object
     Error:
       properties:
@@ -146,3 +181,54 @@ components:
           readOnly: true
           type: string
       type: object
+    RafsMetrics:
+      example:
+        files_account_enabled: false
+        data_read: 1000
+        block_count_read: [0, 0, 0, 0, 0]
+        fop_hits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        fop_errors: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        nr_opens: 12
+        nr_max_opens: 100
+        last_fop_tp: 0
+      properties:
+        files_account_enabled:
+          type: boolean
+        data_read:
+          type: integer
+        block_count_read:
+          type: array
+        fop_hits:
+          type: array
+        fop_errors:
+          type: array
+        nr_opens:
+          type: integer
+        nr_max_opens:
+          type: integer
+        last_fop_tp:
+          type: integer
+    RafsFilesMetrics:
+      example:
+        nr_open: 0
+        nr_max_opens: 0
+        total_fops: 2
+        data_read: 4096
+        block_count_read: [0, 0, 0, 0, 0]
+        fop_hits: [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        fop_errors: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+      properties:
+        nr_open:
+          type: integer
+        nr_max_opens:
+          type: integer
+        total_fops:
+          type: integer
+        data_read:
+          type: integer
+        block_count_read:
+          type: array
+        fop_hits:
+          type: array
+        fop_errors:
+          type: array
