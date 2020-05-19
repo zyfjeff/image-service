@@ -66,7 +66,7 @@ struct RafsInode {
 
 impl RafsInode {
     fn stats_update<T>(&self, fop: StatsFop, bsize: usize, r: &Result<T>) {
-        io_stats::ios_global_update(io_stats::StatsFop::Read, bsize, &r);
+        io_stats::ios_global_update(fop, bsize, &r);
         if let Some(c) = self.counter.as_ref() {
             match r {
                 Ok(v) => {

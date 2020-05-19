@@ -35,6 +35,9 @@ impl Clone for StatsFop {
 /// 1K; 4K; 16K; 64K, 128K.
 const BLOCK_READ_COUNT_MAX: usize = 5;
 
+/// <=200us, <=500us, <=1ms, <=20ms, <=50ms, <=100ms, <=500ms, >500ms
+const READ_LATENCY_RANGE_MAX: usize = 8;
+
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct GlobalIOStats {
     // Whether to enable each file accounting switch.
@@ -53,8 +56,11 @@ pub struct GlobalIOStats {
     // Counters for failed file operations.
     fop_errors: [AtomicUsize; StatsFop::Max as usize],
     // Cumulative latency's life cycle is equivalent to Rafs, unlike incremental
-    // latency which will be cleared each time dumped.
+    // latency which will be cleared each time dumped. Unit as micro-seconds.
     fop_cumulative_latency: [AtomicIsize; StatsFop::Max as usize],
+    // Record how many times read latency drops to the ranges.
+    // This helps us to understand the io service time stability.
+    read_latency_dist: [AtomicIsize; READ_LATENCY_RANGE_MAX],
     // Total number of files that are currently open.
     nr_opens: AtomicUsize,
     nr_max_opens: AtomicUsize,
@@ -151,6 +157,20 @@ pub fn ios_latency_start() -> Option<SystemTime> {
     Some(SystemTime::now())
 }
 
+/// <=200us, <=500us, <=1ms, <=20ms, <=50ms, <=100ms, <=500ms, >500ms
+fn latency_range_index(elapsed: isize) -> usize {
+    match elapsed {
+        _ if elapsed <= 200 => 0,
+        _ if elapsed <= 500 => 1,
+        _ if elapsed <= 1000 => 2,
+        _ if elapsed <= 20_000 => 3,
+        _ if elapsed <= 50_000 => 4,
+        _ if elapsed <= 100_000 => 5,
+        _ if elapsed <= 500_000 => 6,
+        _ => 7,
+    }
+}
+
 pub fn ios_latency_end(start: &Option<SystemTime>, fop: StatsFop) {
     if IOS.measure_latency.load(Ordering::Relaxed) {
         if let Some(start) = start {
@@ -158,9 +178,16 @@ pub fn ios_latency_end(start: &Option<SystemTime>, fop: StatsFop) {
                 let elapsed = d.as_micros() as isize;
                 let avg = IOS.fop_cumulative_latency[fop as usize].load(Ordering::Relaxed);
                 let fop_cnt = IOS.fop_hits[fop as usize].load(Ordering::Relaxed) as isize;
-                let new_avg = || avg + (elapsed - avg) / fop_cnt;
 
+                // Zero fop count is hardly to meet, but still check here in
+                // case callers misuses ios-latency
+                if fop_cnt == 0 {
+                    return;
+                }
+                let new_avg = || avg + (elapsed - avg) / fop_cnt;
                 IOS.fop_cumulative_latency[fop as usize].store(new_avg(), Ordering::Relaxed);
+
+                IOS.read_latency_dist[latency_range_index(elapsed)].fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -222,7 +249,7 @@ pub fn ios_global_update<T>(fop: StatsFop, value: usize, r: &Result<T, Error>) {
                 StatsFop::Read => IOS.data_read.fetch_add(value, Ordering::Relaxed),
                 StatsFop::Open => IOS.nr_opens.fetch_add(1, Ordering::Relaxed),
                 StatsFop::Release => IOS.nr_opens.fetch_sub(1, Ordering::Relaxed),
-                _ => panic!("Unknown fop"),
+                _ => 0,
             }
         }
         Err(_) => IOS.fop_errors[fop as usize].fetch_add(1, Ordering::Relaxed),
@@ -232,6 +259,9 @@ pub fn ios_global_update<T>(fop: StatsFop, value: usize, r: &Result<T, Error>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread::sleep;
+    use std::time::Duration;
+
     #[test]
     fn test_block_read_count() {
         let inode_stats = InodeIOStats::default();
@@ -252,5 +282,36 @@ mod tests {
 
         inode_stats.stats_cumulative(StatsFop::Read, 2015520);
         assert_eq!(IOS.block_count_read[3].load(Ordering::Relaxed), 2);
+    }
+    #[test]
+    fn test_latency_record() {
+        ios_init();
+        let start = ios_latency_start();
+        sleep(Duration::from_micros(800));
+        ios_global_update(StatsFop::Read, 100, &Ok(()));
+        ios_latency_end(&start, StatsFop::Read);
+
+        assert_eq!(IOS.read_latency_dist[2].load(Ordering::Relaxed), 1);
+
+        let start = ios_latency_start();
+        sleep(Duration::from_micros(2000));
+        ios_global_update(StatsFop::Read, 100, &Ok(()));
+        ios_latency_end(&start, StatsFop::Read);
+
+        assert_eq!(IOS.read_latency_dist[3].load(Ordering::Relaxed), 1);
+
+        let start = ios_latency_start();
+        sleep(Duration::from_micros(10));
+        ios_global_update(StatsFop::Read, 100, &Ok(()));
+        ios_latency_end(&start, StatsFop::Read);
+
+        assert_eq!(IOS.read_latency_dist[0].load(Ordering::Relaxed), 1);
+
+        let start = ios_latency_start();
+        sleep(Duration::from_micros(1600));
+        ios_global_update(StatsFop::Read, 100, &Ok(()));
+        ios_latency_end(&start, StatsFop::Read);
+
+        assert_eq!(IOS.read_latency_dist[3].load(Ordering::Relaxed), 2);
     }
 }
