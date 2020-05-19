@@ -4,10 +4,11 @@
 
 use nix::sys::uio;
 use std::collections::HashMap;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{self, Error, Result};
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
+use std::sync::RwLock;
 
 use crate::storage::backend::request::ReqErr;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
@@ -16,6 +17,8 @@ use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 pub struct LocalFs {
     // directory to blob files
     dir: String,
+    // blobid-File map
+    file_table: RwLock<HashMap<String, File>>,
 }
 
 pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Result<LocalFs> {
@@ -27,17 +30,28 @@ pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Re
 
     Ok(LocalFs {
         dir: (*dir).to_owned(),
+        file_table: RwLock::new(HashMap::new()),
     })
+}
+
+impl LocalFs {
+    fn get_blob_fd(&self, blob_id: &str) -> Result<RawFd> {
+        if let Some(file) = self.file_table.read().unwrap().get(blob_id) {
+            return Ok(file.as_raw_fd());
+        }
+
+        let mut file_table = self.file_table.write().unwrap();
+        let blob_file_path = Path::new(&self.dir).join(blob_id);
+        let file = OpenOptions::new().read(true).open(&blob_file_path)?;
+        let fd = file.as_raw_fd();
+        file_table.insert(blob_id.to_string(), file);
+        Ok(fd)
+    }
 }
 
 impl BlobBackend for LocalFs {
     fn read(&self, blobid: &str, buf: &mut Vec<u8>, offset: u64, count: usize) -> Result<usize> {
-        let blob = Path::new(&self.dir).join(blobid);
-        let file = OpenOptions::new()
-            .read(true)
-            .open(&blob)
-            .expect("open local blob file failed");
-        let fd = file.as_raw_fd();
+        let fd = self.get_blob_fd(blobid)?;
 
         debug!("local blob file reading: offset={}, size={}", offset, count);
         buf.resize(count, 0u8);
