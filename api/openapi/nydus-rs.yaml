@@ -184,15 +184,20 @@ components:
     RafsMetrics:
       example:
         files_account_enabled: false
+        measure_latency: false
         data_read: 1000
         block_count_read: [0, 0, 0, 0, 0]
         fop_hits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         fop_errors: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        fop_cumulative_latency: [0, 0, 0, 0, 2831, 0, 0, 0, 0, 0, 0]
+        read_latency_dist: [0, 0, 0, 1, 0, 0, 0, 0]
         nr_opens: 12
         nr_max_opens: 100
         last_fop_tp: 0
       properties:
         files_account_enabled:
+          type: boolean
+        measure_latency:
           type: boolean
         data_read:
           type: integer
@@ -201,6 +206,10 @@ components:
         fop_hits:
           type: array
         fop_errors:
+          type: array
+        fop_cumulative_latency:
+          type: array
+        read_latency_dist:
           type: array
         nr_opens:
           type: integer
