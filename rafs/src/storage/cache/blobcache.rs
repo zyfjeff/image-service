@@ -279,9 +279,18 @@ mod blob_cache_tests {
         chunk.blob_offset = 0;
         chunk.compr_size = 100;
 
-        let r1 = blob_cache.read(&chunk).unwrap();
+        let r1 = blob_cache
+            .read(&chunk)
+            .expect("read err")
+            .decompressed(&|b| Ok(b.to_vec()))
+            .unwrap();
         assert_eq!(expect, r1);
-        let r2 = blob_cache.read(&chunk).unwrap();
+        let r2 = blob_cache
+            .read(&chunk)
+            .expect("read err")
+            .decompressed(&|b| Ok(b.to_vec()))
+            .unwrap();
         assert_eq!(expect, r2);
+        std::fs::remove_file("/tmp/blobcache").expect("remove test file err!");
     }
 }

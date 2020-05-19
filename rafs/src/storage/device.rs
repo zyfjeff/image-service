@@ -82,7 +82,7 @@ impl RafsBuffer {
         }
     }
 
-    fn decompressed(self, f: &dyn Fn(&[u8]) -> io::Result<Vec<u8>>) -> io::Result<Vec<u8>> {
+    pub fn decompressed(self, f: &dyn Fn(&[u8]) -> io::Result<Vec<u8>>) -> io::Result<Vec<u8>> {
         if self.compressed {
             f(self.buf.as_slice())
         } else {
