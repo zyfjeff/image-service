@@ -61,7 +61,7 @@ Then use curl to call the mount api:
 curl --unix-socket api.sock \
      -X PUT "http://localhost/api/v1/mount" -H "accept: */*" \
      -H "Content-Type: application/json" \
-     -d "{\"source\":\"<path-to-bootstrap>`\",\"fstype\":\"rafs\",\"mountpoint\":\"/foo/bar\"}"
+     -d "{\"source\":\"<path-to-bootstrap>\",\"fstype\":\"rafs\",\"mountpoint\":\"/foo/bar\"}"
 ```
 
 
