@@ -505,12 +505,14 @@ fn main() -> Result<()> {
 
     let vfs = Vfs::new(VfsOptions::default());
     if !shared_dir.is_empty() {
-        let mut vfs_opts = VfsOptions::default();
-        vfs_opts.no_open = false;
-        vfs_opts.no_writeback = true;
+        // Vfs by default enables no_open and writeback, passthroughfs
+        // needs to specify them explicitly.
+        // TODO(liubo): enable no_open_dir.
         let fs_cfg = Config {
             root_dir: shared_dir.to_string(),
             do_import: false,
+            writeback: true,
+            no_open: true,
             ..Default::default()
         };
         let passthrough_fs = PassthroughFs::new(fs_cfg).map_err(Error::FsInitFailure)?;
