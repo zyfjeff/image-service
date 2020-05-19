@@ -1759,8 +1759,11 @@ dependencies = [
 name = "utils"
 version = "0.1.0"
 dependencies = [
+ "fuse-rs",
+ "libc",
  "log 0.4.8",
  "lz4",
+ "nix",
 ]
 
 [[package]]

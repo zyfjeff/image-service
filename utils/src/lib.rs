@@ -2,6 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#[cfg(feature = "fusedev")]
+#[macro_use]
+extern crate log;
+#[cfg(feature = "fusedev")]
+pub mod fuse;
+#[cfg(feature = "fusedev")]
+pub use self::fuse::{FuseChannel, FuseSession};
+
 use lz4 as liblz4;
 use std::io::Result;
 

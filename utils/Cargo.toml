@@ -9,3 +9,9 @@ edition = "2018"
 [dependencies]
 lz4 = "1.23.1"
 log = "0.4"
+libc = "0.2"
+nix = "0.17"
+fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git", features = ["fusedev"], optional = true }
+
+[features]
+fusedev = ["fuse-rs"]
