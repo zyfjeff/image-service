@@ -489,9 +489,9 @@ fn main() -> Result<()> {
     let apisock = cmd_arguments.value_of("apisock").unwrap_or_default();
 
     // Some basic validation
-    if !sock.is_empty() && !metadata.is_empty() {
+    if !shared_dir.is_empty() && !metadata.is_empty() {
         return Err(io::Error::from(Error::InvalidArguments(
-            "sock and metadata cannot be set at the same time".to_string(),
+            "shared-dir and metadata cannot be set at the same time".to_string(),
         )));
     }
 
