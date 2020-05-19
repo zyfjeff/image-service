@@ -235,6 +235,7 @@ struct RafsSuper {
 
 impl RafsSuper {
     fn new() -> Self {
+        io_stats::ios_init();
         RafsSuper {
             s_magic: 0,
             s_version: 0,
@@ -635,9 +636,10 @@ impl FileSystem for Rafs {
             return Ok(0);
         }
         let desc = rafs_inode.alloc_bio_desc(self.sb.s_block_size, size as usize, offset)?;
-
+        let start = io_stats::ios_latency_start();
         let r = self.device.read_to(w, desc);
         rafs_inode.stats_update(io_stats::StatsFop::Read, size as usize, &r);
+        io_stats::ios_latency_end(&start, io_stats::StatsFop::Read);
         r
     }
 

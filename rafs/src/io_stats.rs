@@ -5,11 +5,11 @@
 // Rafs fop stats accounting and exporting.
 
 use std::io::Error;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Copy)]
 pub enum StatsFop {
     Stat,
     Readlink,
@@ -25,6 +25,12 @@ pub enum StatsFop {
     Max,
 }
 
+impl Clone for StatsFop {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
 /// Block size separated counters.
 /// 1K; 4K; 16K; 64K, 128K.
 const BLOCK_READ_COUNT_MAX: usize = 5;
@@ -35,6 +41,9 @@ pub struct GlobalIOStats {
     // As fop accounting might consume much memory space, it is disabled by default.
     // But global fop accounting is always working within each Rafs.
     files_account_enabled: AtomicBool,
+    // Given the fact that we don't have to measure latency all the time,
+    // use this to turn it off.
+    measure_latency: AtomicBool,
     // Total bytes read against the filesystem.
     data_read: AtomicUsize,
     // Cumulative bytes for different block size.
@@ -43,6 +52,9 @@ pub struct GlobalIOStats {
     fop_hits: [AtomicUsize; StatsFop::Max as usize],
     // Counters for failed file operations.
     fop_errors: [AtomicUsize; StatsFop::Max as usize],
+    // Cumulative latency's life cycle is equivalent to Rafs, unlike incremental
+    // latency which will be cleared each time dumped.
+    fop_cumulative_latency: [AtomicIsize; StatsFop::Max as usize],
     // Total number of files that are currently open.
     nr_opens: AtomicUsize,
     nr_max_opens: AtomicUsize,
@@ -73,7 +85,7 @@ pub trait InodeStatsCounter {
 
 impl InodeStatsCounter for InodeIOStats {
     fn stats_fop_inc(&self, fop: StatsFop) {
-        self.fop_hits[fop.clone() as usize].fetch_add(1, Ordering::Relaxed);
+        self.fop_hits[fop as usize].fetch_add(1, Ordering::Relaxed);
         self.total_fops.fetch_add(1, Ordering::Relaxed);
         // TODO: It seems no Open fop arrives before any read.
         if fop == StatsFop::Open {
@@ -127,6 +139,31 @@ pub fn ios() -> &'static GlobalIOStats {
 
 pub fn ios_init() {
     IOS.files_account_enabled.store(false, Ordering::Relaxed);
+    IOS.measure_latency.store(true, Ordering::Relaxed);
+}
+
+/// Paired with `ios_latency_end` to record elapsed time for a certain type of fop.
+pub fn ios_latency_start() -> Option<SystemTime> {
+    if !IOS.measure_latency.load(Ordering::Relaxed) {
+        return None;
+    }
+
+    Some(SystemTime::now())
+}
+
+pub fn ios_latency_end(start: &Option<SystemTime>, fop: StatsFop) {
+    if IOS.measure_latency.load(Ordering::Relaxed) {
+        if let Some(start) = start {
+            if let Ok(d) = SystemTime::elapsed(start) {
+                let elapsed = d.as_micros() as isize;
+                let avg = IOS.fop_cumulative_latency[fop as usize].load(Ordering::Relaxed);
+                let fop_cnt = IOS.fop_hits[fop as usize].load(Ordering::Relaxed) as isize;
+                let new_avg = || avg + (elapsed - avg) / fop_cnt;
+
+                IOS.fop_cumulative_latency[fop as usize].store(new_avg(), Ordering::Relaxed);
+            }
+        }
+    }
 }
 
 pub fn export_files_stats() -> String {
@@ -180,7 +217,7 @@ pub fn ios_global_update<T>(fop: StatsFop, value: usize, r: &Result<T, Error>) {
 
     match r {
         Ok(_) => {
-            IOS.fop_hits[fop.clone() as usize].fetch_add(1, Ordering::Relaxed);
+            IOS.fop_hits[fop as usize].fetch_add(1, Ordering::Relaxed);
             match fop {
                 StatsFop::Read => IOS.data_read.fetch_add(value, Ordering::Relaxed),
                 StatsFop::Open => IOS.nr_opens.fetch_add(1, Ordering::Relaxed),
