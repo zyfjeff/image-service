@@ -19,7 +19,9 @@ use std::io::Result;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
 use std::sync::mpsc::{channel, Receiver};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+#[cfg(feature = "virtiofsd")]
+use std::sync::RwLock;
 use std::thread;
 use std::{convert, error, fmt, io, process};
 
@@ -28,11 +30,16 @@ use libc::EFD_NONBLOCK;
 use clap::{App, Arg};
 use fuse_rs::api::server::Server;
 use fuse_rs::passthrough::{Config, PassthroughFs};
+#[cfg(feature = "virtiofsd")]
 use fuse_rs::transport::{Error as FuseTransportError, FsCacheReqHandler, Reader, Writer};
 use fuse_rs::Error as VhostUserFsError;
+#[cfg(feature = "virtiofsd")]
 use vhost_rs::vhost_user::message::*;
+#[cfg(feature = "virtiofsd")]
 use vhost_rs::vhost_user::SlaveFsCacheReq;
+#[cfg(feature = "virtiofsd")]
 use vhost_user_backend::{VhostUserBackend, VhostUserDaemon, Vring};
+#[cfg(feature = "virtiofsd")]
 use vm_memory::GuestMemoryMmap;
 use vmm_sys_util::eventfd::EventFd;
 
@@ -40,22 +47,32 @@ use nydus_api::http::start_http_thread;
 use nydus_api::http_endpoint::{ApiError, ApiRequest, ApiResponsePayload, DaemonInfo, MountInfo};
 use rafs::fs::{Rafs, RafsConfig};
 use rafs::io_stats;
+#[cfg(feature = "fusedev")]
+use utils::*;
 use vfs::vfs::{Vfs, VfsOptions};
 
+#[cfg(feature = "virtiofsd")]
 const VIRTIO_F_VERSION_1: u32 = 32;
-
+#[cfg(feature = "virtiofsd")]
 const QUEUE_SIZE: usize = 1024;
+#[cfg(feature = "virtiofsd")]
 const NUM_QUEUES: usize = 2;
 
 // The guest queued an available buffer for the high priority queue.
+#[cfg(feature = "virtiofsd")]
 const HIPRIO_QUEUE_EVENT: u16 = 0;
 // The guest queued an available buffer for the request queue.
+#[cfg(feature = "virtiofsd")]
 const REQ_QUEUE_EVENT: u16 = 1;
 // The device has been dropped.
+#[cfg(feature = "virtiofsd")]
 const KILL_EVENT: u16 = 2;
 
+/// TODO: group virtiofsd code into a different file
+#[cfg(feature = "virtiofsd")]
 type VhostUserBackendResult<T> = std::result::Result<T, std::io::Error>;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 enum Error {
     /// Invalid arguments provided.
@@ -69,6 +86,7 @@ enum Error {
     /// No memory configured.
     NoMemoryConfigured,
     /// Invalid Virtio descriptor chain.
+    #[cfg(feature = "virtiofsd")]
     InvalidDescriptorChain(FuseTransportError),
     /// Processing queue failed.
     ProcessQueue(VhostUserFsError),
@@ -82,6 +100,8 @@ enum Error {
     FsInitFailure(io::Error),
     /// Daemon related error
     DaemonFailure(String),
+    /// Wait daemon failure
+    WaitDaemon,
 }
 
 impl fmt::Display for Error {
@@ -320,7 +340,14 @@ where
     Ok(thread)
 }
 
+trait NydusDaemon {
+    fn start(&mut self) -> Result<()>;
+    fn wait(&mut self) -> Result<()>;
+    fn stop(&mut self) -> Result<()>;
+}
+
 #[allow(dead_code)]
+#[cfg(feature = "virtiofsd")]
 struct VhostUserFsBackend {
     mem: Option<GuestMemoryMmap>,
     kill_evt: EventFd,
@@ -330,6 +357,7 @@ struct VhostUserFsBackend {
     used_descs: Vec<(u16, u32)>,
 }
 
+#[cfg(feature = "virtiofsd")]
 impl VhostUserFsBackend {
     fn new(vfs: Arc<Vfs>) -> Result<Self> {
         Ok(VhostUserFsBackend {
@@ -384,6 +412,7 @@ impl VhostUserFsBackend {
     }
 }
 
+#[cfg(feature = "virtiofsd")]
 impl VhostUserBackend for VhostUserFsBackend {
     fn num_queues(&self) -> usize {
         NUM_QUEUES
@@ -444,6 +473,121 @@ impl VhostUserBackend for VhostUserFsBackend {
     }
 }
 
+#[cfg(feature = "virtiofsd")]
+impl<S: VhostUserBackend> NydusDaemon for VhostUserDaemon<S> {
+    fn start(&mut self) -> Result<()> {
+        self.start()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))
+    }
+
+    fn wait(&mut self) -> Result<()> {
+        self.wait()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))
+    }
+
+    fn stop(&mut self) -> Result<()> {
+        /* TODO: find a way to kill backend
+        let kill_evt = &backend.read().unwrap().kill_evt;
+        if let Err(e) = kill_evt.write(1) {}
+        */
+        Ok(())
+    }
+}
+
+#[cfg(feature = "virtiofsd")]
+fn create_nydus_daemon(sock: &str, fs: Arc<Vfs>) -> Result<Box<dyn NydusDaemon>> {
+    let daemon = VhostUserDaemon::new(
+        String::from("vhost-user-fs-backend"),
+        String::from(sock),
+        Arc::new(RwLock::new(VhostUserFsBackend::new(fs)?)),
+    )
+    .map_err(|e| Error::DaemonFailure(format!("{:?}", e)))?;
+    Ok(Box::new(daemon))
+}
+
+#[cfg(feature = "fusedev")]
+struct FuseServer {
+    server: Arc<Server<Arc<Vfs>>>,
+    ch: FuseChannel,
+    // read buffer for fuse requests
+    buf: Vec<u8>,
+}
+
+#[cfg(feature = "fusedev")]
+impl FuseServer {
+    fn new(server: Arc<Server<Arc<Vfs>>>, se: &FuseSession) -> Result<FuseServer> {
+        Ok(FuseServer {
+            server,
+            ch: se.new_channel(),
+            buf: Vec::with_capacity(se.bufsize()),
+        })
+    }
+
+    fn svc_loop(&mut self) -> Result<()> {
+        // Safe because we have already reserved the capacity
+        unsafe {
+            self.buf.set_len(self.buf.capacity());
+        }
+        loop {
+            if let Some(reader) = self.ch.get_reader(&mut self.buf)? {
+                let writer = self.ch.get_writer()?;
+                self.server
+                    .handle_message(reader, writer, None)
+                    .map_err(|e| {
+                        error! {"handle message failed: {}", e};
+                        Error::ProcessQueue(e)
+                    })?;
+            } else {
+                info!("fuse server exits");
+                break;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "fusedev")]
+struct FusedevDaemon {
+    server: Arc<Server<Arc<Vfs>>>,
+    session: FuseSession,
+    main_thread: Option<thread::JoinHandle<Result<()>>>,
+}
+
+#[cfg(feature = "fusedev")]
+impl NydusDaemon for FusedevDaemon {
+    // TODO: multi-threading support
+    fn start(&mut self) -> Result<()> {
+        let mut s = FuseServer::new(self.server.clone(), &self.session)?;
+
+        let thread = thread::Builder::new()
+            .name("fuse_server".to_string())
+            .spawn(move || s.svc_loop())
+            .map_err(Error::ThreadSpawn)?;
+        self.main_thread = Some(thread);
+        Ok(())
+    }
+
+    fn wait(&mut self) -> Result<()> {
+        if let Some(handle) = self.main_thread.take() {
+            return handle.join().map_err(|_| Error::WaitDaemon)?;
+        }
+        Ok(())
+    }
+
+    fn stop(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(feature = "fusedev")]
+fn create_nydus_daemon(mountpoint: &str, fs: Arc<Vfs>) -> Result<Box<dyn NydusDaemon>> {
+    Ok(Box::new(FusedevDaemon {
+        session: FuseSession::new(Path::new(mountpoint), "nydusfs", "")?,
+        server: Arc::new(Server::new(fs)),
+        main_thread: None,
+    }))
+}
+
 fn main() -> Result<()> {
     let cmd_arguments = App::new("vhost-user-fs backend")
         .version(crate_version!())
@@ -460,7 +604,13 @@ fn main() -> Result<()> {
             Arg::with_name("sock")
                 .long("sock")
                 .help("vhost-user socket path")
-                .required(true)
+                .takes_value(true)
+                .min_values(1),
+        )
+        .arg(
+            Arg::with_name("mountpoint")
+                .long("mountpoint")
+                .help("fuse mount point")
                 .takes_value(true)
                 .min_values(1),
         )
@@ -512,7 +662,9 @@ fn main() -> Result<()> {
 
     // Retrieve arguments
     // sock means vhost-user-backend only
-    let sock = cmd_arguments.value_of("sock").unwrap_or_default();
+    let vu_sock = cmd_arguments.value_of("sock").unwrap_or_default();
+    // mountpoint means fuse device only
+    let mountpoint = cmd_arguments.value_of("mountpoint").unwrap_or_default();
     // shared-dir means fs passthrough
     let shared_dir = cmd_arguments.value_of("shared-dir").unwrap_or_default();
     let config = cmd_arguments
@@ -527,6 +679,16 @@ fn main() -> Result<()> {
     if !shared_dir.is_empty() && !metadata.is_empty() {
         return Err(io::Error::from(Error::InvalidArguments(
             "shared-dir and metadata cannot be set at the same time".to_string(),
+        )));
+    }
+    if vu_sock.is_empty() && mountpoint.is_empty() {
+        return Err(io::Error::from(Error::InvalidArguments(
+            "either sock or mountpoint must be set".to_string(),
+        )));
+    }
+    if !vu_sock.is_empty() && !mountpoint.is_empty() {
+        return Err(io::Error::from(Error::InvalidArguments(
+            "sock and mountpoint must not be set at the same time".to_string(),
         )));
     }
 
@@ -589,14 +751,13 @@ fn main() -> Result<()> {
         info!("api server running at {}", apisock);
     }
 
-    let backend = Arc::new(RwLock::new(VhostUserFsBackend::new(vfs)?));
-    let mut daemon = VhostUserDaemon::new(
-        String::from("vhost-user-fs-backend"),
-        String::from(sock),
-        backend.clone(),
-    )
-    .map_err(|e| Error::DaemonFailure(format!("{:?}", e)))?;
-
+    let mut daemon = {
+        if !vu_sock.is_empty() {
+            create_nydus_daemon(vu_sock, vfs)
+        } else {
+            create_nydus_daemon(mountpoint, vfs)
+        }
+    }?;
     info!("starting fuse daemon");
     if let Err(e) = daemon.start() {
         error!("Failed to start daemon: {:?}", e);
@@ -607,8 +768,7 @@ fn main() -> Result<()> {
         error!("Waiting for daemon failed: {:?}", e);
     }
 
-    let kill_evt = &backend.read().unwrap().kill_evt;
-    if let Err(e) = kill_evt.write(1) {
+    if let Err(e) = daemon.stop() {
         error!("Error shutting down worker thread: {:?}", e)
     }
 

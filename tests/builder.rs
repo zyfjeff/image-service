@@ -7,7 +7,7 @@ use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const NYDUS_IMAGE: &str = "./target/debug/nydus-image";
+const NYDUS_IMAGE: &str = "./target-fusedev/debug/nydus-image";
 
 pub fn exec(cmd: &str) -> Result<()> {
     let mut child = Command::new("sh")

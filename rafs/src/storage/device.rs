@@ -188,10 +188,14 @@ impl RafsBioDevice<'_> {
         let mut count: usize = 0;
         let mut remain: usize = self.bio.size;
         for &buf in bufs.iter() {
-            let cnt = cmp::min(remain, buf.len());
-            buf.copy_from(&ZEROS[ZEROS.len() - cnt..]);
-            count += cnt;
-            remain -= cnt;
+            let mut total = cmp::min(remain, buf.len());
+            while total > 0 {
+                let cnt = cmp::min(total, ZEROS.len());
+                buf.copy_from(&ZEROS[ZEROS.len() - cnt..]);
+                count += cnt;
+                remain -= cnt;
+                total -= cnt;
+            }
         }
         Ok(count)
     }
