@@ -45,3 +45,16 @@ For `localfs` backend, it's much simpler as below:
             --backend_config "{\"dir\":\"/path/to/blobs/\"}" \
             $SOURCE
 ```
+
+An example of JSON string of $BACKEND_CONFIG,
+
+oss backend,
+```shell
+--backend_config '{"endpoint":"region.aliyuncs.com","access_key_id":"","access_key_secret":"","bucket_name":""}'
+```
+
+registry backend,
+
+```shell
+--backend_config '{"host":"user:pass@registry:5000","repo":""}'
+```
