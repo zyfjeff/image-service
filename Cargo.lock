@@ -314,11 +314,12 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 [[package]]
 name = "fuse-rs"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git#6a9edb1747a57f846df674c56c2a509ab8d7126f"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git#877b063cad7f48a909ecc57de73f685eb4ca60dd"
 dependencies = [
  "bitflags",
  "libc",
  "log 0.4.8",
+ "vhost",
  "vm-memory",
  "vm-virtio",
 ]

@@ -13,7 +13,9 @@ use std::time::Duration;
 
 use bimap::hash::BiHashMap;
 use fuse_rs::abi::linux_abi::*;
+use fuse_rs::abi::virtio_fs;
 use fuse_rs::api::filesystem::*;
+use fuse_rs::transport::FsCacheReqHandler;
 
 use crate::pseudo_fs::PseudoFs;
 
@@ -771,6 +773,40 @@ impl FileSystem for Vfs {
         match self.get_real_rootfs(inode)? {
             (Left(fs), idata) => fs.access(ctx, idata.ino, mask),
             (Right(fs), idata) => fs.access(ctx, idata.ino, mask),
+        }
+    }
+
+    fn setupmapping(
+        &self,
+        ctx: Context,
+        inode: Inode,
+        handle: Handle,
+        foffset: u64,
+        len: u64,
+        flags: u64,
+        moffset: u64,
+        vu_req: &mut dyn FsCacheReqHandler,
+    ) -> Result<()> {
+        match self.get_real_rootfs(inode)? {
+            (Left(fs), idata) => {
+                fs.setupmapping(ctx, idata.ino, handle, foffset, len, flags, moffset, vu_req)
+            }
+            (Right(fs), idata) => {
+                fs.setupmapping(ctx, idata.ino, handle, foffset, len, flags, moffset, vu_req)
+            }
+        }
+    }
+
+    fn removemapping(
+        &self,
+        ctx: Context,
+        inode: Inode,
+        requests: Vec<virtio_fs::RemovemappingOne>,
+        vu_req: &mut dyn FsCacheReqHandler,
+    ) -> Result<()> {
+        match self.get_real_rootfs(inode)? {
+            (Left(fs), idata) => fs.removemapping(ctx, idata.ino, requests, vu_req),
+            (Right(fs), idata) => fs.removemapping(ctx, idata.ino, requests, vu_req),
         }
     }
 }
