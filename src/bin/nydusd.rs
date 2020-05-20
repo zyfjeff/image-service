@@ -28,7 +28,7 @@ use libc::EFD_NONBLOCK;
 use clap::{App, Arg};
 use fuse_rs::api::server::Server;
 use fuse_rs::passthrough::{Config, PassthroughFs};
-use fuse_rs::transport::{Error as FuseTransportError, Reader, Writer};
+use fuse_rs::transport::{Error as FuseTransportError, FsCacheReqHandler, Reader, Writer};
 use fuse_rs::Error as VhostUserFsError;
 use vhost_rs::vhost_user::message::*;
 use vhost_rs::vhost_user::SlaveFsCacheReq;
@@ -354,7 +354,13 @@ impl VhostUserFsBackend {
 
             let total = self
                 .server
-                .handle_message(reader, writer, None)
+                .handle_message(
+                    reader,
+                    writer,
+                    self.vu_req
+                        .as_mut()
+                        .map(|x| x as &mut dyn FsCacheReqHandler),
+                )
                 .map_err(Error::ProcessQueue)?;
 
             self.used_descs.push((head_index, total as u32));
@@ -392,8 +398,7 @@ impl VhostUserBackend for VhostUserFsBackend {
     }
 
     fn protocol_features(&self) -> VhostUserProtocolFeatures {
-        // liubo: we haven't supported slave req in rafs.
-        VhostUserProtocolFeatures::MQ
+        VhostUserProtocolFeatures::MQ | VhostUserProtocolFeatures::SLAVE_REQ
     }
 
     fn set_event_idx(&mut self, _enabled: bool) {}
@@ -432,6 +437,10 @@ impl VhostUserBackend for VhostUserFsBackend {
 
     fn exit_event(&self) -> Option<(EventFd, Option<u16>)> {
         Some((self.kill_evt.try_clone().unwrap(), Some(KILL_EVENT)))
+    }
+
+    fn set_slave_req_fd(&mut self, vu_req: SlaveFsCacheReq) {
+        self.vu_req = Some(vu_req);
     }
 }
 
