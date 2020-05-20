@@ -275,26 +275,28 @@ impl ApiServer {
                                         sender.send(Err(ApiError::ResponsePayloadType)).unwrap();
                                     }
                                 }
-                                ApiRequest::ExportGlobalMetrics(sender) => {
-                                    // TODO: Perhaps, just delegate serializing to io-stats?
-                                    let m = match serde_json::to_string(io_stats::ios()) {
-                                        Ok(s) => s,
-                                        Err(e) => {
-                                            format!("Failed in serializing global metrics {}", e)
-                                        }
-                                    };
+                                ApiRequest::ExportGlobalMetrics(sender, id) => {
+                                    let resp;
+                                    match io_stats::export_global_stats(&id) {
+                                        Ok(m) => resp = m,
+                                        Err(e) => resp = e,
+                                    }
                                     // Even failed in sending, never leave this loop?
                                     if let Err(e) =
-                                        sender.send(Ok(ApiResponsePayload::FsGlobalMetrics(m)))
+                                        sender.send(Ok(ApiResponsePayload::FsGlobalMetrics(resp)))
                                     {
                                         error!("send API response failed {}", e);
                                     }
                                 }
-                                ApiRequest::ExportFilesMetrics(sender) => {
-                                    // TODO: Perhaps, just delegate serializing to io-stats?
-                                    let m = io_stats::export_files_stats();
+                                ApiRequest::ExportFilesMetrics(sender, id) => {
+                                    // TODO: Use mount point name to refer to per rafs metrics.
+                                    let resp;
+                                    match io_stats::export_files_stats(&id) {
+                                        Ok(m) => resp = m,
+                                        Err(e) => resp = e,
+                                    }
                                     if let Err(e) =
-                                        sender.send(Ok(ApiResponsePayload::FsFilesMetrics(m)))
+                                        sender.send(Ok(ApiResponsePayload::FsFilesMetrics(resp)))
                                     {
                                         error!("send API response failed {}", e);
                                     }
@@ -717,7 +719,7 @@ fn main() -> Result<()> {
         vfs.mount(Box::new(passthrough_fs), "/")?;
         info!("vfs mounted");
     } else if !metadata.is_empty() {
-        let mut rafs = Rafs::new(rafs_conf.clone());
+        let mut rafs = Rafs::new(rafs_conf.clone(), &"/".to_string());
         rafs.import(&mut File::open(metadata)?)?;
         info!("rafs mounted");
         vfs.mount(Box::new(rafs), "/")?;
@@ -732,7 +734,7 @@ fn main() -> Result<()> {
             env!("CARGO_PKG_VERSION").to_string(),
             apisock.to_string(),
             move |info| {
-                let mut rafs = Rafs::new(rafs_conf.clone());
+                let mut rafs = Rafs::new(rafs_conf.clone(), &info.mountpoint);
                 let mut file = File::open(&info.source).map_err(ApiError::MountFailure)?;
                 rafs.import(&mut file).map_err(ApiError::MountFailure)?;
                 info!("rafs mounted");

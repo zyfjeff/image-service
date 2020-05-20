@@ -66,8 +66,8 @@ struct RafsInode {
 }
 
 impl RafsInode {
-    fn stats_update<T>(&self, fop: StatsFop, bsize: usize, r: &Result<T>) {
-        io_stats::ios_global_update(fop, bsize, &r);
+    fn stats_update<T>(&self, rafs: &Rafs, fop: StatsFop, bsize: usize, r: &Result<T>) {
+        rafs.ios.ios_global_update(fop, bsize, &r);
         if let Some(c) = self.counter.as_ref() {
             match r {
                 Ok(v) => {
@@ -83,21 +83,14 @@ impl RafsInode {
 }
 
 impl RafsInode {
-    fn new() -> Self {
-        let inode = RafsInode {
-            counter: if io_stats::ios_files_enabled() {
-                Arc::new(Some(io_stats::InodeIOStats::default()))
-            } else {
-                Arc::new(None)
-            },
-            ..Default::default()
-        };
+    fn stats_init(&mut self, rafs: &Rafs) {}
+}
 
-        io_stats::COUNTERS
-            .write()
-            .unwrap()
-            .push(inode.counter.clone());
-        inode
+impl RafsInode {
+    fn new() -> Self {
+        RafsInode {
+            ..Default::default()
+        }
     }
 
     fn init(&mut self, info: &RafsInodeInfo) {
@@ -236,7 +229,6 @@ struct RafsSuper {
 
 impl RafsSuper {
     fn new() -> Self {
-        io_stats::ios_init();
         RafsSuper {
             s_magic: 0,
             s_version: 0,
@@ -377,19 +369,20 @@ impl RafsConfig {
 
 pub struct Rafs {
     conf: RafsConfig,
-
     sb: RafsSuper,
     device: device::RafsDevice,
     initialized: bool,
+    ios: Arc<io_stats::GlobalIOStats>,
 }
 
 impl Rafs {
-    pub fn new(conf: RafsConfig) -> Self {
+    pub fn new(conf: RafsConfig, id: &str) -> Self {
         Rafs {
             sb: RafsSuper::new(),
             device: device::RafsDevice::new(conf.dev_config()),
             conf,
             initialized: false,
+            ios: io_stats::ios_new(id),
         }
     }
 
@@ -485,6 +478,7 @@ impl Rafs {
 
             let mut inode = RafsInode::new();
             inode.init(&info);
+            self.ios.ios_file_stats_new(&mut inode.counter);
             dir.add_child(&inode);
             if inode.is_dir() {
                 match self.unpack_dir(&mut inode, r)? {
@@ -621,7 +615,7 @@ impl FileSystem for Rafs {
         let inodes = self.sb.s_inodes.read().unwrap();
         let rafs_inode = inodes.get(&inode).ok_or_else(enoent)?;
         let r = Ok((rafs_inode.get_attr().into(), self.sb.s_attr_timeout));
-        rafs_inode.stats_update(StatsFop::Stat, 0, &r);
+        rafs_inode.stats_update(&self, StatsFop::Stat, 0, &r);
         r
     }
 
@@ -654,10 +648,10 @@ impl FileSystem for Rafs {
             return Ok(0);
         }
         let desc = rafs_inode.alloc_bio_desc(self.sb.s_block_size, size as usize, offset)?;
-        let start = io_stats::ios_latency_start();
+        let start = self.ios.ios_latency_start();
         let r = self.device.read_to(w, desc);
-        rafs_inode.stats_update(io_stats::StatsFop::Read, size as usize, &r);
-        io_stats::ios_latency_end(&start, io_stats::StatsFop::Read);
+        rafs_inode.stats_update(&self, io_stats::StatsFop::Read, size as usize, &r);
+        self.ios.ios_latency_end(&start, io_stats::StatsFop::Read);
         r
     }
 

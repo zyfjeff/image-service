@@ -62,8 +62,8 @@ pub enum ApiRequest {
     DaemonInfo(Sender<ApiResponse>),
     Mount(MountInfo, Sender<ApiResponse>),
     ConfigureDaemon(DaemonConf, Sender<ApiResponse>),
-    ExportGlobalMetrics(Sender<ApiResponse>),
-    ExportFilesMetrics(Sender<ApiResponse>),
+    ExportGlobalMetrics(Sender<ApiResponse>, Option<String>),
+    ExportFilesMetrics(Sender<ApiResponse>, Option<String>),
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -147,7 +147,7 @@ pub fn export_global_stats(api_evt: EventFd, api_sender: Sender<ApiRequest>) -> 
     let (response_sender, response_receiver) = channel();
 
     api_sender
-        .send(ApiRequest::ExportGlobalMetrics(response_sender))
+        .send(ApiRequest::ExportGlobalMetrics(response_sender, None))
         .map_err(ApiError::RequestSend)?;
     api_evt.write(1).map_err(ApiError::EventFdWrite)?;
 
@@ -163,7 +163,7 @@ pub fn export_files_stats(api_evt: EventFd, api_sender: Sender<ApiRequest>) -> A
     let (response_sender, response_receiver) = channel();
 
     api_sender
-        .send(ApiRequest::ExportFilesMetrics(response_sender))
+        .send(ApiRequest::ExportFilesMetrics(response_sender, None))
         .map_err(ApiError::RequestSend)?;
     api_evt.write(1).map_err(ApiError::EventFdWrite)?;
 

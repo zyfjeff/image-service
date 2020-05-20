@@ -4,6 +4,7 @@
 //
 // Rafs fop stats accounting and exporting.
 
+use std::collections::HashMap;
 use std::io::Error;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
@@ -31,12 +32,18 @@ impl Clone for StatsFop {
     }
 }
 
+type FilesStatsCounters = RwLock<Vec<Arc<Option<InodeIOStats>>>>;
+
 /// Block size separated counters.
 /// 1K; 4K; 16K; 64K, 128K.
 const BLOCK_READ_COUNT_MAX: usize = 5;
 
 /// <=200us, <=500us, <=1ms, <=20ms, <=50ms, <=100ms, <=500ms, >500ms
 const READ_LATENCY_RANGE_MAX: usize = 8;
+
+lazy_static! {
+    pub static ref IOS_SET: RwLock<HashMap<String, Arc<GlobalIOStats>>> = Default::default();
+}
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 pub struct GlobalIOStats {
@@ -47,6 +54,7 @@ pub struct GlobalIOStats {
     // Given the fact that we don't have to measure latency all the time,
     // use this to turn it off.
     measure_latency: AtomicBool,
+    id: String,
     // Total bytes read against the filesystem.
     data_read: AtomicUsize,
     // Cumulative bytes for different block size.
@@ -72,9 +80,13 @@ pub struct GlobalIOStats {
     // inside dead-lock, etc.
     // TODO: To be implemented, should not be hard.
     last_fop_tp: AtomicUsize,
+
+    // Rwlock closes the race that more than one threads are creating counters concurrently.
+    #[serde(skip_serializing, skip_deserializing)]
+    file_counters: RwLock<Vec<Arc<Option<InodeIOStats>>>>,
 }
 
-#[derive(Default, Debug, Serialize)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct InodeIOStats {
     // Total open number of this file.
     nr_open: AtomicUsize,
@@ -133,32 +145,13 @@ impl InodeStatsCounter for InodeIOStats {
     }
 }
 
-lazy_static! {
-    pub static ref IOS: GlobalIOStats = Default::default();
-    // Rwlock closes the race that more than one threads are creating counters concurrently.
-    pub static ref COUNTERS: RwLock<Vec<Arc<Option<InodeIOStats>>>> = Default::default();
-}
-
-pub fn ios_files_enabled() -> bool {
-    IOS.files_account_enabled.load(Ordering::Relaxed)
-}
-
-pub fn ios() -> &'static GlobalIOStats {
-    &IOS
-}
-
-pub fn ios_init() {
-    IOS.files_account_enabled.store(false, Ordering::Relaxed);
-    IOS.measure_latency.store(true, Ordering::Relaxed);
-}
-
-/// Paired with `ios_latency_end` to record elapsed time for a certain type of fop.
-pub fn ios_latency_start() -> Option<SystemTime> {
-    if !IOS.measure_latency.load(Ordering::Relaxed) {
-        return None;
-    }
-
-    Some(SystemTime::now())
+pub fn ios_new(id: &str) -> Arc<GlobalIOStats> {
+    let c = Arc::new(GlobalIOStats {
+        id: id.to_string(),
+        ..Default::default()
+    });
+    IOS_SET.write().unwrap().insert(id.to_string(), c.clone());
+    c
 }
 
 /// <=200us, <=500us, <=1ms, <=20ms, <=50ms, <=100ms, <=500ms, >500ms
@@ -175,15 +168,83 @@ fn latency_range_index(elapsed: isize) -> usize {
     }
 }
 
-pub fn ios_latency_end(start: &Option<SystemTime>, fop: StatsFop) {
-    if IOS.measure_latency.load(Ordering::Relaxed) {
+impl GlobalIOStats {
+    pub fn ios_init(&self) {
+        self.files_account_enabled.store(false, Ordering::Relaxed);
+        self.measure_latency.store(true, Ordering::Relaxed);
+    }
+
+    pub fn ios_files_enabled(&self) -> bool {
+        self.files_account_enabled.load(Ordering::Relaxed)
+    }
+
+    pub fn ios_file_stats_new(&self, c: &mut Arc<Option<InodeIOStats>>) {
+        if self.ios_files_enabled() {
+            *Arc::get_mut(c).unwrap() = Some(InodeIOStats::default());
+            self.file_counters.write().unwrap().push(c.clone());
+        } else {
+            *Arc::get_mut(c).unwrap() = None;
+        }
+    }
+
+    pub fn ios_global_update<T>(&self, fop: StatsFop, value: usize, r: &Result<T, Error>) {
+        self.last_fop_tp.store(
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as usize,
+            Ordering::Relaxed,
+        );
+
+        // We put block count into 5 catagories e.g. 1K; 4K; 16K; 64K, 128K.
+        if fop == StatsFop::Read {
+            match value {
+                // <=1K
+                _ if value >> 10 == 0 => self.block_count_read[0].fetch_add(1, Ordering::Relaxed),
+                // <=4K
+                _ if value >> 12 == 0 => self.block_count_read[1].fetch_add(1, Ordering::Relaxed),
+                // <=16K
+                _ if value >> 14 == 0 => self.block_count_read[2].fetch_add(1, Ordering::Relaxed),
+                // <=64K
+                _ if value >> 16 == 0 => self.block_count_read[3].fetch_add(1, Ordering::Relaxed),
+                // >64K
+                _ => self.block_count_read[4].fetch_add(1, Ordering::Relaxed),
+            };
+        }
+
+        match r {
+            Ok(_) => {
+                self.fop_hits[fop as usize].fetch_add(1, Ordering::Relaxed);
+                match fop {
+                    StatsFop::Read => self.data_read.fetch_add(value, Ordering::Relaxed),
+                    StatsFop::Open => self.nr_opens.fetch_add(1, Ordering::Relaxed),
+                    StatsFop::Release => self.nr_opens.fetch_sub(1, Ordering::Relaxed),
+                    _ => 0,
+                }
+            }
+            Err(_) => self.fop_errors[fop as usize].fetch_add(1, Ordering::Relaxed),
+        };
+    }
+
+    /// Paired with `ios_latency_end` to record elapsed time for a certain type of fop.
+    pub fn ios_latency_start(&self) -> Option<SystemTime> {
+        if !self.measure_latency.load(Ordering::Relaxed) {
+            return None;
+        }
+
+        Some(SystemTime::now())
+    }
+
+    pub fn ios_latency_end(&self, start: &Option<SystemTime>, fop: StatsFop) {
         if let Some(start) = start {
             if let Ok(d) = SystemTime::elapsed(start) {
                 let elapsed = d.as_micros() as isize;
-                IOS.fop_cumulative_latency_total[fop as usize]
+                self.read_latency_dist[latency_range_index(elapsed)]
+                    .fetch_add(1, Ordering::Relaxed);
+                self.fop_cumulative_latency_total[fop as usize]
                     .fetch_add(elapsed, Ordering::Relaxed);
-                let avg = IOS.fop_cumulative_latency_avg[fop as usize].load(Ordering::Relaxed);
-                let fop_cnt = IOS.fop_hits[fop as usize].load(Ordering::Relaxed) as isize;
+                let avg = self.fop_cumulative_latency_avg[fop as usize].load(Ordering::Relaxed);
+                let fop_cnt = self.fop_hits[fop as usize].load(Ordering::Relaxed) as isize;
 
                 // Zero fop count is hardly to meet, but still check here in
                 // case callers misuses ios-latency
@@ -191,75 +252,80 @@ pub fn ios_latency_end(start: &Option<SystemTime>, fop: StatsFop) {
                     return;
                 }
                 let new_avg = || avg + (elapsed - avg) / fop_cnt;
-                IOS.fop_cumulative_latency_avg[fop as usize].store(new_avg(), Ordering::Relaxed);
-
-                IOS.read_latency_dist[latency_range_index(elapsed)].fetch_add(1, Ordering::Relaxed);
+                self.fop_cumulative_latency_avg[fop as usize].store(new_avg(), Ordering::Relaxed);
             }
+        }
+    }
+
+    pub fn export_files_stats(&self) -> String {
+        let mut rs = String::new();
+        for c in &(*self.file_counters.read().unwrap()) {
+            if c.is_some() {
+                // Files that are never opened have no metrics to be exported.
+                if c.as_ref()
+                    .as_ref()
+                    .unwrap()
+                    .total_fops
+                    .load(Ordering::Relaxed)
+                    == 0
+                {
+                    continue;
+                }
+                let m = serde_json::to_string(c).unwrap_or_else(|_| "Invalid item".to_string());
+                rs.push_str(&m);
+            }
+        }
+        if rs.is_empty() {
+            rs.push_str("No files to be exported!");
+        }
+        rs
+    }
+
+    pub fn export_global_stats(&self) -> String {
+        match serde_json::to_string(self) {
+            Ok(s) => s,
+            Err(e) => format!("Failed in serializing global metrics {}", e),
         }
     }
 }
 
-pub fn export_files_stats() -> String {
-    let mut rs = String::new();
-    for c in &(*COUNTERS.read().unwrap()) {
-        if c.is_some() {
-            // Files that are never opened have no metrics to be exported.
-            if c.as_ref()
-                .as_ref()
-                .unwrap()
-                .total_fops
-                .load(Ordering::Relaxed)
-                == 0
-            {
-                continue;
+pub fn export_files_stats(name: &Option<String>) -> Result<String, String> {
+    let ios_set = IOS_SET.read().unwrap();
+
+    match name {
+        Some(k) => ios_set
+            .get(k)
+            .ok_or_else(|| "No such id".to_string())
+            .map(|v| v.export_files_stats()),
+        None => {
+            if ios_set.len() == 1 {
+                if let Some(ios) = ios_set.values().next() {
+                    return Ok(ios.export_files_stats());
+                }
             }
-            let m = serde_json::to_string(c).unwrap_or_else(|_| "Invalid item".to_string());
-            rs.push_str(&m);
+            Err("No metrics counter was specified.".to_string())
         }
     }
-    if rs.is_empty() {
-        rs.push_str("No files to be exported!");
-    }
-    rs
 }
 
-pub fn ios_global_update<T>(fop: StatsFop, value: usize, r: &Result<T, Error>) {
-    IOS.last_fop_tp.store(
-        SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as usize,
-        Ordering::Relaxed,
-    );
+pub fn export_global_stats(name: &Option<String>) -> Result<String, String> {
+    // With only one rafs instance, we allow caller to ask for an unknown ios name.
+    let ios_set = IOS_SET.read().unwrap();
 
-    // We put block count into 5 catagories e.g. 1K; 4K; 16K; 64K, 128K.
-    if fop == StatsFop::Read {
-        match value {
-            // <=1K
-            _ if value >> 10 == 0 => IOS.block_count_read[0].fetch_add(1, Ordering::Relaxed),
-            // <=4K
-            _ if value >> 12 == 0 => IOS.block_count_read[1].fetch_add(1, Ordering::Relaxed),
-            // <=16K
-            _ if value >> 14 == 0 => IOS.block_count_read[2].fetch_add(1, Ordering::Relaxed),
-            // <=64K
-            _ if value >> 16 == 0 => IOS.block_count_read[3].fetch_add(1, Ordering::Relaxed),
-            // >64K
-            _ => IOS.block_count_read[4].fetch_add(1, Ordering::Relaxed),
-        };
-    }
-
-    match r {
-        Ok(_) => {
-            IOS.fop_hits[fop as usize].fetch_add(1, Ordering::Relaxed);
-            match fop {
-                StatsFop::Read => IOS.data_read.fetch_add(value, Ordering::Relaxed),
-                StatsFop::Open => IOS.nr_opens.fetch_add(1, Ordering::Relaxed),
-                StatsFop::Release => IOS.nr_opens.fetch_sub(1, Ordering::Relaxed),
-                _ => 0,
+    match name {
+        Some(k) => ios_set
+            .get(k)
+            .ok_or_else(|| "No such id".to_string())
+            .map(|v| v.export_global_stats()),
+        None => {
+            if ios_set.len() == 1 {
+                if let Some(ios) = ios_set.values().next() {
+                    return Ok(ios.export_global_stats());
+                }
             }
+            Err("No metrics counter was specified.".to_string())
         }
-        Err(_) => IOS.fop_errors[fop as usize].fetch_add(1, Ordering::Relaxed),
-    };
+    }
 }
 
 #[cfg(test)]
@@ -270,54 +336,58 @@ mod tests {
 
     #[test]
     fn test_block_read_count() {
-        let inode_stats = InodeIOStats::default();
-        inode_stats.stats_cumulative(StatsFop::Read, 4000);
-        assert_eq!(IOS.block_count_read[1].load(Ordering::Relaxed), 1);
+        let g = GlobalIOStats::default();
+        g.ios_init();
+        g.ios_global_update(StatsFop::Read, 4000, &Ok(()));
+        assert_eq!(g.block_count_read[1].load(Ordering::Relaxed), 1);
 
-        inode_stats.stats_cumulative(StatsFop::Read, 4096);
-        assert_eq!(IOS.block_count_read[1].load(Ordering::Relaxed), 1);
+        g.ios_global_update(StatsFop::Read, 4096, &Ok(()));
+        assert_eq!(g.block_count_read[1].load(Ordering::Relaxed), 1);
 
-        inode_stats.stats_cumulative(StatsFop::Read, 65535);
-        assert_eq!(IOS.block_count_read[3].load(Ordering::Relaxed), 1);
+        g.ios_global_update(StatsFop::Read, 65535, &Ok(()));
+        assert_eq!(g.block_count_read[3].load(Ordering::Relaxed), 1);
 
-        inode_stats.stats_cumulative(StatsFop::Read, 131072);
-        assert_eq!(IOS.block_count_read[4].load(Ordering::Relaxed), 1);
+        g.ios_global_update(StatsFop::Read, 131072, &Ok(()));
+        assert_eq!(g.block_count_read[4].load(Ordering::Relaxed), 1);
 
-        inode_stats.stats_cumulative(StatsFop::Read, 65520);
-        assert_eq!(IOS.block_count_read[3].load(Ordering::Relaxed), 2);
+        g.ios_global_update(StatsFop::Read, 65520, &Ok(()));
+        assert_eq!(g.block_count_read[3].load(Ordering::Relaxed), 2);
 
-        inode_stats.stats_cumulative(StatsFop::Read, 2015520);
-        assert_eq!(IOS.block_count_read[3].load(Ordering::Relaxed), 2);
+        g.ios_global_update(StatsFop::Read, 2015520, &Ok(()));
+        assert_eq!(g.block_count_read[3].load(Ordering::Relaxed), 2);
     }
     #[test]
     fn test_latency_record() {
-        ios_init();
-        let start = ios_latency_start();
+        let g = GlobalIOStats::default();
+        g.ios_init();
+        let start = g.ios_latency_start();
         sleep(Duration::from_micros(800));
-        ios_global_update(StatsFop::Read, 100, &Ok(()));
-        ios_latency_end(&start, StatsFop::Read);
+        g.ios_global_update(StatsFop::Read, 100, &Ok(()));
+        g.ios_latency_end(&start, StatsFop::Read);
 
-        assert_eq!(IOS.read_latency_dist[2].load(Ordering::Relaxed), 1);
+        println!("{:?}", g.read_latency_dist);
+        println!("{:?}", g.fop_hits);
+        assert_eq!(g.read_latency_dist[2].load(Ordering::Relaxed), 1);
 
-        let start = ios_latency_start();
+        let start = g.ios_latency_start();
         sleep(Duration::from_micros(2000));
-        ios_global_update(StatsFop::Read, 100, &Ok(()));
-        ios_latency_end(&start, StatsFop::Read);
+        g.ios_global_update(StatsFop::Read, 100, &Ok(()));
+        g.ios_latency_end(&start, StatsFop::Read);
 
-        assert_eq!(IOS.read_latency_dist[3].load(Ordering::Relaxed), 1);
+        assert_eq!(g.read_latency_dist[3].load(Ordering::Relaxed), 1);
 
-        let start = ios_latency_start();
+        let start = g.ios_latency_start();
         sleep(Duration::from_micros(10));
-        ios_global_update(StatsFop::Read, 100, &Ok(()));
-        ios_latency_end(&start, StatsFop::Read);
+        g.ios_global_update(StatsFop::Read, 100, &Ok(()));
+        g.ios_latency_end(&start, StatsFop::Read);
 
-        assert_eq!(IOS.read_latency_dist[0].load(Ordering::Relaxed), 1);
+        assert_eq!(g.read_latency_dist[0].load(Ordering::Relaxed), 1);
 
-        let start = ios_latency_start();
+        let start = g.ios_latency_start();
         sleep(Duration::from_micros(1600));
-        ios_global_update(StatsFop::Read, 100, &Ok(()));
-        ios_latency_end(&start, StatsFop::Read);
+        g.ios_global_update(StatsFop::Read, 100, &Ok(()));
+        g.ios_latency_end(&start, StatsFop::Read);
 
-        assert_eq!(IOS.read_latency_dist[3].load(Ordering::Relaxed), 2);
+        assert_eq!(g.read_latency_dist[3].load(Ordering::Relaxed), 2);
     }
 }
