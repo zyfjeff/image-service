@@ -101,6 +101,27 @@ Or simply below if you are running newer guest kernel:
 mount -t virtiofs nydus /mnt
 ```
 
+# Multiple pseudo mounts
+One single nydusd can have multiple pseudo mounts corresponding to a unique virtio-fs mount inside guest.
+
+To obtain that, you have to trigger backend fs(e.g. Rafs) mount through curl method. Please note that don't specify
+`--metadata` option when you start nydusd.
+
+The steps are exactly the same with one nydusd one backend fs scenario. But before any curl mount, you can't see
+any data from the virtio-fs mount inside guest.
+Then each time you do mount through curl command, you have a sub-directory created automatically within the virtio-fs mount point where you could find image data.
+
+Example:<br>
+Given that your virtio-fs mount point is `/mnt` inside guest.<br>
+When you have two pseudo mounts which are named as "pseudo_1" and "pseudo_2" identified in http request data.<br>
+pseudo_1 and pseudo_2 corresponds to bootstrap respectively.
+```
+# tree -L 1 mnt
+mnt
+├── pseudo_1
+└── pseudo_2
+```
+
 # Build nydus image
 
 See [Nydus Image Builder](./docs/image-builder.md) 
