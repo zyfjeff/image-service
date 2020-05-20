@@ -572,6 +572,10 @@ pub(crate) mod tests {
 
         for i in 1..15 {
             let inode = super_block.get_inode(i)?;
+            if inode.is_symlink() {
+                let link = inode.get_symlink()?;
+                println!("link {:?}", link.to_str()?);
+            }
             println!("inode {:?} {} {}", inode.name(), inode.size(), inode.ino());
         }
 

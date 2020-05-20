@@ -13,8 +13,9 @@ use std::sync::Arc;
 
 use crate::fs::Inode;
 use crate::metadata::layout::{
-    OndiskBlobTable, OndiskChunkInfo, OndiskDigest, OndiskInode, OndiskInodeTable, RAFS_ALIGNMENT,
-    RAFS_CHUNK_INFO_SIZE, RAFS_INODE_INFO_SIZE, RAFS_SUPERBLOCK_SIZE,
+    OndiskBlobTable, OndiskChunkInfo, OndiskDigest, OndiskInode, OndiskInodeTable,
+    OndiskSymlinkInfo, RAFS_ALIGNMENT, RAFS_CHUNK_INFO_SIZE, RAFS_INODE_INFO_SIZE,
+    RAFS_SUPERBLOCK_SIZE,
 };
 use crate::metadata::{
     parse_string, RafsChunkInfo, RafsInode, RafsSuperInodes, RafsSuperMeta, RAFS_MAX_METADATA_SIZE,
@@ -150,39 +151,17 @@ impl RafsSuperInodes for DirectMapInodes {
         self.blob_table.get(index)
     }
 
-    fn get_symlink<'a, 'b>(&'a self, inode: &'b OndiskInode) -> Result<&'b [u8]> {
-        let inode = self.get_inode_internal(inode.ino())?;
-        let sz = inode.chunk_cnt() as usize * RAFS_CHUNK_INFO_SIZE;
-        if sz == 0 || sz > (libc::PATH_MAX as usize) + RAFS_CHUNK_INFO_SIZE - 1 {
-            return Err(ebadf());
-        }
-
-        let start = (inode as *const OndiskInode as *const u8).wrapping_add(RAFS_INODE_INFO_SIZE);
-        let end = start.wrapping_add(sz);
-        if start < self.mapping.base || end < self.mapping.base || end > self.mapping.end {
-            return Err(einval());
-        }
-
-        let input = unsafe { slice::from_raw_parts(start, sz) };
-        let str = parse_string(input)?;
-        if str.len() >= libc::PATH_MAX as usize {
-            Err(ebadf())
-        } else {
-            Ok(str.as_bytes())
-        }
-    }
-
     fn get_xattrs(&self, _inode: &OndiskInode) -> Result<HashMap<String, Vec<u8>>> {
         unimplemented!()
     }
 
-    fn alloc_bio_desc<'a>(
-        &'a self,
+    fn alloc_bio_desc<'b>(
+        &'b self,
         blksize: u32,
         size: usize,
         offset: u64,
         inode: &OndiskInode,
-    ) -> Result<RafsBioDesc<'a>> {
+    ) -> Result<RafsBioDesc<'b>> {
         let mut desc = RafsBioDesc::new();
         let end = offset + size as u64;
 

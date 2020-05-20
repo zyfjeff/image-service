@@ -17,8 +17,8 @@ use fuse_rs::api::filesystem::{Entry, ROOT_ID};
 
 use crate::fs::Inode;
 use crate::metadata::layout::{
-    OndiskChunkInfo, OndiskDigest, OndiskInode, RAFS_CHUNK_INFO_SIZE, RAFS_SUPER_VERSION_V4,
-    RAFS_SUPER_VERSION_V5,
+    OndiskChunkInfo, OndiskDigest, OndiskInode, OndiskSymlinkInfo, RAFS_CHUNK_INFO_SIZE,
+    RAFS_SUPER_VERSION_V4, RAFS_SUPER_VERSION_V5,
 };
 use crate::metadata::{
     parse_string, RafsChunkInfo, RafsDigest, RafsInode, RafsSuper, RafsSuperInodes, RafsSuperMeta,
@@ -387,11 +387,11 @@ impl RafsInode for CachedInode {
         }
     }
 
-    fn get_symlink(&self, _sb: &RafsSuper) -> Result<&[u8]> {
+    fn get_symlink(&self) -> Result<OndiskSymlinkInfo> {
         if !self.is_symlink() {
             Err(einval())
         } else {
-            Ok(self.i_target.as_bytes())
+            unimplemented!()
         }
     }
 

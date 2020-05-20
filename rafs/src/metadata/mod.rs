@@ -20,8 +20,8 @@ use fuse_rs::api::filesystem::Entry;
 
 use self::cached::CachedInodes;
 use self::layout::{
-    OndiskBlobTable, OndiskDigest, OndiskInodeTable, OndiskSuperBlock, INO_FLAG_XATTR,
-    RAFS_SUPER_VERSION_V4, RAFS_SUPER_VERSION_V5,
+    OndiskBlobTable, OndiskDigest, OndiskInodeTable, OndiskSuperBlock, OndiskSymlinkInfo,
+    INO_FLAG_XATTR, RAFS_SUPER_VERSION_V4, RAFS_SUPER_VERSION_V5,
 };
 use self::noop::NoopInodes;
 use crate::fs::{Inode, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
@@ -209,10 +209,6 @@ pub trait RafsSuperInodes {
 
     fn get_blob_id<'a>(&'a self, index: u32) -> Result<&'a OndiskDigest>;
 
-    fn get_symlink<'a, 'b>(&'a self, _inode: &'b OndiskInode) -> Result<&'b [u8]> {
-        Err(enosys())
-    }
-
     fn get_xattrs(&self, _inode: &OndiskInode) -> Result<HashMap<String, Vec<u8>>> {
         Err(enosys())
     }
@@ -238,7 +234,7 @@ pub trait RafsInode {
 
     fn get_entry(&self, sb: &RafsSuperMeta) -> Entry;
     fn get_attr(&self) -> Attr;
-    fn get_symlink(&self, sb: &RafsSuper) -> Result<&[u8]>;
+    fn get_symlink(&self) -> Result<OndiskSymlinkInfo>;
     fn get_xattrs(&self, sb: &RafsSuper) -> Result<HashMap<String, Vec<u8>>>;
     fn get_child_count(&self, sb: &RafsSuper) -> Result<usize>;
     fn get_child_by_index<'a, 'b>(

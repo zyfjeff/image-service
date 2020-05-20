@@ -14,6 +14,7 @@ use std::str;
 
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
+use xattr;
 
 use rafs::metadata::layout::*;
 use rafs::metadata::*;
@@ -84,93 +85,111 @@ impl Node {
         Ok(false)
     }
 
-    // fn build_inode_xattr(&mut self) -> Result<()> {
-    //     let filepath = CString::new(self.path.as_str())?;
-    //     // Safe because we are calling into C functions.
-    //     let name_size =
-    //         unsafe { libc::llistxattr(filepath.as_ptr() as *const i8, std::ptr::null_mut(), 0) };
-    //     if name_size <= 0 {
-    //         return Ok(());
-    //     }
+    fn build_inode_xattr(&mut self) -> Result<()> {
+        let mut xattrs = xattr::list(&self.path)?.peekable();
 
-    //     let mut buf: Vec<u8> = Vec::new();
-    //     buf.resize(name_size as usize, 0);
-    //     // Safe because we are calling into C functions.
-    //     unsafe {
-    //         let ret = libc::llistxattr(
-    //             filepath.as_ptr() as *const i8,
-    //             buf.as_mut_ptr() as *mut i8,
-    //             name_size as usize,
-    //         );
-    //         if ret <= 0 {
-    //             return Ok(());
-    //         }
-    //     };
+        if xattrs.peek().is_none() {
+            return Ok(());
+        }
 
-    //     let names = match str::from_utf8(&buf) {
-    //         Ok(s) => {
-    //             let s: Vec<&str> = s.split_terminator('\0').collect();
-    //             Ok(s)
-    //         }
-    //         Err(_) => Err(Error::from_raw_os_error(libc::EINVAL)),
-    //     }?;
+        let mut count = 0;
+        let mut xattr_chunk = OndiskXAttr::new();
+        for key in xattrs {
+            count += 1;
+            let value = xattr::get(&self.path, &key)?;
+            let mut pair = OndiskXAttrPair::new();
+            pair.set(key.to_str().unwrap(), value.unwrap_or_else(|| Vec::new()));
+            xattr_chunk.push(pair);
+        }
 
-    //     let mut count = 0;
-    //     for n in names.iter() {
-    //         // make sure name is nul terminated
-    //         let mut name = (*n).to_string();
-    //         name.push('\0');
-    //         let value_size = unsafe {
-    //             libc::lgetxattr(
-    //                 filepath.as_ptr() as *const i8,
-    //                 name.as_ptr() as *const i8,
-    //                 std::ptr::null_mut(),
-    //                 0,
-    //             )
-    //         };
-    //         if value_size < 0 {
-    //             continue;
-    //         }
-    //         if value_size == 0 {
-    //             count += 1;
-    //             self.xattr_chunks.data.insert(name, vec![]);
-    //             continue;
-    //         }
-    //         // Need to read xattr value
-    //         let mut value_buf: Vec<u8> = Vec::new();
-    //         value_buf.resize(value_size as usize, 0);
-    //         // Safe because we are calling into C functions.
-    //         unsafe {
-    //             let ret = libc::lgetxattr(
-    //                 filepath.as_ptr() as *const i8,
-    //                 name.as_ptr() as *const i8,
-    //                 value_buf.as_mut_ptr() as *mut c_void,
-    //                 value_size as usize,
-    //             );
-    //             if ret < 0 {
-    //                 continue;
-    //             }
-    //             if ret == 0 {
-    //                 count += 1;
-    //                 self.xattr_chunks.data.insert(name, vec![]);
-    //                 continue;
-    //             }
-    //         };
-    //         count += 1;
-    //         self.xattr_chunks.data.insert(name, value_buf);
-    //     }
+        // let filepath = CString::new(self.path.as_str())?;
+        // // Safe because we are calling into C functions.
+        // let name_size =
+        //     unsafe { libc::llistxattr(filepath.as_ptr() as *const i8, std::ptr::null_mut(), 0) };
+        // if name_size <= 0 {
+        //     return Ok(());
+        // }
 
-    //     if count > 0 {
-    //         self.inode.i_flags |= INO_FLAG_XATTR;
-    //         self.xattr_chunks.count = count;
-    //         trace!(
-    //             "\tinode {} has xattr {:?}",
-    //             self.inode.name,
-    //             self.xattr_chunks
-    //         );
-    //     }
-    //     Ok(())
-    // }
+        // let mut buf: Vec<u8> = Vec::new();
+        // buf.resize(name_size as usize, 0);
+        // // Safe because we are calling into C functions.
+        // unsafe {
+        //     let ret = libc::llistxattr(
+        //         filepath.as_ptr() as *const i8,
+        //         buf.as_mut_ptr() as *mut i8,
+        //         name_size as usize,
+        //     );
+        //     if ret <= 0 {
+        //         return Ok(());
+        //     }
+        // };
+
+        // let names = match str::from_utf8(&buf) {
+        //     Ok(s) => {
+        //         let s: Vec<&str> = s.split_terminator('\0').collect();
+        //         Ok(s)
+        //     }
+        //     Err(_) => Err(Error::from_raw_os_error(libc::EINVAL)),
+        // }?;
+
+        // let mut count = 0;
+        // for n in names.iter() {
+        //     // make sure name is nul terminated
+        //     let mut name = (*n).to_string();
+        //     name.push('\0');
+        //     let value_size = unsafe {
+        //         libc::lgetxattr(
+        //             filepath.as_ptr() as *const i8,
+        //             name.as_ptr() as *const i8,
+        //             std::ptr::null_mut(),
+        //             0,
+        //         )
+        //     };
+        //     if value_size < 0 {
+        //         continue;
+        //     }
+        //     if value_size == 0 {
+        //         count += 1;
+        //         self.xattr_chunks.data.insert(name, vec![]);
+        //         continue;
+        //     }
+        //     // Need to read xattr value
+        //     let mut value_buf: Vec<u8> = Vec::new();
+        //     value_buf.resize(value_size as usize, 0);
+        //     // Safe because we are calling into C functions.
+        //     unsafe {
+        //         let ret = libc::lgetxattr(
+        //             filepath.as_ptr() as *const i8,
+        //             name.as_ptr() as *const i8,
+        //             value_buf.as_mut_ptr() as *mut c_void,
+        //             value_size as usize,
+        //         );
+        //         if ret < 0 {
+        //             continue;
+        //         }
+        //         if ret == 0 {
+        //             count += 1;
+        //             self.xattr_chunks.data.insert(name, vec![]);
+        //             continue;
+        //         }
+        //     };
+        //     count += 1;
+        //     self.xattr_chunks.data.insert(name, value_buf);
+        // }
+
+        // if count > 0 {
+        //     self.inode.i_flags |= INO_FLAG_XATTR;
+        //     self.xattr_chunks.count = count;
+        //     trace!(
+        //         "\tinode {} has xattr {:?}",
+        //         self.inode.name,
+        //         self.xattr_chunks
+        //     );
+        // }
+        // Ok(())
+
+        Ok(())
+    }
 
     pub fn build_inode(&mut self, hardlink_node: Option<Node>) -> Result<bool> {
         if self.parent.is_none() {
@@ -242,8 +261,9 @@ impl Node {
 
         if self.is_symlink() {
             let target_path = fs::read_link(&self.path)?;
-            let target_path_str = target_path.to_str().unwrap();
-            save_symlink_ondisk(target_path_str.as_bytes(), f_blob)?;
+            let mut link_chunk =
+                OndiskSymlinkInfo::from_raw(target_path.to_str().unwrap().as_bytes())?;
+            link_chunk.store(f_blob)?;
             return Ok(inode_digest);
         }
 
@@ -390,8 +410,7 @@ impl Node {
 
         self.inode.set_name(file_name)?;
         self.build_inode_stat()?;
-
-        // self.build_inode_xattr()?;
+        self.build_inode_xattr()?;
 
         if self.is_reg() {
             if self.is_hardlink() {

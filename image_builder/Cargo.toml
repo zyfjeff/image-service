@@ -10,6 +10,7 @@ edition = "2018"
 libc = "0.2"
 log = "0.4"
 rust-crypto = "0.2.36"
+xattr = "0.2.2"
 
 [dependencies.rafs]
 path = "../rafs"

@@ -46,6 +46,8 @@ pub const INO_FLAG_SYMLINK: u64 = 0x2000;
 pub const INO_FLAG_XATTR: u64 = 0x4000;
 pub const INO_FLAG_ALL: u64 = INO_FLAG_HARDLINK | INO_FLAG_SYMLINK | INO_FLAG_XATTR;
 
+pub const CHUNK_FLAG_COMPRESSED: u32 = 0x1000;
+
 pub const RAFS_SUPERBLOCK_SIZE: usize = 8192;
 pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 64;
 pub const RAFS_SUPER_MAGIC: u32 = 0x5241_4653;
@@ -515,8 +517,18 @@ impl RafsInode for OndiskInode {
         }
     }
 
-    fn get_symlink(&self, sb: &RafsSuper) -> Result<&[u8]> {
-        sb.s_inodes.get_symlink(self)
+    fn get_symlink(&self) -> Result<OndiskSymlinkInfo> {
+        let sz = self.chunk_cnt() as usize * RAFS_ALIGNMENT;
+        if sz == 0 || sz > (libc::PATH_MAX as usize) + RAFS_ALIGNMENT - 1 {
+            return Err(ebadf());
+        }
+
+        let start = (self as *const OndiskInode as *const u8).wrapping_add(RAFS_INODE_INFO_SIZE);
+        let input = unsafe { std::slice::from_raw_parts(start, sz) };
+
+        Ok(OndiskSymlinkInfo {
+            data: input.to_vec(),
+        })
     }
 
     fn get_xattrs(&self, sb: &RafsSuper) -> Result<HashMap<String, Vec<u8>>> {
@@ -641,8 +653,10 @@ pub struct OndiskChunkInfo {
     file_offset: u64,
     /// blob offset
     blob_offset: u64,
+    /// CHUNK_FLAG_COMPRESSED
+    flags: u32,
     /// reserved
-    reserved: u64,
+    reserved: u32,
 }
 
 impl OndiskChunkInfo {
@@ -693,6 +707,7 @@ impl Default for OndiskChunkInfo {
             file_offset: 0,
             blob_offset: 0,
             compress_size: 0,
+            flags: 0,
             reserved: 0,
         }
     }
@@ -771,7 +786,7 @@ impl fmt::Display for OndiskDigest {
 #[repr(C)]
 #[derive(Clone, Default, Debug)]
 pub struct OndiskSymlinkInfo {
-    data: Vec<u8>,
+    pub data: Vec<u8>,
 }
 
 impl OndiskSymlinkInfo {
@@ -779,6 +794,10 @@ impl OndiskSymlinkInfo {
         OndiskSymlinkInfo {
             ..Default::default()
         }
+    }
+
+    pub fn to_str(&self) -> Result<&str> {
+        parse_string(self.data.as_slice())
     }
 
     pub fn from_raw(data: &[u8]) -> Result<Self> {
@@ -812,6 +831,46 @@ impl OndiskSymlinkInfo {
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
         r.read_exact(&mut self.data)?;
         Ok(())
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Default, Debug)]
+pub struct OndiskXAttrPair {
+    size: u32,
+    key: Vec<u8>,
+    value: Vec<u8>,
+}
+
+impl OndiskXAttrPair {
+    pub fn new() -> Self {
+        OndiskXAttrPair {
+            ..Default::default()
+        }
+    }
+    pub fn set(&mut self, key: &str, value: Vec<u8>) {
+        self.key = key.as_bytes().to_vec();
+        self.value = value;
+    }
+}
+
+/// On disk sysmlink data.
+#[repr(C)]
+#[derive(Clone, Default, Debug)]
+pub struct OndiskXAttr {
+    size: u32,
+    data: Vec<OndiskXAttrPair>,
+}
+
+impl OndiskXAttr {
+    pub fn new() -> Self {
+        OndiskXAttr {
+            ..Default::default()
+        }
+    }
+
+    pub fn push(&mut self, pair: OndiskXAttrPair) {
+        self.data.push(pair);
     }
 }
 

@@ -250,7 +250,7 @@ impl FileSystem for Rafs {
     fn readlink(&self, _ctx: Context, inode: u64) -> Result<Vec<u8>> {
         let rafs_inode = self.sb.get_inode(inode)?;
 
-        rafs_inode.get_symlink(&self.sb).map(|v| v.to_vec())
+        Ok(rafs_inode.get_symlink()?.data.clone())
     }
 
     #[allow(clippy::too_many_arguments)]
