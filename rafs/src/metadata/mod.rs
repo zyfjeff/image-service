@@ -6,6 +6,7 @@
 //! Structs and Traits for RAFS file system meta data management.
 
 use std::borrow::Cow;
+use std::cmp;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write;
@@ -13,27 +14,24 @@ use std::io::Result;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::storage::device::{RafsBio, RafsBioDesc};
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 use fuse_rs::abi::linux_abi::Attr;
 use fuse_rs::api::filesystem::Entry;
 
-use self::cached::CachedInodes;
-use self::layout::{
-    OndiskBlobTable, OndiskDigest, OndiskInodeTable, OndiskSuperBlock, OndiskSymlinkInfo,
-    INO_FLAG_XATTR, RAFS_SUPER_VERSION_V4, RAFS_SUPER_VERSION_V5,
-};
+// use self::cached::CachedInodes;
+use self::layout::*;
 use self::noop::NoopInodes;
 use crate::fs::{Inode, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
 use crate::metadata::direct_map::DirectMapInodes;
-use crate::metadata::layout::{OndiskInode, RAFS_CHUNK_INFO_SIZE};
-use crate::storage::device::RafsBioDesc;
-use crate::{ebadf, einval, enosys, RafsIoReader, RafsIoWriter};
+use crate::*;
+use crate::{ebadf, einval, RafsIoReader, RafsIoWriter};
 
-pub mod cached;
+// pub mod cached;
 pub mod direct_map;
 pub mod layout;
-pub(crate) mod noop;
+pub mod noop;
 
 pub const RAFS_SHA256_LENGTH: usize = 32;
 pub const RAFS_BLOB_ID_MAX_LENGTH: usize = 72;
@@ -132,10 +130,10 @@ impl RafsSuper {
 
         match sb.version() {
             RAFS_SUPER_VERSION_V4 => {
-                let mut inodes = Box::new(CachedInodes::new());
-                inodes.load(&mut self.s_meta, r)?;
-                self.s_inodes.destroy();
-                self.s_inodes = inodes;
+                // let mut inodes = Box::new(CachedInodes::new());
+                // inodes.load(&mut self.s_meta, r)?;
+                // self.s_inodes.destroy();
+                // self.s_inodes = inodes;
             }
             RAFS_SUPER_VERSION_V5 => {
                 if self.load_inodes {
@@ -195,33 +193,125 @@ impl RafsSuper {
         Ok(std::mem::size_of::<OndiskSuperBlock>())
     }
 
-    pub fn get_inode(&self, ino: Inode) -> Result<&dyn RafsInode> {
+    pub fn get_inode(&self, ino: u64) -> Result<&dyn RafsInode> {
         self.s_inodes.get_inode(ino)
+    }
+
+    pub fn get_blob_id<'a>(&'a self, idx: u32) -> Result<&'a OndiskDigest> {
+        self.s_inodes.get_blob_id(idx)
+    }
+
+    pub fn alloc_bio_desc<'b>(
+        &'b self,
+        inode: &dyn RafsInode,
+        offset: u64,
+        size: usize,
+    ) -> Result<RafsBioDesc<'b>> {
+        let blksize = self.s_meta.s_block_size;
+        let mut desc = RafsBioDesc::new();
+        let end = offset + size as u64;
+
+        for idx in 0..inode.chunk_cnt() {
+            let blk = self.s_inodes.get_chunk_info(inode, idx)?;
+            if (blk.file_offset() + blksize as u64) <= offset {
+                continue;
+            } else if blk.file_offset() >= end {
+                break;
+            }
+
+            let blob_id = self.get_blob_id(blk.blob_index())?;
+            let file_start = cmp::max(blk.file_offset(), offset);
+            let file_end = cmp::min(blk.file_offset() + blksize as u64, end);
+            let bio = RafsBio::new(
+                blk,
+                blob_id,
+                (file_start - blk.file_offset()) as u32,
+                (file_end - file_start) as usize,
+                blksize,
+            );
+
+            desc.bi_vec.push(bio);
+            desc.bi_size += bio.size;
+        }
+
+        Ok(desc)
+    }
+
+    pub fn get_child_by_name(&self, parent: &dyn RafsInode, name: &str) -> Result<&dyn RafsInode> {
+        for idx in parent.child_index()..parent.child_index() + parent.child_count() {
+            let inode = self.get_inode(idx as Inode)?;
+            if inode.name() == name {
+                return Ok(inode);
+            }
+        }
+
+        Err(enoent())
+    }
+
+    pub fn get_child<'a, 'b>(&'a self, parent: &dyn RafsInode, idx: u32) -> Result<&dyn RafsInode> {
+        if idx >= parent.child_count() {
+            return Err(enoent());
+        }
+        match idx.checked_add(parent.child_index()) {
+            None => Err(enoent()),
+            Some(v) => Ok(self.get_inode(v as Inode)?),
+        }
+    }
+
+    pub fn get_child_count(&self, parent: &dyn RafsInode) -> Result<usize> {
+        Ok(parent.child_count() as usize)
+    }
+
+    pub fn get_entry(&self, inode: &dyn RafsInode) -> Entry {
+        Entry {
+            attr: self.get_attr(inode).into(),
+            inode: inode.ino(),
+            generation: 0,
+            attr_timeout: self.s_meta.s_attr_timeout,
+            entry_timeout: self.s_meta.s_entry_timeout,
+        }
+    }
+
+    pub fn get_attr(&self, inode: &dyn RafsInode) -> Attr {
+        Attr {
+            ino: inode.ino(),
+            size: inode.size(),
+            blocks: inode.blocks(),
+            atime: inode.atime(),
+            ctime: inode.ctime(),
+            mtime: inode.mtime(),
+            mode: inode.mode(),
+            nlink: inode.nlink() as u32,
+            uid: inode.uid(),
+            gid: inode.gid(),
+            rdev: inode.rdev() as u32,
+            blksize: RAFS_INODE_BLOCKSIZE,
+            ..Default::default()
+        }
+    }
+
+    pub fn get_symlink(&self, inode: &dyn RafsInode) -> Result<OndiskSymlinkInfo> {
+        self.s_inodes.get_symlink(inode)
+    }
+
+    pub fn get_xattrs(&self, _inode: &dyn RafsInode) -> Result<HashMap<String, Vec<u8>>> {
+        unimplemented!();
     }
 }
 
 /// Trait to manage all inodes of a file system.
 pub trait RafsSuperInodes {
     fn load(&mut self, sb: &mut RafsSuperMeta, r: &mut RafsIoReader) -> Result<()>;
+
     fn destroy(&mut self);
 
     fn get_inode(&self, ino: Inode) -> Result<&dyn RafsInode>;
 
-    fn get_blob_id<'a>(&'a self, index: u32) -> Result<&'a OndiskDigest>;
+    fn get_blob_id<'a>(&'a self, idx: u32) -> Result<&'a OndiskDigest>;
 
-    fn get_xattrs(&self, _inode: &OndiskInode) -> Result<HashMap<String, Vec<u8>>> {
-        Err(enosys())
-    }
+    fn get_chunk_info(&self, inode: &dyn RafsInode, idx: u64) -> Result<&OndiskChunkInfo>;
 
-    fn alloc_bio_desc<'a>(
-        &'a self,
-        _blksize: u32,
-        _size: usize,
-        _offset: u64,
-        _inode: &OndiskInode,
-    ) -> Result<RafsBioDesc<'a>> {
-        Err(enosys())
-    }
+    fn get_symlink(&self, inode: &dyn RafsInode) -> Result<OndiskSymlinkInfo>;
 }
 
 /// Trait to access Rafs Inode Information.
@@ -230,30 +320,7 @@ pub trait RafsInode {
     ///
     /// The object may be transmuted from a raw buffer read from an external file, so the caller
     /// must validate it before accessing any fields of the object.
-    fn validate(&self, sb: &RafsSuperMeta) -> Result<()>;
-
-    fn get_entry(&self, sb: &RafsSuperMeta) -> Entry;
-    fn get_attr(&self) -> Attr;
-    fn get_symlink(&self) -> Result<OndiskSymlinkInfo>;
-    fn get_xattrs(&self, sb: &RafsSuper) -> Result<HashMap<String, Vec<u8>>>;
-    fn get_child_count(&self, sb: &RafsSuper) -> Result<usize>;
-    fn get_child_by_index<'a, 'b>(
-        &'a self,
-        index: usize,
-        sb: &'b RafsSuper,
-    ) -> Result<&'b dyn RafsInode>;
-    fn get_child_by_name<'a, 'b>(
-        &'a self,
-        target: &str,
-        sb: &'b RafsSuper,
-    ) -> Result<&'b dyn RafsInode>;
-    fn alloc_bio_desc<'a>(
-        &'a self,
-        blksize: u32,
-        size: usize,
-        offset: u64,
-        sb: &'a RafsSuper,
-    ) -> Result<RafsBioDesc<'a>>;
+    fn validate(&self) -> Result<()>;
 
     // Simply accessors below
     fn name(&self) -> &str;

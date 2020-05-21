@@ -2,26 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-use std::cmp;
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Error, Result};
 use std::mem::size_of;
 use std::os::unix::io::{FromRawFd, RawFd};
-use std::slice;
 use std::sync::Arc;
 
-use crate::fs::Inode;
-use crate::metadata::layout::{
-    OndiskBlobTable, OndiskChunkInfo, OndiskDigest, OndiskInode, OndiskInodeTable,
-    OndiskSymlinkInfo, RAFS_ALIGNMENT, RAFS_CHUNK_INFO_SIZE, RAFS_INODE_INFO_SIZE,
-    RAFS_SUPERBLOCK_SIZE,
-};
-use crate::metadata::{
-    parse_string, RafsChunkInfo, RafsInode, RafsSuperInodes, RafsSuperMeta, RAFS_MAX_METADATA_SIZE,
-};
-use crate::storage::device::{RafsBio, RafsBioDesc};
-use crate::*;
+use crate::metadata::layout::*;
+use crate::metadata::*;
 
 struct DirectMapping {
     base: *const u8,
@@ -105,24 +93,6 @@ impl DirectMapInodes {
             blob_table,
         }
     }
-
-    fn get_inode_internal(&self, ino: Inode) -> Result<&OndiskInode> {
-        let offset = self.inode_table.get(ino)?;
-        self.mapping
-            .cast_to_ref::<OndiskInode>(self.mapping.base, offset as usize)
-    }
-
-    fn get_blob_id<'a>(&'a self, blob_index: u32) -> Result<&'a OndiskDigest> {
-        self.blob_table.get(blob_index)
-    }
-
-    fn get_chunk_info(&self, inode: &OndiskInode, idx: u64) -> Result<&OndiskChunkInfo> {
-        let ptr = inode as *const OndiskInode as *const u8;
-        let chunk = ptr
-            .wrapping_add(size_of::<OndiskInode>() + size_of::<OndiskChunkInfo>() * idx as usize);
-
-        self.mapping.cast_to_ref::<OndiskChunkInfo>(chunk, 0)
-    }
 }
 
 impl RafsSuperInodes for DirectMapInodes {
@@ -143,52 +113,37 @@ impl RafsSuperInodes for DirectMapInodes {
     }
 
     fn get_inode(&self, ino: u64) -> Result<&dyn RafsInode> {
-        let inode = self.get_inode_internal(ino)?;
+        let offset = self.inode_table.get(ino)?;
+        let inode = self
+            .mapping
+            .cast_to_ref::<OndiskInode>(self.mapping.base, offset as usize)?;
         Ok(inode as &dyn RafsInode)
     }
 
-    fn get_blob_id<'a>(&'a self, index: u32) -> Result<&'a OndiskDigest> {
-        self.blob_table.get(index)
+    fn get_blob_id<'a>(&'a self, idx: u32) -> Result<&'a OndiskDigest> {
+        self.blob_table.get(idx)
     }
 
-    fn get_xattrs(&self, _inode: &OndiskInode) -> Result<HashMap<String, Vec<u8>>> {
-        unimplemented!()
+    fn get_chunk_info(&self, inode: &dyn RafsInode, idx: u64) -> Result<&OndiskChunkInfo> {
+        let ptr = inode as *const dyn RafsInode as *const u8;
+        let chunk = ptr
+            .wrapping_add(size_of::<OndiskInode>() + size_of::<OndiskChunkInfo>() * idx as usize);
+
+        self.mapping.cast_to_ref::<OndiskChunkInfo>(chunk, 0)
     }
 
-    fn alloc_bio_desc<'b>(
-        &'b self,
-        blksize: u32,
-        size: usize,
-        offset: u64,
-        inode: &OndiskInode,
-    ) -> Result<RafsBioDesc<'b>> {
-        let mut desc = RafsBioDesc::new();
-        let end = offset + size as u64;
-
-        for idx in 0..inode.chunk_cnt() {
-            let blk = self.get_chunk_info(inode, idx)?;
-            if (blk.file_offset() + blksize as u64) <= offset {
-                continue;
-            } else if blk.file_offset() >= end {
-                break;
-            }
-
-            let blob_id = self.get_blob_id(blk.blob_index())?;
-            let file_start = cmp::max(blk.file_offset(), offset);
-            let file_end = cmp::min(blk.file_offset() + blksize as u64, end);
-            let bio = RafsBio::new(
-                blk,
-                blob_id,
-                (file_start - blk.file_offset()) as u32,
-                (file_end - file_start) as usize,
-                blksize,
-            );
-
-            desc.bi_vec.push(bio);
-            desc.bi_size += bio.size;
+    fn get_symlink(&self, inode: &dyn RafsInode) -> Result<OndiskSymlinkInfo> {
+        let sz = inode.chunk_cnt() as usize * RAFS_ALIGNMENT;
+        if sz == 0 || sz > (libc::PATH_MAX as usize) + RAFS_ALIGNMENT - 1 {
+            return Err(ebadf());
         }
 
-        Ok(desc)
+        let start = (inode as *const dyn RafsInode as *const u8).wrapping_add(RAFS_INODE_INFO_SIZE);
+        let input = unsafe { std::slice::from_raw_parts(start, sz) };
+
+        Ok(OndiskSymlinkInfo {
+            data: input.to_vec(),
+        })
     }
 }
 

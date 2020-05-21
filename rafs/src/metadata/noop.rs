@@ -6,7 +6,7 @@
 
 use std::io::Result;
 
-use super::{OndiskDigest, RafsSuperInodes, RafsSuperMeta};
+use super::*;
 use crate::metadata::RafsInode;
 use crate::RafsIoReader;
 
@@ -30,6 +30,14 @@ impl RafsSuperInodes for NoopInodes {
     }
 
     fn get_blob_id<'a>(&'a self, _index: u32) -> Result<&'a OndiskDigest> {
+        unimplemented!()
+    }
+
+    fn get_chunk_info(&self, _inode: &dyn RafsInode, _idx: u64) -> Result<&OndiskChunkInfo> {
+        unimplemented!()
+    }
+
+    fn get_symlink(&self, _inode: &dyn RafsInode) -> Result<OndiskSymlinkInfo> {
         unimplemented!()
     }
 }

@@ -30,13 +30,9 @@
 //!    inode_ptr = sb_base_ptr + inode_offset_from_sb(inode_number)
 //!    inode_ptr = sb_base_ptr + inode_offset_from_sb(child_index)
 
-use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::io::{Error, ErrorKind, Result};
 use std::str;
-
-use fuse_rs::abi::linux_abi::Attr;
-use fuse_rs::api::filesystem::ROOT_ID;
 
 use super::*;
 use crate::{einval, enoent};
@@ -452,133 +448,8 @@ impl OndiskInode {
 }
 
 impl RafsInode for OndiskInode {
-    fn validate(&self, sb: &RafsSuperMeta) -> Result<()> {
-        let name = parse_string(&self.i_name[0..=RAFS_MAX_NAME])?;
-
-        if name.len() > RAFS_MAX_NAME {
-            return Err(einval());
-        }
-        if self.parent() < ROOT_ID
-            || self.parent() >= sb.s_inodes_count
-            || self.ino() < ROOT_ID
-            || self.ino() >= sb.s_inodes_count
-            || (self.ino() == self.parent() && self.ino() != ROOT_ID)
-            || self.flags() & !INO_FLAG_ALL != 0
-            || (self.flags() & INO_FLAG_SYMLINK != 0) != self.is_symlink()
-            || (self.is_hardlink() && self.is_symlink())
-            || self.nlink() > (std::u32::MAX as u64)
-            || self.rdev() > (std::u32::MAX as u64)
-        {
-            return Err(einval());
-        }
-
-        if self.is_reg() {
-            if (self.size() + RAFS_INODE_BLOCKSIZE as u64 - 1) / RAFS_INODE_BLOCKSIZE as u64
-                != self.chunk_cnt()
-            {
-                return Err(einval());
-            }
-        } else if self.is_symlink() {
-            // TODO
-        } else if self.is_hardlink() {
-            // TODO
-        }
-
-        // TODO: validate i_size: 0, i_nlink: 0, i_blocks: 0, i_chunk_cnt: 0,
-
-        Ok(())
-    }
-
-    fn get_entry(&self, sb: &RafsSuperMeta) -> Entry {
-        Entry {
-            attr: self.get_attr().into(),
-            inode: self.i_ino,
-            generation: 0,
-            attr_timeout: sb.s_attr_timeout,
-            entry_timeout: sb.s_entry_timeout,
-        }
-    }
-
-    fn get_attr(&self) -> Attr {
-        Attr {
-            ino: self.ino(),
-            size: self.size(),
-            blocks: self.blocks(),
-            atime: self.atime(),
-            ctime: self.ctime(),
-            mtime: self.mtime(),
-            mode: self.mode(),
-            nlink: self.nlink() as u32,
-            uid: self.uid(),
-            gid: self.gid(),
-            rdev: self.rdev() as u32,
-            blksize: RAFS_INODE_BLOCKSIZE,
-            ..Default::default()
-        }
-    }
-
-    fn get_symlink(&self) -> Result<OndiskSymlinkInfo> {
-        let sz = self.chunk_cnt() as usize * RAFS_ALIGNMENT;
-        if sz == 0 || sz > (libc::PATH_MAX as usize) + RAFS_ALIGNMENT - 1 {
-            return Err(ebadf());
-        }
-
-        let start = (self as *const OndiskInode as *const u8).wrapping_add(RAFS_INODE_INFO_SIZE);
-        let input = unsafe { std::slice::from_raw_parts(start, sz) };
-
-        Ok(OndiskSymlinkInfo {
-            data: input.to_vec(),
-        })
-    }
-
-    fn get_xattrs(&self, sb: &RafsSuper) -> Result<HashMap<String, Vec<u8>>> {
-        sb.s_inodes.get_xattrs(self)
-    }
-
-    fn get_child_count(&self, sb: &RafsSuper) -> Result<usize> {
-        match sb.s_meta.s_version {
-            RAFS_SUPER_VERSION_V5 => Ok(self.child_count() as usize),
-            _ => Err(enosys()),
-        }
-    }
-
-    fn get_child_by_index<'a, 'b>(
-        &'a self,
-        index: usize,
-        sb: &'b RafsSuper,
-    ) -> Result<&'b dyn RafsInode> {
-        if index >= self.child_count() as usize {
-            return Err(enoent());
-        }
-        match index.checked_add(self.child_index() as usize) {
-            None => Err(enoent()),
-            Some(v) => sb.get_inode(v as Inode),
-        }
-    }
-
-    fn get_child_by_name<'a, 'b>(
-        &'a self,
-        target: &str,
-        sb: &'b RafsSuper,
-    ) -> Result<&'b dyn RafsInode> {
-        for idx in self.child_index()..self.child_index() + self.child_count() {
-            let inode = sb.get_inode(idx as Inode)?;
-            if inode.name() == target {
-                return Ok(inode);
-            }
-        }
-
-        Err(enoent())
-    }
-
-    fn alloc_bio_desc<'a>(
-        &'a self,
-        blksize: u32,
-        size: usize,
-        offset: u64,
-        sb: &'a RafsSuper,
-    ) -> Result<RafsBioDesc<'a>> {
-        sb.s_inodes.alloc_bio_desc(blksize, size, offset, self)
+    fn validate(&self) -> Result<()> {
+        unimplemented!();
     }
 
     fn name(&self) -> &str {

@@ -126,7 +126,7 @@ impl Rafs {
         }
     }
 
-    fn do_readdir<F>(&self, inode: Inode, size: u32, offset: u64, mut add_entry: F) -> Result<()>
+    fn do_readdir<F>(&self, ino: Inode, size: u32, offset: u64, mut add_entry: F) -> Result<()>
     where
         F: FnMut(DirEntry) -> Result<usize>,
     {
@@ -134,14 +134,14 @@ impl Rafs {
             return Ok(());
         }
 
-        let rafs_inode = self.sb.get_inode(inode)?;
-        if !rafs_inode.is_dir() {
+        let parent = self.sb.get_inode(ino)?;
+        if !parent.is_dir() {
             return Err(ebadf());
         }
 
         let mut idx = offset as usize;
-        while idx < rafs_inode.get_child_count(&self.sb)? {
-            let child = rafs_inode.get_child_by_index(idx, &self.sb)?;
+        while idx < self.sb.get_child_count(parent)? {
+            let child = self.sb.get_child(parent, idx as u32)?;
             match add_entry(DirEntry {
                 ino: child.ino(),
                 offset: (idx + 1) as u64,
@@ -208,24 +208,25 @@ impl FileSystem for Rafs {
 
     fn destroy(&self) {}
 
-    fn lookup(&self, _ctx: Context, parent: u64, name: &CStr) -> Result<Entry> {
+    fn lookup(&self, _ctx: Context, ino: u64, name: &CStr) -> Result<Entry> {
         let target = name.to_str().or_else(|_| Err(ebadf()))?;
-        let p = self.sb.get_inode(parent)?;
-        if !p.is_dir() {
+        let parent = self.sb.get_inode(ino)?;
+        if !parent.is_dir() {
             return Err(ebadf());
         }
 
-        if target == DOT || (parent == ROOT_ID && target == DOTDOT) {
-            let mut entry = p.get_entry(&self.sb.s_meta);
-            entry.inode = parent;
+        if target == DOT || (ino == ROOT_ID && target == DOTDOT) {
+            let mut entry = self.sb.get_entry(parent);
+            entry.inode = ino;
             Ok(entry)
         } else if target == DOTDOT {
             self.sb
-                .get_inode(p.parent())
-                .map(|i| i.get_entry(&self.sb.s_meta))
+                .get_inode(parent.parent())
+                .map(|i| self.sb.get_entry(i))
         } else {
-            p.get_child_by_name(target, &self.sb)
-                .map(|i| i.get_entry(&self.sb.s_meta))
+            self.sb
+                .get_child_by_name(parent, target)
+                .map(|i| self.sb.get_entry(i))
         }
     }
 
@@ -240,41 +241,40 @@ impl FileSystem for Rafs {
     fn getattr(
         &self,
         _ctx: Context,
-        inode: u64,
+        ino: u64,
         _handle: Option<u64>,
     ) -> Result<(libc::stat64, Duration)> {
-        let rafs_inode = self.sb.get_inode(inode)?;
-        Ok((rafs_inode.get_attr().into(), self.sb.s_meta.s_attr_timeout))
+        let inode = self.sb.get_inode(ino)?;
+
+        Ok((
+            self.sb.get_attr(inode).into(),
+            self.sb.s_meta.s_attr_timeout,
+        ))
     }
 
-    fn readlink(&self, _ctx: Context, inode: u64) -> Result<Vec<u8>> {
-        let rafs_inode = self.sb.get_inode(inode)?;
+    fn readlink(&self, _ctx: Context, ino: u64) -> Result<Vec<u8>> {
+        let inode = self.sb.get_inode(ino)?;
 
-        Ok(rafs_inode.get_symlink()?.data.clone())
+        Ok(self.sb.get_symlink(inode)?.data.clone())
     }
 
     #[allow(clippy::too_many_arguments)]
     fn read(
         &self,
         _ctx: Context,
-        inode: u64,
-        handle: u64,
+        ino: u64,
+        _handle: u64,
         w: &mut dyn ZeroCopyWriter,
         size: u32,
         offset: u64,
         _lock_owner: Option<u64>,
         _flags: u32,
     ) -> Result<usize> {
-        let rafs_inode = self.sb.get_inode(inode)?;
-        if offset >= rafs_inode.size() {
+        let inode = self.sb.get_inode(ino)?;
+        if offset >= inode.size() {
             return Ok(0);
         }
-        let desc = rafs_inode.alloc_bio_desc(
-            self.sb.s_meta.s_block_size,
-            size as usize,
-            offset,
-            &self.sb,
-        )?;
+        let desc = self.sb.alloc_bio_desc(inode, offset, size as usize)?;
         let start = io_stats::ios_latency_start();
         let r = self.device.read_to(w, desc);
         rafs_inode.stats_update(&self, io_stats::StatsFop::Read, size as usize, &r);
@@ -312,10 +312,10 @@ impl FileSystem for Rafs {
 
     fn getxattr(&self, _ctx: Context, inode: u64, name: &CStr, size: u32) -> Result<GetxattrReply> {
         let key = name.to_str().or_else(|_| Err(einval()))?;
-        let rafs_inode = self.sb.get_inode(inode)?;
+        let inode = self.sb.get_inode(inode)?;
 
         // Keep for simplicity, not optimized for performance.
-        for (k, v) in rafs_inode.get_xattrs(&self.sb)? {
+        for (k, v) in self.sb.get_xattrs(inode)? {
             if key == k {
                 return match size {
                     0 => Ok(GetxattrReply::Count((v.len() + 1) as u32)),
@@ -328,11 +328,11 @@ impl FileSystem for Rafs {
     }
 
     fn listxattr(&self, _ctx: Context, inode: u64, size: u32) -> Result<ListxattrReply> {
-        let rafs_inode = self.sb.get_inode(inode)?;
+        let inode = self.sb.get_inode(inode)?;
         let mut count = 0;
         let mut buf = Vec::new();
 
-        for (k, _v) in rafs_inode.get_xattrs(&self.sb)? {
+        for (k, _v) in self.sb.get_xattrs(inode)? {
             match size {
                 0 => count += k.len() + 1,
                 _ => {
@@ -363,15 +363,15 @@ impl FileSystem for Rafs {
     fn readdirplus(
         &self,
         _ctx: Context,
-        inode: u64,
+        ino: u64,
         _handle: u64,
         size: u32,
         offset: u64,
         add_entry: &mut dyn FnMut(DirEntry, Entry) -> Result<usize>,
     ) -> Result<()> {
-        self.do_readdir(inode, size, offset, |dir_entry| {
-            let rafs_inode = self.sb.get_inode(dir_entry.ino)?;
-            add_entry(dir_entry, rafs_inode.get_entry(&self.sb.s_meta))
+        self.do_readdir(ino, size, offset, |dir_entry| {
+            let inode = self.sb.get_inode(dir_entry.ino)?;
+            add_entry(dir_entry, self.sb.get_entry(inode))
         })
     }
 
@@ -379,9 +379,9 @@ impl FileSystem for Rafs {
         Ok(())
     }
 
-    fn access(&self, ctx: Context, inode: u64, mask: u32) -> Result<()> {
-        let rafs_inode = self.sb.get_inode(inode)?;
-        let st = rafs_inode.get_attr();
+    fn access(&self, ctx: Context, ino: u64, mask: u32) -> Result<()> {
+        let inode = self.sb.get_inode(ino)?;
+        let st = self.sb.get_attr(inode);
         let mode = mask as i32 & (libc::R_OK | libc::W_OK | libc::X_OK);
 
         if mode == libc::F_OK {
