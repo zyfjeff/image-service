@@ -189,7 +189,8 @@ components:
         block_count_read: [0, 0, 0, 0, 0]
         fop_hits: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         fop_errors: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-        fop_cumulative_latency: [0, 0, 0, 0, 2831, 0, 0, 0, 0, 0, 0]
+        fop_cumulative_latency_avg: [0, 0, 0, 0, 2831, 0, 0, 0, 0, 0, 0]
+        fop_cumulative_latency_total: [0, 0, 0, 0, 2831, 0, 0, 0, 0, 0, 0]
         read_latency_dist: [0, 0, 0, 1, 0, 0, 0, 0]
         nr_opens: 12
         nr_max_opens: 100
@@ -207,7 +208,9 @@ components:
           type: array
         fop_errors:
           type: array
-        fop_cumulative_latency:
+        fop_cumulative_latency_avg:
+          type: array
+        fop_cumulative_latency_total:
           type: array
         read_latency_dist:
           type: array

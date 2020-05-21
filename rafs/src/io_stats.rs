@@ -57,7 +57,11 @@ pub struct GlobalIOStats {
     fop_errors: [AtomicUsize; StatsFop::Max as usize],
     // Cumulative latency's life cycle is equivalent to Rafs, unlike incremental
     // latency which will be cleared each time dumped. Unit as micro-seconds.
-    fop_cumulative_latency: [AtomicIsize; StatsFop::Max as usize],
+    //   * @avg means fop average latency from mount, io_stats calculates the up-to-date average latency.
+    //   * @total means io_stats simply adds every fop latency to the counter which is never cleared.
+    //     It is useful for other tools to calculate their metrics report.
+    fop_cumulative_latency_avg: [AtomicIsize; StatsFop::Max as usize],
+    fop_cumulative_latency_total: [AtomicIsize; StatsFop::Max as usize],
     // Record how many times read latency drops to the ranges.
     // This helps us to understand the io service time stability.
     read_latency_dist: [AtomicIsize; READ_LATENCY_RANGE_MAX],
@@ -176,7 +180,9 @@ pub fn ios_latency_end(start: &Option<SystemTime>, fop: StatsFop) {
         if let Some(start) = start {
             if let Ok(d) = SystemTime::elapsed(start) {
                 let elapsed = d.as_micros() as isize;
-                let avg = IOS.fop_cumulative_latency[fop as usize].load(Ordering::Relaxed);
+                IOS.fop_cumulative_latency_total[fop as usize]
+                    .fetch_add(elapsed, Ordering::Relaxed);
+                let avg = IOS.fop_cumulative_latency_avg[fop as usize].load(Ordering::Relaxed);
                 let fop_cnt = IOS.fop_hits[fop as usize].load(Ordering::Relaxed) as isize;
 
                 // Zero fop count is hardly to meet, but still check here in
@@ -185,7 +191,7 @@ pub fn ios_latency_end(start: &Option<SystemTime>, fop: StatsFop) {
                     return;
                 }
                 let new_avg = || avg + (elapsed - avg) / fop_cnt;
-                IOS.fop_cumulative_latency[fop as usize].store(new_avg(), Ordering::Relaxed);
+                IOS.fop_cumulative_latency_avg[fop as usize].store(new_avg(), Ordering::Relaxed);
 
                 IOS.read_latency_dist[latency_range_index(elapsed)].fetch_add(1, Ordering::Relaxed);
             }
