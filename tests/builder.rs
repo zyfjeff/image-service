@@ -1,11 +1,16 @@
-use crypto::digest::Digest;
-use crypto::sha2::Sha256;
 use std::collections::HashMap;
+use std::fs::OpenOptions;
 use std::fs::{self, File};
 use std::io::{Error, ErrorKind, Read, Result, Write};
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+use crypto::digest::Digest;
+use crypto::sha2::Sha256;
+
+use rafs::metadata::RafsSuper;
+use rafs::RafsIoRead;
 
 const NYDUS_IMAGE: &str = "./target-fusedev/debug/nydus-image";
 
@@ -104,7 +109,7 @@ impl<'a> Builder<'a> {
         self.create_dir(&dir)?;
         self.create_file(&dir.join("test-1"), b"lower:test-1")?;
         self.create_file(&dir.join("test-2"), b"lower:test-2")?;
-        self.create_rnd_file(&dir.join("test-3-large"), "10MB")?;
+        self.create_rnd_file(&dir.join("test-3-large"), "2MB")?;
         self.create_dir(&dir.join("sub"))?;
         self.create_file(&dir.join("sub/test-1"), b"lower:sub/test-1")?;
         self.create_file(&dir.join("sub/test-2"), b"lower:sub/test-2")?;
@@ -174,6 +179,31 @@ impl<'a> Builder<'a> {
             )
             .as_str(),
         )?;
+
+        Ok(())
+    }
+
+    pub fn check_bootstrap(&mut self) -> Result<()> {
+        let f_bootstrap = Box::new(
+            OpenOptions::new()
+                .write(false)
+                .create(false)
+                .read(true)
+                .open(self.work_dir.join("parent-bootstrap"))?,
+        );
+
+        let mut f_bootstrap: Box<dyn RafsIoRead> = f_bootstrap;
+        let mut super_block = RafsSuper::new();
+        super_block.load(&mut f_bootstrap).unwrap();
+
+        for i in 1..15 {
+            let inode = super_block.get_inode(i)?;
+            if inode.is_symlink() {
+                let link = super_block.get_symlink(inode)?;
+                println!("link {:?}", link.to_str()?);
+            }
+            println!("inode {:?} {} {}", inode.name(), inode.size(), inode.ino());
+        }
 
         Ok(())
     }

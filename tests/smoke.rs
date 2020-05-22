@@ -12,6 +12,7 @@ fn run() -> Result<()> {
     // create & build parent rootfs
     builder.make_parent()?;
     builder.build_parent()?;
+    builder.check_bootstrap()?;
 
     // create & build source rootfs based parent
     builder.make_source()?;
