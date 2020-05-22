@@ -387,13 +387,10 @@ impl FileSystem for Vfs {
     ) -> Result<Entry> {
         match self.get_real_rootfs(parent)? {
             (Left(fs), idata) => fs.mkdir(ctx, idata.ino, name, mode, umask),
-            (Right(fs), idata) => {
-                fs.mkdir(ctx, idata.ino.into(), name, mode, umask)
-                    .map(|mut e| {
-                        e.inode = self.hash_inode(idata.super_index, e.inode);
-                        e
-                    })
-            }
+            (Right(fs), idata) => fs.mkdir(ctx, idata.ino, name, mode, umask).map(|mut e| {
+                e.inode = self.hash_inode(idata.super_index, e.inode);
+                e
+            }),
         }
     }
 

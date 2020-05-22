@@ -43,7 +43,7 @@ pub struct FileInfo {
 
 pub struct Builder<'a> {
     work_dir: &'a PathBuf,
-    files: HashMap<String, FileInfo>,
+    files: HashMap<PathBuf, FileInfo>,
 }
 
 pub fn new<'a>(work_dir: &'a PathBuf) -> Builder<'a> {
@@ -55,8 +55,7 @@ pub fn new<'a>(work_dir: &'a PathBuf) -> Builder<'a> {
 
 impl<'a> Builder<'a> {
     pub fn record(&mut self, path: &PathBuf, file_info: FileInfo) {
-        self.files
-            .insert(path.to_str().unwrap().to_owned(), file_info);
+        self.files.insert(path.clone(), file_info);
     }
 
     pub fn create_dir(&mut self, path: &PathBuf) -> Result<()> {
@@ -84,14 +83,7 @@ impl<'a> Builder<'a> {
     }
 
     pub fn create_rnd_file(&mut self, path: &PathBuf, size: &str) -> Result<()> {
-        exec(
-            format!(
-                "dd if=/dev/urandom of={} bs={} count=1",
-                path.to_str().unwrap(),
-                size
-            )
-            .as_str(),
-        )?;
+        exec(format!("dd if=/dev/urandom of={:?} bs={} count=1", path, size).as_str())?;
 
         let mut file = File::open(path)?;
         let mut data = Vec::new();
@@ -150,16 +142,16 @@ impl<'a> Builder<'a> {
     }
 
     pub fn build_parent(&mut self) -> Result<()> {
-        let parent_dir = self.work_dir.join("parent").to_path_buf();
+        let parent_dir = self.work_dir.join("parent");
 
-        exec(format!("tree {} -a", parent_dir.to_str().unwrap()).as_str())?;
+        exec(format!("tree {:?} -a", parent_dir).as_str())?;
         exec(
             format!(
-                "{} create --blob {} --bootstrap {} {}",
+                "{:?} create --blob {:?} --bootstrap {:?} {:?}",
                 NYDUS_IMAGE,
-                self.work_dir.join("parent-blob").to_str().unwrap(),
-                self.work_dir.join("parent-bootstrap").to_str().unwrap(),
-                parent_dir.to_str().unwrap(),
+                self.work_dir.join("parent-blob"),
+                self.work_dir.join("parent-bootstrap"),
+                parent_dir,
             )
             .as_str(),
         )?;
@@ -170,15 +162,15 @@ impl<'a> Builder<'a> {
     pub fn build_source(&mut self) -> Result<()> {
         let source_dir = self.work_dir.join("source").to_path_buf();
 
-        exec(format!("tree {} -a", source_dir.to_str().unwrap()).as_str())?;
+        exec(format!("tree {:?} -a", source_dir).as_str())?;
         exec(
             format!(
-                "{} create --blob {} --bootstrap {} --parent_bootstrap {} {}",
+                "{:?} create --blob {:?} --bootstrap {:?} --parent_bootstrap {:?} {:?}",
                 NYDUS_IMAGE,
-                self.work_dir.join("source-blob").to_str().unwrap(),
-                self.work_dir.join("bootstrap").to_str().unwrap(),
-                self.work_dir.join("parent-bootstrap").to_str().unwrap(),
-                source_dir.to_str().unwrap(),
+                self.work_dir.join("source-blob"),
+                self.work_dir.join("bootstrap"),
+                self.work_dir.join("parent-bootstrap"),
+                source_dir,
             )
             .as_str(),
         )?;

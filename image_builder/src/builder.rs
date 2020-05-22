@@ -2,23 +2,23 @@
 // Use of this source code is governed by a Apache 2.0 license that can be
 // found in the LICENSE file.
 
-use crypto::digest::Digest;
+// use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Result};
-use std::os::linux::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+// use std::os::linux::fs::MetadataExt;
+use std::path::PathBuf;
 
 use rafs::metadata::layout::*;
-use rafs::metadata::{RafsChunkInfo, RafsInode, RafsSuper, RAFS_SHA256_LENGTH};
+use rafs::metadata::{RafsChunkInfo, RafsInode, RafsSuper};
 use rafs::{RafsIoRead, RafsIoWrite};
 
 use crate::node::*;
 
-const OCISPEC_WHITEOUT_PREFIX: &str = ".wh.";
-const OCISPEC_WHITEOUT_OPAQUE: &str = ".wh..wh..opq";
+// const OCISPEC_WHITEOUT_PREFIX: &str = ".wh.";
+// const OCISPEC_WHITEOUT_OPAQUE: &str = ".wh..wh..opq";
 
 pub struct Builder {
     /// source root path
@@ -167,7 +167,7 @@ impl Builder {
                 root: self.root.clone(),
                 path: path.clone(),
                 overlay,
-                inode: inode.clone(),
+                inode,
                 chunks,
                 link_chunk: None,
                 // xattr_chunks,
@@ -363,8 +363,8 @@ pub(crate) mod tests {
 
         let mut builder = super::Builder {
             root: PathBuf::from("/home/imeoer/parent"),
-            f_blob: f_blob,
-            f_bootstrap: f_bootstrap,
+            f_blob,
+            f_bootstrap,
             f_parent_bootstrap: None,
             blob_offset: 0,
             blob_id: String::from(""),

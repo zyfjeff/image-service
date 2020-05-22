@@ -12,9 +12,15 @@ use crate::RafsIoReader;
 
 pub struct NoopInodes {}
 
+impl Default for NoopInodes {
+    fn default() -> Self {
+        Self {}
+    }
+}
+
 impl NoopInodes {
     pub fn new() -> Self {
-        NoopInodes {}
+        Self::default()
     }
 }
 

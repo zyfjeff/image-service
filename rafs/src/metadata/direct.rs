@@ -72,7 +72,7 @@ impl DirectMapping {
 
 impl Drop for DirectMapping {
     fn drop(&mut self) {
-        if self.base != std::ptr::null() {
+        if !self.base.is_null() {
             unsafe { libc::munmap(self.base as *mut u8 as *mut libc::c_void, self.size) };
             self.base = std::ptr::null();
             self.end = std::ptr::null();

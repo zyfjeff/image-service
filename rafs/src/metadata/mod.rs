@@ -24,12 +24,12 @@ use fuse_rs::api::filesystem::Entry;
 use self::layout::*;
 use self::noop::NoopInodes;
 use crate::fs::{Inode, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
-use crate::metadata::direct_map::DirectMapInodes;
+use crate::metadata::direct::DirectMapInodes;
 use crate::*;
 use crate::{ebadf, einval, RafsIoReader, RafsIoWriter};
 
 // pub mod cached;
-pub mod direct_map;
+pub mod direct;
 pub mod layout;
 pub mod noop;
 
@@ -68,9 +68,9 @@ pub struct RafsSuper {
     cache_inodes: bool,
 }
 
-impl RafsSuper {
-    pub fn new() -> Self {
-        RafsSuper {
+impl Default for RafsSuper {
+    fn default() -> Self {
+        Self {
             s_meta: RafsSuperMeta {
                 s_magic: 0,
                 s_version: 0,
@@ -93,6 +93,12 @@ impl RafsSuper {
             load_inodes: true,
             cache_inodes: false,
         }
+    }
+}
+
+impl RafsSuper {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn destroy(&mut self) {
@@ -248,7 +254,7 @@ impl RafsSuper {
         Err(enoent())
     }
 
-    pub fn get_child<'a, 'b>(&'a self, parent: &dyn RafsInode, idx: u32) -> Result<&dyn RafsInode> {
+    pub fn get_child(&self, parent: &dyn RafsInode, idx: u32) -> Result<&dyn RafsInode> {
         if idx >= parent.child_count() {
             return Err(enoent());
         }

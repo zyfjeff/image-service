@@ -159,9 +159,9 @@ pub struct OndiskSuperBlock {
     s_reserved: [u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
 }
 
-impl OndiskSuperBlock {
-    pub fn new() -> Self {
-        OndiskSuperBlock {
+impl Default for OndiskSuperBlock {
+    fn default() -> Self {
+        Self {
             s_magic: u32::to_le(RAFS_SUPER_MAGIC as u32),
             s_fs_version: u32::to_le(RAFS_SUPER_VERSION_V5),
             s_sb_size: u32::to_le(RAFS_SUPERBLOCK_SIZE as u32),
@@ -176,6 +176,12 @@ impl OndiskSuperBlock {
             s_blob_table_offset: u64::to_le(0),
             s_reserved: [0u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
         }
+    }
+}
+
+impl OndiskSuperBlock {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -412,9 +418,9 @@ pub struct OndiskInode {
     i_reserved: [u8; RAFS_INODE_INFO_RESERVED_SIZE],
 }
 
-impl OndiskInode {
-    pub fn new() -> Self {
-        OndiskInode {
+impl Default for OndiskInode {
+    fn default() -> Self {
+        Self {
             i_name: [0u8; RAFS_MAX_NAME + 1],
             i_digest: OndiskDigest::default(),
             i_parent: 0,
@@ -436,6 +442,12 @@ impl OndiskInode {
             i_child_count: 0,
             i_reserved: [0u8; RAFS_INODE_INFO_RESERVED_SIZE],
         }
+    }
+}
+
+impl OndiskInode {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
@@ -695,7 +707,7 @@ impl OndiskSymlinkInfo {
     }
 
     pub fn store(&mut self, w: &mut RafsIoWriter) -> Result<usize> {
-        w.write_all(&mut self.data)?;
+        w.write_all(&self.data)?;
         Ok(self.data.len())
     }
 

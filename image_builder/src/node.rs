@@ -14,7 +14,6 @@ use std::str;
 
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
-use xattr;
 
 use rafs::metadata::layout::*;
 use rafs::metadata::*;
@@ -94,13 +93,11 @@ impl Node {
             return Ok(());
         }
 
-        let mut count = 0;
         let mut xattr_chunk = OndiskXAttr::new();
-        for key in xattrs {
-            count += 1;
+        for (count, key) in xattrs.enumerate() {
             let value = xattr::get(&self.path, &key)?;
             let mut pair = OndiskXAttrPair::new();
-            pair.set(key.to_str().unwrap(), value.unwrap_or_else(|| Vec::new()));
+            pair.set(key.to_str().unwrap(), value.unwrap_or_else(Vec::new));
             xattr_chunk.push(pair);
         }
 
@@ -193,6 +190,7 @@ impl Node {
         Ok(())
     }
 
+    #[allow(clippy::borrowed_box)]
     pub fn dump_blob(
         &mut self,
         f_blob: &mut Box<dyn RafsIoWrite>,
@@ -284,6 +282,7 @@ impl Node {
         Ok(inode_digest)
     }
 
+    #[allow(clippy::borrowed_box)]
     pub fn dump_bootstrap(
         &mut self,
         f_bootstrap: &mut Box<dyn RafsIoWrite>,

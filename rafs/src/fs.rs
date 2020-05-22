@@ -7,19 +7,16 @@
 //! RAFS: a readonly FUSE file system designed for Cloud Native.
 
 use std::ffi::CStr;
-use std::io::{Error, ErrorKind, Read, Result, Write};
-use std::sync::{Arc, RwLock};
+use std::io::{Error, ErrorKind, Result};
 use std::time::Duration;
 
 use fuse_rs::api::filesystem::*;
 use fuse_rs::api::BackendFileSystem;
 use serde::Deserialize;
 
-use crate::metadata::layout::*;
 use crate::metadata::RafsSuper;
-use crate::storage::device::*;
+use crate::storage::device;
 use crate::storage::*;
-use crate::storage::{backend, device};
 use crate::*;
 
 /// Type of RAFS inode.
@@ -132,7 +129,7 @@ impl Rafs {
                 name: child.name().as_bytes(),
             }) {
                 Ok(0) => break,
-                Ok(_) => idx = idx + 1, // TODO: should we check `size` here?
+                Ok(_) => idx += 1, // TODO: should we check `size` here?
                 Err(r) => return Err(r),
             }
         }
@@ -238,7 +235,7 @@ impl FileSystem for Rafs {
     fn readlink(&self, _ctx: Context, ino: u64) -> Result<Vec<u8>> {
         let inode = self.sb.get_inode(ino)?;
 
-        Ok(self.sb.get_symlink(inode)?.data.clone())
+        Ok(self.sb.get_symlink(inode)?.data)
     }
 
     #[allow(clippy::too_many_arguments)]
