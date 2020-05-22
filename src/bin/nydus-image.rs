@@ -99,7 +99,7 @@ fn main() -> Result<()> {
         .arg(
             Arg::with_name("log_level")
                 .long("log_level")
-                .default_value("warn")
+                .default_value("info")
                 .help("Specify log level: trace, debug, info, warn, error")
                 .takes_value(true)
                 .required(false)
