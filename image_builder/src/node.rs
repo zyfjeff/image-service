@@ -59,6 +59,8 @@ impl fmt::Display for Node {
 pub struct Node {
     /// type
     pub overlay: Overlay,
+    /// offset of blob file
+    pub blob_offset: u64,
     /// source path
     pub root: PathBuf,
     /// file path
@@ -191,67 +193,6 @@ impl Node {
         Ok(())
     }
 
-    pub fn build_inode(&mut self, hardlink_node: Option<Node>) -> Result<bool> {
-        if self.parent.is_none() {
-            self.inode.set_name("/")?;
-            self.inode.set_parent(0);
-            self.inode.set_ino(1);
-            self.inode.set_mode(libc::S_IFDIR);
-            return Ok(());
-        }
-
-        let file_name = Path::new(self.path.as_str())
-            .file_name()
-            .unwrap()
-            .to_str()
-            .unwrap();
-        let parent = self.parent.as_ref().unwrap();
-        let meta = self.meta();
-
-        self.inode.set_name(file_name)?;
-        self.inode.set_parent(parent.inode.ino());
-        self.inode.set_ino(meta.st_ino());
-        self.inode.set_mode(meta.st_mode());
-        self.inode.set_uid(meta.st_uid());
-        self.inode.set_gid(meta.st_gid());
-        self.inode.set_projid(0);
-        self.inode.set_rdev(meta.st_rdev());
-        self.inode.set_size(meta.st_size());
-        self.inode.set_nlink(meta.st_nlink());
-        self.inode.set_blocks(meta.st_blocks());
-        self.inode.set_atime(meta.st_atime() as u64);
-        self.inode.set_mtime(meta.st_mtime() as u64);
-        self.inode.set_ctime(meta.st_ctime() as u64);
-
-        // self.build_inode_xattr()?;
-
-        if self.is_reg() {
-            if self.is_hardlink() {
-                if let Some(hardlink_node) = hardlink_node {
-                    self.inode
-                        .set_flags(self.inode.flags() | INO_FLAG_HARDLINK as u64);
-                    self.inode.set_digest(hardlink_node.inode.digest());
-                    self.inode.set_chunk_cnt(0);
-                    return Ok(());
-                }
-            }
-            let file_size = self.inode.size();
-            let chunk_count = (file_size as f64 / RAFS_DEFAULT_BLOCK_SIZE as f64).ceil() as u64;
-            self.inode.set_chunk_cnt(chunk_count);
-        } else if self.is_symlink() {
-            self.inode
-                .set_flags(self.inode.flags() | INO_FLAG_SYMLINK as u64);
-            let target_path = fs::read_link(self.path.as_str())?;
-            let target_path_str = target_path.to_str().unwrap();
-            let chunk_info_count = (target_path_str.as_bytes().len() as f64
-                / RAFS_CHUNK_INFO_SIZE as f64)
-                .ceil() as usize;
-            self.inode.set_chunk_cnt(chunk_info_count as u64);
-        }
-
-        Ok(true)
-    }
-
     pub fn dump_blob(
         &mut self,
         f_blob: &mut Box<dyn RafsIoWrite>,
@@ -302,7 +243,7 @@ impl Node {
             chunk.set_compress_size(compressed_size as u32);
 
             // move cursor to offset of next chunk
-            *blob_offset += compressed_size as u64;
+            self.blob_offset += compressed_size as u64;
 
             trace!(
                 "\tbuilding chunk: file offset {}, blob offset {}, size {}",

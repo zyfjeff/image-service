@@ -720,7 +720,8 @@ fn main() -> Result<()> {
         info!("vfs mounted");
     } else if !metadata.is_empty() {
         let mut rafs = Rafs::new(rafs_conf.clone(), &"/".to_string());
-        rafs.import(&mut File::open(metadata)?)?;
+        let mut file = Box::new(File::open(metadata)?) as Box<dyn rafs::RafsIoRead>;
+        rafs.import(&mut file)?;
         info!("rafs mounted");
         vfs.mount(Box::new(rafs), "/")?;
         info!("vfs mounted");
@@ -756,7 +757,8 @@ fn main() -> Result<()> {
                     }
                     None => Rafs::new(rafs_conf.clone(), &info.mountpoint),
                 };
-                let mut file = File::open(&info.source).map_err(ApiError::MountFailure)?;
+                let mut file = Box::new(File::open(&info.source).map_err(ApiError::MountFailure)?)
+                    as Box<dyn rafs::RafsIoRead>;
                 rafs.import(&mut file).map_err(ApiError::MountFailure)?;
                 info!("rafs mounted");
 

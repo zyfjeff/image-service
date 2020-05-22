@@ -17,6 +17,9 @@ struct DirectMapping {
     size: usize,
 }
 
+unsafe impl Send for DirectMapping {}
+unsafe impl Sync for DirectMapping {}
+
 impl DirectMapping {
     fn new() -> Self {
         DirectMapping {

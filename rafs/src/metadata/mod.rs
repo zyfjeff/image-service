@@ -63,7 +63,7 @@ pub struct RafsSuperMeta {
 /// Cached Rafs super block and inode information.
 pub struct RafsSuper {
     pub s_meta: RafsSuperMeta,
-    pub s_inodes: Box<dyn RafsSuperInodes>,
+    pub s_inodes: Box<dyn RafsSuperInodes + Sync + Send>,
     load_inodes: bool,
     cache_inodes: bool,
 }

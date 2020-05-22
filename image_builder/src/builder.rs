@@ -4,7 +4,6 @@
 
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
-
 use std::collections::HashMap;
 use std::fs;
 use std::fs::OpenOptions;
@@ -34,6 +33,8 @@ pub struct Builder {
     blob_offset: u64,
     /// blob id (user specified or sha256(blob))
     blob_id: String,
+    /// blob sha256
+    blob_hash: Sha256,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
     inode_map: HashMap<u64, Node>,
     /// mutilple layers build: upper source nodes
@@ -81,7 +82,9 @@ impl Builder {
             f_blob,
             f_bootstrap,
             f_parent_bootstrap,
+            blob_offset: 0,
             blob_id,
+            blob_hash: Sha256::new(),
             inode_map: HashMap::new(),
             additions: Vec::new(),
             removals: HashMap::new(),
@@ -212,180 +215,14 @@ impl Builder {
         Ok(())
     }
 
-<<<<<<< HEAD
-    fn dump_superblock(&mut self) -> Result<OndiskSuperBlock> {
-        info!("upper building superblock");
-
-        let mut sb = OndiskSuperBlock::new();
-        // all fields are initilized by RafsSuperBlockInfo::new()
-        sb.set_flags(0);
-
-        // dump superblock to bootstrap
-        sb.store(&mut self.f_bootstrap)?;
-
-        Ok(sb)
-    }
-
-    fn dump_blob(&mut self) -> Result<Sha256> {
-        let mut blob_hash = Sha256::new();
-        let mut blob_offset: u64 = 0;
-
-        for node in &mut self.additions {
-            let file_type = node.get_type();
-            if file_type != "" {
-                debug!(
-                    "upper building {} {}",
-                    file_type,
-                    node.rootfs_path().to_str().unwrap(),
-                );
-            }
-            node.dump_blob(&self.f_blob, &mut blob_hash, &mut blob_offset)?;
-        }
-
-        Ok(blob_hash)
-    }
-
->>>>>>> builder: add source walk
-    fn dump_bootstrap(&mut self) -> Result<()> {
-        for node in &mut self.additions {
-            node.dump_bootstrap(&mut self.f_bootstrap, Some(self.blob_id.to_owned()))?;
-        }
-
-        Ok(())
-    }
-
-    fn fill_blob_id(&mut self) {
-        for node in &mut self.additions {
-            for chunk in &mut node.chunks {
-                chunk.set_blobid(self.blob_id.as_str()).unwrap();
-            }
-        }
-    }
-
-<<<<<<< HEAD
-    fn build_node(&mut self, file: &Path, parent_node: Option<Box<Node>>) -> Result<()> {
-        let meta = file.symlink_metadata()?;
-
-        if parent_node.is_none() {
-            let path = file.to_str().unwrap().to_owned();
-
-<<<<<<< HEAD
-            let mut root_node = Node::new(self.root.to_owned(), path, None, Overlay::LowerAddition);
-=======
-=======
-    fn dump_blob(&mut self, file: &PathBuf, parent_node: Option<Box<Node>>) -> Result<()> {
-        let meta = file.symlink_metadata()?;
-
-        if parent_node.is_none() {
->>>>>>> builder: add source walk
-            let mut root_node = Node::new(
-                self.blob_offset,
-                self.root.clone(),
-                file.clone(),
-                Overlay::LowerAddition,
-            );
-
-            root_node.build(None)?;
-            root_node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
->>>>>>> builder: adapt rafs v5 struct
-
-            root_node.build_inode(None)?;
-            self.additions.push(root_node.clone());
-
-            self.build_node(file, Some(Box::new(root_node)))?;
-
-            return Ok(());
-        }
-
-        let is_symlink = meta.st_mode() & libc::S_IFMT == libc::S_IFLNK;
-
-        if file.is_dir() && !is_symlink {
-            let rootfs_path = Path::new("/").join(file.strip_prefix(&self.root).unwrap());
-
-            let opaque_path = file.join(OCISPEC_WHITEOUT_OPAQUE);
-            if opaque_path.metadata().is_ok() {
-                self.opaques.insert(rootfs_path.clone(), true);
-            }
-
-            for entry in fs::read_dir(file)? {
-                let entry = entry?;
-                let path = entry.path();
-                let meta = entry.metadata()?;
-
-                let mut node = Node::new(
-                    self.root.clone(),
-                    path.clone(),
-                    Overlay::UpperAddition,
-                );
-
-                let mut name = path.file_name().unwrap().to_str().unwrap();
-
-                if name == OCISPEC_WHITEOUT_OPAQUE {
-                    continue;
-                }
-
-                if name.starts_with(OCISPEC_WHITEOUT_PREFIX) {
-                    name = &name[OCISPEC_WHITEOUT_PREFIX.len()..];
-                    if let Some(parent_dir) = path.parent() {
-                        let path = parent_dir.join(name);
-                        let rootfs_path =
-                            Path::new("/").join(path.strip_prefix(&self.root).unwrap());
-                        self.removals.insert(rootfs_path.clone(), true);
-                        continue;
-                    }
-                }
-
-                let ino = meta.st_ino();
-                let hardlink_node = self.inode_map.get(&ino);
-
-                let keep;
-                if let Some(hardlink_node) = hardlink_node {
-                    keep = node.build_inode(Some(hardlink_node.clone()))?;
-                } else {
-                    keep = node.build_inode(None)?;
-                    if keep {
-                        self.inode_map.insert(ino, node.clone());
-                    }
-                }
-
-                if !keep {
-                    continue;
-                }
-
-<<<<<<< HEAD
-=======
-                node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
-                self.blob_offset = node.blob_offset;
->>>>>>> builder: adapt rafs v5 struct
-                self.additions.push(node.clone());
-
-                if path.is_dir() {
-                    self.build_node(&path, Some(Box::new(node)))?;
-                }
-=======
     fn fill_blob_id(&mut self) {
         for node in &mut self.additions {
             for chunk in &mut node.chunks {
                 chunk.set_blob_index(0);
->>>>>>> rafs v5: add inode & blob table
             }
         }
     }
 
-<<<<<<< HEAD
-    pub fn build(&mut self) -> Result<String> {
-        let root = self.root.clone();
-        let root_path = Path::new(root.as_str());
-
-        self.dump_superblock()?;
-
-        self.build_node(root_path, None)?;
-
-        let mut blob_hash = self.dump_blob()?;
-
-        if self.blob_id == "" {
-            self.blob_id = format!("sha256:{}", blob_hash.result_str());
-=======
     fn new_node(&self, path: &PathBuf) -> Node {
         Node::new(
             self.blob_offset,
@@ -440,7 +277,6 @@ impl Builder {
                 dir_node.inode.set_child_count(child_count as u32);
             }
             dirs = next_dirs;
->>>>>>> builder: add source walk
         }
 
         Ok(())
@@ -488,27 +324,9 @@ impl Builder {
         inode_table.store(&mut self.f_bootstrap)?;
         blob_table.store(&mut self.f_bootstrap)?;
 
-<<<<<<< HEAD
-        Ok(())
-    }
-
-    fn dump_superblock(&mut self) -> Result<()> {
-        
-        info!("upper building superblock");
-
-        let mut sb = OndiskSuperBlock::new();
-        let inodes_count = self.inode_map.len() as u64;
-        let inode_table_entries = self.additions.len() as u32;
-        sb.set_inodes_count(inodes_count);
-        sb.set_inode_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
-        sb.set_inode_table_entries(inode_table_entries);
-
-        sb.store(&mut self.f_bootstrap)?;
-=======
         for node in &mut self.additions {
             node.dump_bootstrap(&mut self.f_bootstrap, 0)?;
         }
->>>>>>> rafs v5: fix inode build
 
         Ok(())
     }

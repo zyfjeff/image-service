@@ -10,31 +10,26 @@ use fuse_rs::api::filesystem::{ZeroCopyReader, ZeroCopyWriter};
 use fuse_rs::transport::FileReadWriteVolatile;
 use vm_memory::VolatileSlice;
 
-use crate::fs::RafsBlk;
-use crate::layout::RafsSuperBlockInfo;
-use crate::storage::cache::RafsCache;
-use crate::storage::factory;
-use crate::metadata::RafsChunkInfo;
 use crate::metadata::{RafsChunkInfo, RafsDigest};
 use crate::storage::backend::*;
+use crate::storage::factory;
 
 static ZEROS: &[u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
 
 // A rafs storage device
 pub struct RafsDevice {
-    // device -> cache -> backend
-    rw_layer: Box<dyn RafsCache + Send + Sync>,
+    c: factory::Config,
+    b: Box<dyn BlobBackend + Send + Sync>,
 }
 
 impl RafsDevice {
-    pub fn new(config: factory::Config) -> RafsDevice {
-        RafsDevice {
-            rw_layer: factory::new_rw_layer(&config).unwrap(),
-        }
+    pub fn new(c: factory::Config) -> Self {
+        let backend = factory::new_backend(&c.backend).unwrap();
+        RafsDevice { c, b: backend }
     }
 
-    pub fn init(&mut self, sb_info: &RafsSuperBlockInfo) -> io::Result<()> {
-        self.rw_layer.init(sb_info)
+    pub fn init(&mut self) -> io::Result<()> {
+        Ok(())
     }
 
     pub fn close(&mut self) {
@@ -173,7 +168,7 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
         Ok(count)
     }
 
-    fn write_at_volatile(&mut self, slice: VolatileSlice, _offset: u64) -> Result<usize, Error> {
+    fn write_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
         let mut buf = vec![0u8; slice.len()];
         slice.copy_to(&mut buf);
         let compressed = utils::compress(&buf)?;

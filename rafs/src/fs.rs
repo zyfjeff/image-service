@@ -7,21 +7,18 @@
 //! RAFS: a readonly FUSE file system designed for Cloud Native.
 
 use std::ffi::CStr;
-use std::io::{Error, ErrorKind, Read, Result};
+use std::io::{Error, ErrorKind, Read, Result, Write};
 use std::sync::{Arc, RwLock};
-use std::io::{Error, ErrorKind, Result, Write};
 use std::time::Duration;
 
 use fuse_rs::api::filesystem::*;
 use fuse_rs::api::BackendFileSystem;
 use serde::Deserialize;
 
-use crate::io_stats;
-use crate::io_stats::{InodeStatsCounter, StatsFop};
-use crate::layout::*;
+use crate::metadata::layout::*;
+use crate::metadata::RafsSuper;
 use crate::storage::device::*;
 use crate::storage::*;
-use crate::metadata::RafsSuper;
 use crate::storage::{backend, device};
 use crate::*;
 
@@ -37,23 +34,6 @@ pub const RAFS_DEFAULT_ENTRY_TIMEOUT: u64 = RAFS_DEFAULT_ATTR_TIMEOUT;
 
 const DOT: &str = ".";
 const DOTDOT: &str = "..";
-
-// impl RafsInode {
-//     fn stats_update<T>(&self, fop: StatsFop, bsize: usize, r: &Result<T>) {
-//         io_stats::ios_global_update(fop, bsize, &r);
-//         if let Some(c) = self.counter.as_ref() {
-//             match r {
-//                 Ok(v) => {
-//                     c.stats_fop_inc(fop.clone());
-//                     c.stats_cumulative(fop, bsize);
-//                 }
-//                 Err(_) => {
-//                     c.stats_fop_err_inc(fop);
-//                 }
-//             };
-//         }
-//     }
-// }
 
 /// Rafs storage backend configuration information.
 #[derive(Clone, Default, Deserialize)]
@@ -72,7 +52,7 @@ impl RafsConfig {
         self.device_config.clone()
     }
 
-    pub fn set_dev_config(&mut self, device_config: backend::Config) {
+    pub fn set_dev_config(&mut self, device_config: factory::Config) {
         self.device_config = device_config;
     }
 }
@@ -115,6 +95,9 @@ impl Rafs {
 
         self.initialized = true;
         info!("rafs imported");
+
+        Ok(())
+    }
 
     /// umount a previously mounted rafs virtual path
     pub fn destroy(&mut self) {
@@ -275,11 +258,7 @@ impl FileSystem for Rafs {
             return Ok(0);
         }
         let desc = self.sb.alloc_bio_desc(inode, offset, size as usize)?;
-        let start = io_stats::ios_latency_start();
-        let r = self.device.read_to(w, desc);
-        rafs_inode.stats_update(&self, io_stats::StatsFop::Read, size as usize, &r);
-        self.ios.ios_latency_end(&start, io_stats::StatsFop::Read);
-        r
+        self.device.read_to(w, desc)
     }
 
     fn release(

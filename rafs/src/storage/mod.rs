@@ -9,7 +9,4 @@ pub mod device;
 pub mod backend;
 
 #[allow(dead_code)]
-pub mod cache;
-
-#[allow(dead_code)]
 pub mod factory;

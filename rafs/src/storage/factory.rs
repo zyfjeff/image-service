@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 use crate::storage::backend::*;
-use crate::storage::cache::*;
 
 use serde::Deserialize;
 
@@ -15,8 +14,6 @@ use std::io::{Error, Result};
 #[derive(Default, Clone, Deserialize)]
 pub struct Config {
     pub backend: BackendConfig,
-    #[serde(default)]
-    pub cache: CacheConfig,
 }
 
 #[derive(Default, Clone, Deserialize)]
@@ -25,14 +22,6 @@ pub struct BackendConfig {
     pub backend_type: String,
     #[serde(rename = "config")]
     pub backend_config: HashMap<String, String>,
-}
-
-#[derive(Default, Clone, Deserialize)]
-pub struct CacheConfig {
-    #[serde(default, rename = "type")]
-    pub cache_type: String,
-    #[serde(default, rename = "config")]
-    pub cache_config: HashMap<String, String>,
 }
 
 pub fn new_backend(config: &BackendConfig) -> Result<Box<dyn BlobBackend + Send + Sync>> {
@@ -52,17 +41,6 @@ pub fn new_backend(config: &BackendConfig) -> Result<Box<dyn BlobBackend + Send 
             error!("unsupported backend type {}", config.backend_type);
             Err(Error::from_raw_os_error(libc::EINVAL))
         }
-    }
-}
-
-pub fn new_rw_layer(config: &Config) -> Result<Box<dyn RafsCache + Send + Sync>> {
-    let backend = new_backend(&config.backend)?;
-    match config.cache.cache_type.as_str() {
-        "blobcache" => Ok(
-            Box::new(blobcache::new(&config.cache.cache_config, backend)?)
-                as Box<dyn RafsCache + Send + Sync>,
-        ),
-        _ => Ok(Box::new(dummycache::new(backend)?) as Box<dyn RafsCache + Send + Sync>),
     }
 }
 
