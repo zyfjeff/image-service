@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::thread;
 
-use micro_http::{HttpServer, MediaType, Request, Response, StatusCode, Version};
+use micro_http::{Body, HttpServer, MediaType, Request, Response, StatusCode, Version};
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::http_endpoint::{
@@ -73,9 +73,20 @@ fn handle_http_request(
     let mut response = match HTTP_ROUTES.routes.get(&path) {
         Some(route) => match api_notifier.try_clone() {
             Ok(notifier) => route.handle_request(&request, notifier, api_sender.clone()),
-            Err(_) => Response::new(Version::Http11, StatusCode::InternalServerError),
+            Err(_) => {
+                let mut r = Response::new(Version::Http11, StatusCode::InternalServerError);
+                r.set_body(Body::new("Internal error!"));
+                r
+            }
         },
-        None => Response::new(Version::Http11, StatusCode::NotFound),
+        None => {
+            let mut r = Response::new(Version::Http11, StatusCode::NotFound);
+            r.set_body(Body::new(format!(
+                "No route to {}",
+                request.uri().get_abs_path().to_string()
+            )));
+            r
+        }
     };
 
     response.set_server("Nydus API");
