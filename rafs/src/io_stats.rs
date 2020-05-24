@@ -69,7 +69,7 @@ pub struct GlobalIOStats {
     //   * @total means io_stats simply adds every fop latency to the counter which is never cleared.
     //     It is useful for other tools to calculate their metrics report.
     fop_cumulative_latency_avg: [AtomicIsize; StatsFop::Max as usize],
-    fop_cumulative_latency_total: [AtomicIsize; StatsFop::Max as usize],
+    fop_cumulative_latency_total: [AtomicUsize; StatsFop::Max as usize],
     // Record how many times read latency drops to the ranges.
     // This helps us to understand the io service time stability.
     read_latency_dist: [AtomicIsize; READ_LATENCY_RANGE_MAX],
@@ -242,7 +242,7 @@ impl GlobalIOStats {
                 self.read_latency_dist[latency_range_index(elapsed)]
                     .fetch_add(1, Ordering::Relaxed);
                 self.fop_cumulative_latency_total[fop as usize]
-                    .fetch_add(elapsed, Ordering::Relaxed);
+                    .fetch_add(elapsed as usize, Ordering::Relaxed);
                 let avg = self.fop_cumulative_latency_avg[fop as usize].load(Ordering::Relaxed);
                 let fop_cnt = self.fop_hits[fop as usize].load(Ordering::Relaxed) as isize;
 
