@@ -12,7 +12,7 @@ bimap = ">=0.4"
 libc = ">=0.2"
 log = ">=0.4"
 
-fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git" }
+fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git", branch = "bergwolf/transport" }
 
 [features]
 fusedev = ["fuse-rs/fusedev"]
