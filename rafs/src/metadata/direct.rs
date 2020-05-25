@@ -11,6 +11,7 @@ use std::slice;
 use crate::metadata::layout::*;
 use crate::metadata::*;
 
+#[allow(unused_macros)]
 macro_rules! impl_getter_setter {
     ($G: ident, $S: ident, $F: ident, $U: ty) => {
         fn $G(&self) -> $U {
@@ -19,6 +20,14 @@ macro_rules! impl_getter_setter {
 
         fn $S(&mut self, $F: $U) {
             self.data.$F = $F;
+        }
+    };
+}
+
+macro_rules! impl_getter {
+    ($G: ident, $F: ident, $U: ty) => {
+        fn $G(&self) -> $U {
+            self.data.$F
         }
     };
 }
@@ -59,8 +68,10 @@ impl DirectMapping {
         let start = base.wrapping_add(offset);
         let end = start.wrapping_add(size_of::<T>());
 
-        if start < self.base || end < self.base || end > self.end
-        // || start as usize & (std::mem::align_of::<T>() - 1) != 0
+        if start < self.base
+            || end < self.base
+            || end > self.end
+            || start as usize & (std::mem::align_of::<T>() - 1) != 0
         {
             return Err(einval());
         }
@@ -123,37 +134,35 @@ impl RafsSuperInodes for DirectMapping {
 
         Ok(Box::new(OndiskInodeMapping {
             mapping: self.clone(),
-            data: *inode,
+            data: inode,
             s_meta,
         }) as Box<dyn RafsInode>)
     }
 }
 
-pub struct OndiskInodeMapping {
+pub struct OndiskInodeMapping<'a> {
     pub mapping: DirectMapping,
-    pub data: OndiskInode,
+    pub data: &'a OndiskInode,
     pub s_meta: RafsSuperMeta,
 }
 
-impl OndiskInodeMapping {
+impl<'a> OndiskInodeMapping<'a> {
     pub fn get_child_by_index(&self, _idx: u32) -> Result<&dyn RafsInode> {
         unimplemented!();
     }
 }
 
-impl RafsInode for OndiskInodeMapping {
+impl<'a> RafsInode for OndiskInodeMapping<'a> {
     fn validate(&self) -> Result<()> {
         unimplemented!();
     }
 
     fn name(&self) -> Result<&str> {
-        let offset = self.mapping.inode_table.get(self.ino())?;
+        let start = self.data as *const OndiskInode as *const u8;
 
         let name = unsafe {
             slice::from_raw_parts(
-                self.mapping
-                    .base
-                    .wrapping_add(offset as usize + std::mem::size_of::<OndiskInode>()),
+                start.wrapping_add(size_of::<OndiskInode>()),
                 self.data.i_name_size as usize,
             )
         };
@@ -162,21 +171,20 @@ impl RafsInode for OndiskInodeMapping {
     }
 
     fn get_symlink(&self) -> Result<&str> {
-        let offset = self.mapping.inode_table.get(self.ino())?;
+        let start = self.data as *const OndiskInode as *const u8;
+        let start = start.wrapping_add(size_of::<OndiskInode>() + self.data.i_name_size as usize);
 
-        let start = self.mapping.base.wrapping_add(
-            offset as usize + std::mem::size_of::<OndiskInode>() + self.data.i_name_size as usize,
-        );
-        let symlink =
-            unsafe { std::slice::from_raw_parts(start, self.data.i_symlink_size as usize) };
+        let symlink = unsafe { slice::from_raw_parts(start, self.data.i_symlink_size as usize) };
 
         parse_string(symlink)
     }
 
     fn get_chunk_info(&self, idx: u32) -> Result<&OndiskChunkInfo> {
-        let ptr = self as *const dyn RafsInode as *const u8;
-        let chunk = ptr
-            .wrapping_add(size_of::<OndiskInode>() + size_of::<OndiskChunkInfo>() * idx as usize);
+        let start = self.data as *const OndiskInode as *const u8;
+
+        let chunk =
+            start.wrapping_add(self.data.size() + size_of::<OndiskChunkInfo>() * idx as usize);
+
         self.mapping.cast_to_ref::<OndiskChunkInfo>(chunk, 0)
     }
 
@@ -302,12 +310,7 @@ impl RafsInode for OndiskInodeMapping {
         &self.data.i_digest
     }
 
-    fn set_digest(&mut self, digest: OndiskDigest) {
-        self.data.i_digest = digest;
-    }
-
-    // impl_getter_setter!(digest, set_digest, i_digest, OndiskDigest);
-    impl_getter_setter!(ino, set_ino, i_ino, u64);
-    impl_getter_setter!(parent, set_parent, i_parent, u64);
-    impl_getter_setter!(size, set_size, i_size, u64);
+    impl_getter!(ino, i_ino, u64);
+    impl_getter!(parent, i_parent, u64);
+    impl_getter!(size, i_size, u64);
 }

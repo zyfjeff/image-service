@@ -234,16 +234,9 @@ pub trait RafsInode {
     fn has_xattr(&self) -> bool;
 
     fn digest(&self) -> &OndiskDigest;
-    fn set_digest(&mut self, digest: OndiskDigest);
-
     fn ino(&self) -> u64;
-    fn set_ino(&mut self, ino: u64);
-
     fn parent(&self) -> u64;
-    fn set_parent(&mut self, ino: u64);
-
     fn size(&self) -> u64;
-    fn set_size(&mut self, size: u64);
 }
 
 /// Trait to access Rafs Data Chunk Information.
