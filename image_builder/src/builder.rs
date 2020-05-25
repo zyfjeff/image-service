@@ -7,12 +7,12 @@ use crypto::sha2::Sha256;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::OpenOptions;
-use std::io::{ErrorKind, Result};
+use std::io::Result;
 // use std::os::linux::fs::MetadataExt;
 use std::path::PathBuf;
 
 use rafs::metadata::layout::*;
-use rafs::metadata::{RafsChunkInfo, RafsInode, RafsSuper};
+use rafs::metadata::RafsChunkInfo;
 use rafs::{RafsIoRead, RafsIoWrite};
 
 use crate::node::*;
@@ -101,120 +101,6 @@ impl Builder {
         None
     }
 
-    fn apply(&mut self) -> Result<()> {
-        let mut parent_bootstrap = self.f_parent_bootstrap.as_mut().unwrap();
-
-        let mut sb = RafsSuper::new();
-        sb.load(&mut parent_bootstrap)?;
-
-        let mut nodes: HashMap<u64, Node> = HashMap::new();
-        let mut lowers: Vec<Node> = Vec::new();
-
-        loop {
-            let mut inode = OndiskInode::new();
-
-            match inode.load(&mut parent_bootstrap) {
-                Ok(_) => {}
-                Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => break,
-                Err(e) => {
-                    return Err(e);
-                }
-            }
-
-            // let mut xattr_chunks = RafsInodeXattrInfos::new();
-            // if inode.has_xattr() {
-            //     xattr_chunks.load(&mut bootstrap)?;
-            // }
-
-            let mut chunks = Vec::new();
-            if inode.is_reg() {
-                for _ in 0..inode.chunk_cnt() {
-                    let mut chunk = OndiskChunkInfo::new();
-                    chunk.load(&mut parent_bootstrap)?;
-                    chunks.push(chunk);
-                }
-            }
-
-            // let mut link_chunks = Vec::new();
-            // if inode.is_symlink() {
-            //     let mut link_chunk = RafsLinkDataInfo::new(inode.i_chunk_cnt as usize);
-            //     link_chunk.load(&mut bootstrap)?;
-            //     link_chunks.push(link_chunk);
-            // }
-
-            let mut path = PathBuf::from(inode.name());
-
-            let mut parent = None;
-            if let Some(parent_node) = nodes.get_mut(&inode.parent()) {
-                parent = Some(Box::new(parent_node.clone()));
-                path = parent_node.path.join(inode.name());
-            }
-
-            let mut overlay = if self.removals.get(&path).is_some() {
-                Overlay::UpperRemoval
-            } else {
-                Overlay::LowerAddition
-            };
-
-            if let Some(parent) = &parent {
-                if self.opaques.get(&parent.path).is_some() {
-                    overlay = Overlay::UpperOpaque;
-                }
-            }
-
-            let node = Node {
-                blob_offset: self.blob_offset,
-                root: self.root.clone(),
-                path: path.clone(),
-                overlay,
-                inode,
-                chunks,
-                link_chunk: None,
-                // xattr_chunks,
-            };
-
-            nodes.insert(inode.ino(), node.clone());
-            lowers.push(node.clone());
-        }
-
-        for addition in &self.additions {
-            let addition_path = addition.get_rootfs();
-            let mut _addition = addition.clone();
-            _addition.path = addition_path.clone();
-            if let Some(idx) = self.get_lower_idx(&lowers, _addition.path.clone()) {
-                _addition.inode.set_ino(lowers[idx].inode.ino());
-                _addition.inode.set_parent(lowers[idx].inode.parent());
-                _addition.overlay = Overlay::UpperModification;
-                lowers[idx] = _addition;
-            } else if let Some(parent_path) = addition_path.parent() {
-                if let Some(idx) = self.get_lower_idx(&lowers, parent_path.to_path_buf()) {
-                    _addition.inode.set_parent(lowers[idx].inode.ino());
-                    _addition.overlay = Overlay::UpperAddition;
-                    lowers.insert(idx + 1, _addition);
-                } else {
-                    _addition.overlay = Overlay::UpperAddition;
-                    lowers.push(_addition);
-                }
-            }
-        }
-
-        for lower in &mut lowers {
-            info!(
-                "{} {} {:?} inode {}, parent {}",
-                lower.overlay,
-                lower.get_type(),
-                lower.path,
-                lower.inode.ino(),
-                lower.inode.parent(),
-            );
-            if lower.overlay != Overlay::UpperRemoval && lower.overlay != Overlay::UpperOpaque {
-                lower.dump_bootstrap(&mut self.f_bootstrap, 0)?;
-            }
-        }
-
-        Ok(())
-    }
-
     fn fill_blob_id(&mut self) {
         for node in &mut self.additions {
             for chunk in &mut node.chunks {
@@ -239,9 +125,9 @@ impl Builder {
         let mut root_node = self.new_node(&self.root);
         root_node.build_inode(None)?;
 
-        root_node.inode.set_ino(1);
+        root_node.inode.i_ino = 1;
         self.inode_map
-            .insert(root_node.inode.ino(), root_node.clone());
+            .insert(root_node.inode.i_ino, root_node.clone());
         self.additions.push(root_node);
 
         while !dirs.is_empty() {
@@ -250,10 +136,10 @@ impl Builder {
             for dir_idx in &dirs {
                 let dir_node = self.additions.get_mut(*dir_idx).unwrap();
                 let childs = fs::read_dir(&dir_node.path)?;
-                let dir_ino = dir_node.inode.ino();
+                let dir_ino = dir_node.inode.i_ino;
                 let mut child_count: usize = 0;
 
-                dir_node.inode.set_child_index((ino + 1) as u32);
+                dir_node.inode.i_child_index = (ino + 1) as u32;
 
                 for child in childs {
                     let entry = &child?;
@@ -263,18 +149,18 @@ impl Builder {
 
                     ino += 1;
                     child_count += 1;
-                    node.inode.set_ino(ino);
-                    node.inode.set_parent(dir_ino);
+                    node.inode.i_ino = ino;
+                    node.inode.i_parent = dir_ino;
 
                     if node.is_dir() && !node.is_symlink() {
                         next_dirs.push(self.additions.len());
                     }
-                    self.inode_map.insert(node.inode.ino(), node.clone());
+                    self.inode_map.insert(node.inode.i_ino, node.clone());
                     self.additions.push(node);
                 }
 
                 let dir_node = self.additions.get_mut(*dir_idx).unwrap();
-                dir_node.inode.set_child_count(child_count as u32);
+                dir_node.inode.i_child_count = child_count as u32;
             }
             dirs = next_dirs;
         }
@@ -307,13 +193,10 @@ impl Builder {
         // dump blob
         let mut inode_offset = (RAFS_SUPERBLOCK_SIZE + inode_table_size + blob_table_size) as u32;
         for node in &mut self.additions {
-            inode_table.set(node.inode.ino(), inode_offset)?;
-            inode_offset += RAFS_INODE_INFO_SIZE as u32;
+            inode_table.set(node.inode.i_ino, inode_offset)?;
+            inode_offset += node.inode.size() as u32;
             node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
-            inode_offset += (node.chunks.len() * RAFS_CHUNK_INFO_SIZE) as u32;
-            if let Some(link_chunk) = &node.link_chunk {
-                inode_offset += link_chunk.size() as u32;
-            }
+            inode_offset += (node.chunks.len() * std::mem::size_of::<OndiskChunkInfo>()) as u32;
         }
         let blob_id = OndiskDigest::from_raw(&mut self.blob_hash);
         let mut blob_table = OndiskBlobTable::new(1);

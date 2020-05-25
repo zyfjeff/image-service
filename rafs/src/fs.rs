@@ -120,13 +120,13 @@ impl Rafs {
         }
 
         let mut idx = offset as usize;
-        while idx < self.sb.get_child_count(parent)? {
-            let child = self.sb.get_child(parent, idx as u32)?;
+        while idx < parent.get_child_count()? {
+            let child = parent.get_child(idx as u32)?;
             match add_entry(DirEntry {
                 ino: child.ino(),
                 offset: (idx + 1) as u64,
                 type_: 0,
-                name: child.name().as_bytes(),
+                name: child.name()?.as_bytes(),
             }) {
                 Ok(0) => break,
                 Ok(_) => idx += 1, // TODO: should we check `size` here?
@@ -196,17 +196,13 @@ impl FileSystem for Rafs {
         }
 
         if target == DOT || (ino == ROOT_ID && target == DOTDOT) {
-            let mut entry = self.sb.get_entry(parent);
+            let mut entry = parent.get_entry();
             entry.inode = ino;
             Ok(entry)
         } else if target == DOTDOT {
-            self.sb
-                .get_inode(parent.parent())
-                .map(|i| self.sb.get_entry(i))
+            self.sb.get_inode(parent.parent()).map(|i| i.get_entry())
         } else {
-            self.sb
-                .get_child_by_name(parent, target)
-                .map(|i| self.sb.get_entry(i))
+            parent.get_child_by_name(target).map(|i| i.get_entry())
         }
     }
 
@@ -226,16 +222,13 @@ impl FileSystem for Rafs {
     ) -> Result<(libc::stat64, Duration)> {
         let inode = self.sb.get_inode(ino)?;
 
-        Ok((
-            self.sb.get_attr(inode).into(),
-            self.sb.s_meta.s_attr_timeout,
-        ))
+        Ok((inode.get_attr().into(), self.sb.s_meta.s_attr_timeout))
     }
 
     fn readlink(&self, _ctx: Context, ino: u64) -> Result<Vec<u8>> {
         let inode = self.sb.get_inode(ino)?;
 
-        Ok(self.sb.get_symlink(inode)?.data)
+        Ok(inode.get_symlink()?.as_bytes().to_vec())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -254,7 +247,7 @@ impl FileSystem for Rafs {
         if offset >= inode.size() {
             return Ok(0);
         }
-        let desc = self.sb.alloc_bio_desc(inode, offset, size as usize)?;
+        let desc = inode.alloc_bio_desc(offset, size as usize)?;
         self.device.read_to(w, desc)
     }
 
@@ -291,7 +284,7 @@ impl FileSystem for Rafs {
         let inode = self.sb.get_inode(inode)?;
 
         // Keep for simplicity, not optimized for performance.
-        for (k, v) in self.sb.get_xattrs(inode)? {
+        for (k, v) in inode.get_xattrs()? {
             if key == k {
                 return match size {
                     0 => Ok(GetxattrReply::Count((v.len() + 1) as u32)),
@@ -308,7 +301,7 @@ impl FileSystem for Rafs {
         let mut count = 0;
         let mut buf = Vec::new();
 
-        for (k, _v) in self.sb.get_xattrs(inode)? {
+        for (k, _v) in inode.get_xattrs()? {
             match size {
                 0 => count += k.len() + 1,
                 _ => {
@@ -347,7 +340,7 @@ impl FileSystem for Rafs {
     ) -> Result<()> {
         self.do_readdir(ino, size, offset, |dir_entry| {
             let inode = self.sb.get_inode(dir_entry.ino)?;
-            add_entry(dir_entry, self.sb.get_entry(inode))
+            add_entry(dir_entry, inode.get_entry())
         })
     }
 
@@ -357,7 +350,7 @@ impl FileSystem for Rafs {
 
     fn access(&self, ctx: Context, ino: u64, mask: u32) -> Result<()> {
         let inode = self.sb.get_inode(ino)?;
-        let st = self.sb.get_attr(inode);
+        let st = inode.get_attr();
         let mode = mask as i32 & (libc::R_OK | libc::W_OK | libc::X_OK);
 
         if mode == libc::F_OK {

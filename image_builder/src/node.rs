@@ -28,7 +28,7 @@ pub enum Overlay {
 }
 
 impl fmt::Display for Overlay {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Overlay::LowerAddition => write!(f, "lower added"),
             Overlay::UpperAddition => write!(f, "upper added"),
@@ -40,22 +40,24 @@ impl fmt::Display for Overlay {
 }
 
 impl fmt::Display for Node {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
             "{:?} ino {}, parent {}, childs {}, child index {}",
             // self.get_type(),
             self.get_rootfs(),
-            self.inode.ino(),
-            self.inode.parent(),
-            self.inode.child_count(),
-            self.inode.child_index(),
+            self.inode.i_ino,
+            self.inode.i_parent,
+            self.inode.i_child_count,
+            self.inode.i_child_index,
         )
     }
 }
 
 #[derive(Clone)]
 pub struct Node {
+    /// inode name
+    pub name: String,
     /// type
     pub overlay: Overlay,
     /// offset of blob file
@@ -69,12 +71,26 @@ pub struct Node {
     /// chunks info of file
     pub chunks: Vec<OndiskChunkInfo>,
     // chunks info of symlink file
-    pub link_chunk: Option<OndiskSymlinkInfo>,
+    pub symlink: Option<String>,
     // xattr info of file
     // pub xattr_chunks: RafsInodeXattrInfos,
 }
 
 impl Node {
+    pub fn new(blob_offset: u64, root: PathBuf, path: PathBuf, overlay: Overlay) -> Node {
+        Node {
+            name: String::new(),
+            blob_offset,
+            root,
+            path,
+            overlay,
+            inode: OndiskInode::new(),
+            chunks: Vec::new(),
+            symlink: None,
+            // xattr_chunks: RafsInodeXattrInfos::new(),
+        }
+    }
+
     pub fn build(&mut self, hardlink_node: Option<Node>) -> Result<bool> {
         self.build_inode(hardlink_node)?;
         let file_type = self.get_type();
@@ -199,10 +215,6 @@ impl Node {
         let mut inode_digest = OndiskDigest::new();
 
         if self.is_symlink() {
-            let target_path = fs::read_link(&self.path)?;
-            let mut link_chunk =
-                OndiskSymlinkInfo::from_raw(target_path.to_str().unwrap().as_bytes())?;
-            link_chunk.store(f_blob)?;
             return Ok(inode_digest);
         }
 
@@ -210,16 +222,16 @@ impl Node {
             return Ok(inode_digest);
         }
 
-        let file_size = self.inode.size();
+        let file_size = self.inode.i_size;
         let mut inode_hash = Sha256::new();
         let mut file = File::open(&self.path)?;
 
-        for i in 0..self.inode.chunk_cnt() {
+        for i in 0..self.inode.i_child_count {
             let mut chunk = OndiskChunkInfo::new();
 
             // get chunk info
-            chunk.set_file_offset((i * RAFS_DEFAULT_BLOCK_SIZE as u64) as u64);
-            let len = if i == self.inode.chunk_cnt() - 1 {
+            chunk.set_file_offset((i * RAFS_DEFAULT_BLOCK_SIZE as u32) as u64);
+            let len = if i == self.inode.i_child_count - 1 {
                 (file_size % RAFS_DEFAULT_BLOCK_SIZE as u64) as usize
             } else {
                 RAFS_DEFAULT_BLOCK_SIZE
@@ -269,15 +281,15 @@ impl Node {
         inode_digest.data_mut().clone_from_slice(&inode_hash_buf);
 
         info!(
-            "\tbuilding inode: name {}, ino {}, digest {}, parent {}, chunk_cnt {}",
-            self.inode.name(),
-            self.inode.ino(),
-            self.inode.digest(),
-            self.inode.parent(),
-            self.inode.chunk_cnt(),
+            "\tbuilding inode: name {}, ino {}, digest {}, parent {}, child_count {}",
+            self.name,
+            self.inode.i_ino,
+            self.inode.i_digest,
+            self.inode.i_parent,
+            self.inode.i_child_count,
         );
 
-        self.inode.set_digest(&inode_digest);
+        self.inode.i_digest = inode_digest;
 
         Ok(inode_digest)
     }
@@ -289,7 +301,12 @@ impl Node {
         blob_index: u32,
     ) -> Result<()> {
         // dump inode info
-        self.inode.store(f_bootstrap)?;
+        let mut symlink_path: &[u8] = &[];
+        if let Some(symlink) = &self.symlink {
+            symlink_path = symlink.as_bytes();
+        }
+        self.inode
+            .store(f_bootstrap, self.name.as_bytes(), symlink_path)?;
 
         // dump inode xattr
         // self.xattr_chunks.store(f_bootstrap)?;
@@ -300,78 +317,66 @@ impl Node {
             chunk.store(f_bootstrap)?;
         }
 
-        // dump symlink chunk info
-        if let Some(link_chunk) = &mut self.link_chunk {
-            link_chunk.store(f_bootstrap)?;
-        }
-
         Ok(())
-    }
-
-    pub fn new(blob_offset: u64, root: PathBuf, path: PathBuf, overlay: Overlay) -> Node {
-        Node {
-            blob_offset,
-            root,
-            path,
-            overlay,
-            inode: OndiskInode::new(),
-            chunks: Vec::new(),
-            link_chunk: None,
-            // xattr_chunks: RafsInodeXattrInfos::new(),
-        }
     }
 
     fn build_inode_stat(&mut self) -> Result<()> {
         let meta = self.meta();
 
-        self.inode.set_mode(meta.st_mode());
-        self.inode.set_uid(meta.st_uid());
-        self.inode.set_gid(meta.st_gid());
-        self.inode.set_projid(0);
-        self.inode.set_rdev(meta.st_rdev());
-        self.inode.set_size(meta.st_size());
-        self.inode.set_nlink(meta.st_nlink());
-        self.inode.set_blocks(meta.st_blocks());
-        self.inode.set_atime(meta.st_atime() as u64);
-        self.inode.set_mtime(meta.st_mtime() as u64);
-        self.inode.set_ctime(meta.st_ctime() as u64);
+        self.inode.i_mode = meta.st_mode();
+        self.inode.i_uid = meta.st_uid();
+        self.inode.i_gid = meta.st_gid();
+        self.inode.i_projid = 0;
+        self.inode.i_rdev = meta.st_rdev();
+        self.inode.i_size = meta.st_size();
+        self.inode.i_nlink = meta.st_nlink();
+        self.inode.i_blocks = meta.st_blocks();
+        self.inode.i_atime = meta.st_atime() as u64;
+        self.inode.i_mtime = meta.st_mtime() as u64;
+        self.inode.i_ctime = meta.st_ctime() as u64;
 
         Ok(())
     }
 
     pub fn build_inode(&mut self, hardlink_node: Option<Node>) -> Result<()> {
         if self.get_rootfs() == PathBuf::from("/") {
-            self.inode.set_name("/")?;
+            self.name = String::from("/");
+            self.inode.set_name_size(self.name.as_bytes().len());
             self.build_inode_stat()?;
             return Ok(());
         }
 
-        let file_name = self.path.file_name().unwrap().to_str().unwrap();
+        let file_name = self
+            .path
+            .file_name()
+            .unwrap()
+            .to_owned()
+            .into_string()
+            .unwrap();
 
-        self.inode.set_name(file_name)?;
+        self.name = file_name;
+        self.inode.set_name_size(self.name.as_bytes().len());
         self.build_inode_stat()?;
         self.build_inode_xattr()?;
 
         if self.is_reg() {
             if self.is_hardlink() {
                 if let Some(hardlink_node) = hardlink_node {
-                    self.inode
-                        .set_flags(self.inode.flags() | INO_FLAG_HARDLINK as u64);
-                    self.inode.set_digest(hardlink_node.inode.digest());
-                    self.inode.set_chunk_cnt(0);
+                    self.inode.i_flags |= INO_FLAG_HARDLINK as u64;
+                    self.inode.i_digest = hardlink_node.inode.i_digest;
+                    self.inode.i_child_count = 0;
                     return Ok(());
                 }
             }
-            let file_size = self.inode.size();
-            let chunk_count = (file_size as f64 / RAFS_DEFAULT_BLOCK_SIZE as f64).ceil() as u64;
-            self.inode.set_chunk_cnt(chunk_count);
+            let file_size = self.inode.i_size;
+            let chunk_count = (file_size as f64 / RAFS_DEFAULT_BLOCK_SIZE as f64).ceil() as u32;
+            self.inode.i_child_count = chunk_count;
         } else if self.is_symlink() {
-            self.inode
-                .set_flags(self.inode.flags() | INO_FLAG_SYMLINK as u64);
+            self.inode.i_flags |= INO_FLAG_SYMLINK as u64;
             let target_path = fs::read_link(&self.path)?;
-            let link_chunk = OndiskSymlinkInfo::from_raw(target_path.to_str().unwrap().as_bytes())?;
-            self.inode.set_chunk_cnt(link_chunk.count() as u64);
-            self.link_chunk = Some(link_chunk);
+            self.symlink = Some(target_path.to_str().unwrap().to_owned());
+            self.inode
+                .set_symlink_size(self.symlink.as_ref().unwrap().len());
         }
 
         Ok(())

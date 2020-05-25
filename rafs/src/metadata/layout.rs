@@ -51,7 +51,6 @@ pub const RAFS_SUPER_VERSION_V4: u32 = 0x400;
 pub const RAFS_SUPER_VERSION_V5: u32 = 0x500;
 pub const RAFS_SUPER_MIN_VERSION: u32 = RAFS_SUPER_VERSION_V4;
 pub const RAFS_INODE_INFO_SIZE: usize = 512;
-pub const RAFS_INODE_INFO_RESERVED_SIZE: usize = RAFS_INODE_INFO_SIZE - 400;
 pub const RAFS_CHUNK_INFO_SIZE: usize = 64;
 pub const RAFS_ALIGNMENT: usize = 8;
 
@@ -165,7 +164,7 @@ impl Default for OndiskSuperBlock {
             s_magic: u32::to_le(RAFS_SUPER_MAGIC as u32),
             s_fs_version: u32::to_le(RAFS_SUPER_VERSION_V5),
             s_sb_size: u32::to_le(RAFS_SUPERBLOCK_SIZE as u32),
-            s_inode_size: u32::to_le(RAFS_INODE_INFO_SIZE as u32),
+            s_inode_size: u32::to_le(RAFS_INODE_INFO_SIZE as u32), // TOOD
             s_block_size: u32::to_le(RAFS_DEFAULT_BLOCK_SIZE as u32),
             s_chunkinfo_size: u32::to_le(RAFS_CHUNK_INFO_SIZE as u32),
             s_flags: u64::to_le(0),
@@ -281,7 +280,7 @@ impl fmt::Display for OndiskSuperBlock {
 }
 
 #[repr(C)]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct OndiskInodeTable {
     data: Vec<u32>,
 }
@@ -336,7 +335,7 @@ impl OndiskInodeTable {
 }
 
 #[repr(C)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct OndiskBlobTable {
     data: Vec<OndiskDigest>,
 }
@@ -388,61 +387,34 @@ impl OndiskBlobTable {
 
 /// Ondisk rafs inode, 512 bytes
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct OndiskInode {
-    /// file name, [char; RAFS_MAX_NAME + 1]
-    i_name: [u8; RAFS_MAX_NAME + 1],
     /// sha256(sha256(chunk) + ...), [char; RAFS_SHA256_LENGTH]
-    i_digest: OndiskDigest,
+    pub i_digest: OndiskDigest,
     /// parent inode number
-    i_parent: u64,
+    pub i_parent: u64,
     /// from fs stat()
-    i_ino: u64,
-    i_projid: u32,
-    i_mode: u32,
-    i_uid: u32,
-    i_gid: u32,
-    i_rdev: u64,
-    i_size: u64,
-    i_nlink: u64,
-    i_blocks: u64,
-    i_atime: u64,
-    i_mtime: u64,
-    i_ctime: u64,
+    pub i_ino: u64,
+    pub i_projid: u32,
+    pub i_mode: u32,
+    pub i_uid: u32,
+    pub i_gid: u32,
+    pub i_rdev: u64,
+    pub i_size: u64,
+    pub i_nlink: u64,
+    pub i_blocks: u64,
+    pub i_atime: u64,
+    pub i_mtime: u64,
+    pub i_ctime: u64,
     /// HARDLINK | SYMLINK | PREFETCH_HINT
-    i_flags: u64,
-    /// chunks count
-    i_chunk_cnt: u64,
-    i_child_index: u32,
-    i_child_count: u32,
-    i_reserved: [u8; RAFS_INODE_INFO_RESERVED_SIZE],
-}
-
-impl Default for OndiskInode {
-    fn default() -> Self {
-        Self {
-            i_name: [0u8; RAFS_MAX_NAME + 1],
-            i_digest: OndiskDigest::default(),
-            i_parent: 0,
-            i_ino: 0,
-            i_projid: 0,
-            i_mode: 0,
-            i_uid: 0,
-            i_gid: 0,
-            i_rdev: 0,
-            i_size: 0,
-            i_nlink: 0,
-            i_blocks: 0,
-            i_atime: 0,
-            i_mtime: 0,
-            i_ctime: 0,
-            i_flags: 0,
-            i_chunk_cnt: 0,
-            i_child_index: 0,
-            i_child_count: 0,
-            i_reserved: [0u8; RAFS_INODE_INFO_RESERVED_SIZE],
-        }
-    }
+    pub i_flags: u64,
+    /// child / chunk
+    pub i_child_index: u32,
+    pub i_child_count: u32,
+    /// file name, [char; i_name_size]
+    pub i_name_size: u16,
+    /// symlink path, [char; i_symlink_len]
+    pub i_symlink_size: u16,
 }
 
 impl OndiskInode {
@@ -450,77 +422,59 @@ impl OndiskInode {
         Self::default()
     }
 
+    pub fn set_name_size(&mut self, name_len: usize) {
+        self.i_name_size = (name_len + (RAFS_ALIGNMENT - (name_len & (RAFS_ALIGNMENT - 1)))) as u16;
+    }
+
+    pub fn set_symlink_size(&mut self, symlink_len: usize) {
+        self.i_symlink_size =
+            (symlink_len + (RAFS_ALIGNMENT - (symlink_len & (RAFS_ALIGNMENT - 1)))) as u16;
+    }
+
+    pub fn size(&self) -> usize {
+        std::mem::size_of::<Self>() + (self.i_name_size + self.i_symlink_size) as usize
+    }
+
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
         r.read_exact(self.as_mut())
     }
 
-    pub fn store(&self, w: &mut RafsIoWriter) -> Result<()> {
-        w.write_all(self.as_ref())
-    }
-}
+    pub fn store(&self, w: &mut RafsIoWriter, name: &[u8], symlink: &[u8]) -> Result<()> {
+        w.write_all(self.as_ref())?;
 
-impl RafsInode for OndiskInode {
-    fn validate(&self) -> Result<()> {
-        unimplemented!();
-    }
+        w.write_all(name)?;
+        w.write_all(&[0].repeat(self.i_name_size as usize - name.len()))?;
 
-    fn name(&self) -> &str {
-        // Assume the caller has validated the object by calling self.validate()
-        parse_string(&self.i_name[0..=RAFS_MAX_NAME]).unwrap()
-    }
-
-    fn set_name(&mut self, name: &str) -> Result<()> {
-        let len = name.len();
-        if len > RAFS_MAX_NAME {
-            return Err(einval());
+        if !symlink.is_empty() {
+            w.write_all(symlink)?;
+            w.write_all(&[0].repeat(self.i_symlink_size as usize - symlink.len()))?;
         }
-
-        self.i_name[..len].copy_from_slice(name.as_bytes());
-        self.i_name[len] = 0;
 
         Ok(())
     }
 
-    fn digest(&self) -> &OndiskDigest {
-        &self.i_digest
+    pub fn is_dir(&self) -> bool {
+        self.i_mode & libc::S_IFMT == libc::S_IFDIR
     }
 
-    fn set_digest(&mut self, digest: &OndiskDigest) {
-        self.i_digest = *digest;
+    pub fn is_symlink(&self) -> bool {
+        self.i_mode & libc::S_IFMT == libc::S_IFLNK
     }
 
-    impl_getter_setter!(parent, set_parent, i_parent, u64);
-    impl_getter_setter!(ino, set_ino, i_ino, u64);
-    impl_getter_setter!(projid, set_projid, i_projid, u32);
-    impl_getter_setter!(mode, set_mode, i_mode, u32);
-    impl_getter_setter!(uid, set_uid, i_uid, u32);
-    impl_getter_setter!(gid, set_gid, i_gid, u32);
-    impl_getter_setter!(rdev, set_rdev, i_rdev, u64);
-    impl_getter_setter!(size, set_size, i_size, u64);
-    impl_getter_setter!(nlink, set_nlink, i_nlink, u64);
-    impl_getter_setter!(blocks, set_blocks, i_blocks, u64);
-    impl_getter_setter!(atime, set_atime, i_atime, u64);
-    impl_getter_setter!(mtime, set_mtime, i_mtime, u64);
-    impl_getter_setter!(ctime, set_ctime, i_ctime, u64);
-    impl_getter_setter!(flags, set_flags, i_flags, u64);
-    impl_getter_setter!(chunk_cnt, set_chunk_cnt, i_chunk_cnt, u64);
-    impl_getter_setter!(child_index, set_child_index, i_child_index, u32);
-    impl_getter_setter!(child_count, set_child_count, i_child_count, u32);
+    pub fn is_reg(&self) -> bool {
+        self.i_mode & libc::S_IFMT == libc::S_IFREG
+    }
+
+    pub fn is_hardlink(&self) -> bool {
+        self.i_nlink > 1
+    }
+
+    pub fn has_xattr(&self) -> bool {
+        self.i_flags & INO_FLAG_XATTR == INO_FLAG_XATTR
+    }
 }
 
 impl_metadata_converter!(OndiskInode);
-
-impl fmt::Display for OndiskInode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "inode name: {}, digest: {}, ino: {})",
-            self.name(),
-            self.digest(),
-            self.ino()
-        )
-    }
-}
 
 /// On disk Rafs data chunk information.
 #[repr(C)]
@@ -665,58 +619,6 @@ impl fmt::Display for OndiskDigest {
     }
 }
 
-/// On disk sysmlink data.
-#[repr(C)]
-#[derive(Clone, Default, Debug)]
-pub struct OndiskSymlinkInfo {
-    pub data: Vec<u8>,
-}
-
-impl OndiskSymlinkInfo {
-    pub fn new() -> Self {
-        OndiskSymlinkInfo {
-            ..Default::default()
-        }
-    }
-
-    pub fn to_str(&self) -> Result<&str> {
-        parse_string(self.data.as_slice())
-    }
-
-    pub fn from_raw(data: &[u8]) -> Result<Self> {
-        let raw_size = data.len() + 1;
-        if raw_size > libc::PATH_MAX as usize {
-            return Err(einval());
-        }
-
-        let size = raw_size + (RAFS_ALIGNMENT - (raw_size & (RAFS_ALIGNMENT - 1)));
-        let mut buf = vec![0; size];
-        buf[..data.len()].copy_from_slice(data);
-        // Need one extra padding '0'
-        buf[data.len()] = 0;
-
-        Ok(OndiskSymlinkInfo { data: buf })
-    }
-
-    pub fn count(&self) -> usize {
-        self.data.len() / RAFS_ALIGNMENT
-    }
-
-    pub fn size(&self) -> usize {
-        self.data.len() * std::mem::size_of::<u8>()
-    }
-
-    pub fn store(&mut self, w: &mut RafsIoWriter) -> Result<usize> {
-        w.write_all(&self.data)?;
-        Ok(self.data.len())
-    }
-
-    pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
-        r.read_exact(&mut self.data)?;
-        Ok(())
-    }
-}
-
 #[repr(C)]
 #[derive(Clone, Default, Debug)]
 pub struct OndiskXAttrPair {
@@ -754,265 +656,5 @@ impl OndiskXAttr {
 
     pub fn push(&mut self, pair: OndiskXAttrPair) {
         self.data.push(pair);
-    }
-}
-
-pub fn save_symlink_ondisk(data: &[u8], w: &mut RafsIoWriter) -> Result<usize> {
-    let (sz, _) = calc_symlink_size(data.len())?;
-    let mut buf = vec![0; sz];
-
-    buf[..data.len()].copy_from_slice(data);
-    buf[data.len()] = 0;
-    w.write_all(&buf)?;
-
-    Ok(sz)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::convert::TryInto;
-
-    #[test]
-    fn test_rafs_ondisk_superblock_v4() {
-        let mut sb = OndiskSuperBlock::new();
-        sb.set_version(RAFS_SUPER_VERSION_V4);
-
-        assert_eq!(
-            std::mem::size_of::<OndiskSuperBlock>(),
-            RAFS_SUPERBLOCK_SIZE
-        );
-
-        assert_eq!(sb.magic(), RAFS_SUPER_MAGIC);
-        assert_eq!(sb.version(), RAFS_SUPER_VERSION_V4 as u32);
-        assert_eq!(sb.sb_size(), RAFS_SUPERBLOCK_SIZE as u32);
-        assert_eq!(sb.inode_size(), RAFS_INODE_INFO_SIZE as u32);
-        assert_eq!(sb.block_size(), RAFS_DEFAULT_BLOCK_SIZE as u32);
-        assert_eq!(sb.chunkinfo_size(), RAFS_CHUNK_INFO_SIZE as u32);
-        assert_eq!(sb.flags(), 0);
-        sb.validate().unwrap();
-
-        sb.set_magic(0x1);
-        assert_eq!(sb.magic(), 1);
-        assert_eq!(sb.s_magic, 0x1);
-        sb.set_magic(RAFS_SUPER_MAGIC);
-        sb.set_version(2);
-        assert_eq!(sb.version(), 2);
-        sb.set_sb_size(3);
-        assert_eq!(sb.sb_size(), 3);
-        sb.set_inode_size(4);
-        assert_eq!(sb.inode_size(), 4);
-        sb.set_inode_size(5);
-        assert_eq!(sb.inode_size(), 5);
-        sb.set_chunkinfo_size(6);
-        assert_eq!(sb.chunkinfo_size(), 6);
-        sb.set_flags(7);
-        assert_eq!(sb.flags(), 7);
-        sb.validate().unwrap_err();
-    }
-
-    #[test]
-    fn test_rafs_ondisk_superblock_v5() {
-        let mut sb = OndiskSuperBlock::new();
-        sb.set_inodes_count(1000);
-        sb.set_inode_table_entries(1024);
-        sb.set_inode_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
-
-        assert_eq!(
-            std::mem::size_of::<OndiskSuperBlock>(),
-            RAFS_SUPERBLOCK_SIZE
-        );
-
-        assert_eq!(sb.magic(), RAFS_SUPER_MAGIC);
-        assert_eq!(sb.version(), RAFS_SUPER_VERSION_V5 as u32);
-        assert_eq!(sb.sb_size(), RAFS_SUPERBLOCK_SIZE as u32);
-        assert_eq!(sb.inode_size(), RAFS_INODE_INFO_SIZE as u32);
-        assert_eq!(sb.block_size(), RAFS_DEFAULT_BLOCK_SIZE as u32);
-        assert_eq!(sb.chunkinfo_size(), RAFS_CHUNK_INFO_SIZE as u32);
-        assert_eq!(sb.flags(), 0);
-        sb.validate().unwrap();
-
-        sb.set_magic(0x1);
-        assert_eq!(sb.magic(), 1);
-        assert_eq!(sb.s_magic, 0x1);
-        sb.validate().unwrap_err();
-        sb.set_magic(RAFS_SUPER_MAGIC);
-
-        sb.set_version(2);
-        assert_eq!(sb.version(), 2);
-        sb.validate().unwrap_err();
-        sb.set_version(RAFS_SUPER_VERSION_V5);
-
-        sb.set_sb_size(3);
-        assert_eq!(sb.sb_size(), 3);
-        sb.set_sb_size(RAFS_SUPERBLOCK_SIZE as u32);
-        sb.set_inode_size(4);
-        assert_eq!(sb.inode_size(), 4);
-        sb.set_inode_size(5);
-        assert_eq!(sb.inode_size(), 5);
-        sb.set_inode_size(RAFS_INODE_INFO_SIZE as u32);
-        sb.set_chunkinfo_size(6);
-        assert_eq!(sb.chunkinfo_size(), 6);
-        sb.set_chunkinfo_size(RAFS_CHUNK_INFO_SIZE as u32);
-        sb.set_flags(7);
-        assert_eq!(sb.flags(), 7);
-        sb.set_flags(0);
-
-        sb.validate().unwrap();
-
-        sb.set_inodes_count(2000);
-        sb.validate().unwrap_err();
-        sb.set_inodes_count(0);
-        sb.validate().unwrap_err();
-        sb.set_inodes_count(100);
-
-        sb.set_inode_table_offset(RAFS_SUPERBLOCK_SIZE as u64 + 1);
-        sb.validate().unwrap_err();
-        sb.set_inode_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
-
-        sb.set_inode_table_entries(1 << 30);
-        sb.validate().unwrap_err();
-        sb.set_inode_table_entries(1 << 29);
-        sb.validate().unwrap_err();
-        sb.set_inode_table_entries((1 << 29) - 1);
-        sb.validate().unwrap();
-    }
-
-    #[test]
-    fn test_rafs_ondisk_inode() {
-        let mut inode = OndiskInode::new();
-        let mut sb = RafsSuper::new();
-
-        assert_eq!(std::mem::size_of::<OndiskInode>(), RAFS_INODE_INFO_SIZE);
-        inode.validate(&sb.s_meta).unwrap_err();
-
-        sb.s_meta.s_inodes_count = 100;
-        inode.set_parent(ROOT_ID);
-        inode.set_ino(ROOT_ID);
-
-        assert_eq!(inode.name(), "");
-        inode.set_name("test").unwrap();
-        assert_eq!(inode.name(), "test");
-
-        sb.s_meta.s_inodes_count = 0;
-        inode.validate(&sb.s_meta).unwrap_err();
-        sb.s_meta.s_inodes_count = ROOT_ID;
-        inode.validate(&sb.s_meta).unwrap_err();
-        sb.s_meta.s_inodes_count = ROOT_ID + 1;
-        inode.validate(&sb.s_meta).unwrap();
-        sb.s_meta.s_inodes_count = 100;
-
-        inode.set_ino(ROOT_ID + 1);
-        inode.validate(&sb.s_meta).unwrap();
-        inode.set_parent(ROOT_ID + 1);
-        inode.validate(&sb.s_meta).unwrap_err();
-        inode.set_parent(0);
-        inode.validate(&sb.s_meta).unwrap_err();
-        inode.set_parent(ROOT_ID);
-        inode.set_ino(0);
-        inode.validate(&sb.s_meta).unwrap_err();
-        inode.set_ino(ROOT_ID + 1);
-        inode.validate(&sb.s_meta).unwrap();
-
-        inode.i_name = [0x40u8; RAFS_MAX_NAME + 1];
-        inode.validate(&sb.s_meta).unwrap_err();
-        inode.i_name[RAFS_MAX_NAME] = 0;
-        inode.validate(&sb.s_meta).unwrap();
-
-        inode.i_flags = u64::to_le(!0);
-        inode.validate(&sb.s_meta).unwrap_err();
-        inode.set_flags(INO_FLAG_SYMLINK | INO_FLAG_HARDLINK);
-        inode.validate(&sb.s_meta).unwrap_err();
-        inode.set_flags(INO_FLAG_SYMLINK | INO_FLAG_XATTR);
-        inode.validate(&sb.s_meta).unwrap_err();
-        inode.set_mode(libc::S_IFLNK);
-        inode.validate(&sb.s_meta).unwrap();
-        assert_eq!(inode.flags(), INO_FLAG_XATTR | INO_FLAG_SYMLINK);
-        inode.set_mode(0);
-        inode.set_flags(0);
-
-        inode.set_name(&"t".repeat(RAFS_MAX_NAME + 1)).unwrap_err();
-        inode.set_name(&"t".repeat(RAFS_MAX_NAME)).unwrap();
-        assert_eq!(inode.name().len(), RAFS_MAX_NAME);
-        inode.validate(&sb.s_meta).unwrap();
-
-        inode.set_nlink(std::u32::MAX as u64);
-        inode.validate(&sb.s_meta).unwrap();
-        inode.set_nlink(std::u32::MAX as u64 + 1);
-        inode.validate(&sb.s_meta).unwrap_err();
-        inode.set_nlink(std::u32::MAX as u64);
-        assert_eq!(inode.nlink(), std::u32::MAX as u64);
-        inode.validate(&sb.s_meta).unwrap();
-
-        inode.set_rdev(std::u32::MAX as u64 + 1);
-        inode.validate(&sb.s_meta).unwrap_err();
-        inode.set_rdev(std::u32::MAX as u64);
-        assert_eq!(inode.rdev(), std::u32::MAX as u64);
-        inode.validate(&sb.s_meta).unwrap();
-
-        inode.set_mode(libc::S_IFREG);
-        inode.set_size(1);
-        inode.validate(&sb.s_meta).unwrap_err();
-        inode.set_chunk_cnt(1);
-        inode.validate(&sb.s_meta).unwrap();
-    }
-
-    #[test]
-    fn test_rafs_ondisk_chunk_info() {
-        let mut chunk = OndiskChunkInfo::new();
-        let ptr = &chunk as *const OndiskChunkInfo as *const u8;
-
-        assert_eq!(std::mem::size_of::<OndiskChunkInfo>(), 128);
-        assert_eq!(std::mem::size_of_val(&chunk), 128);
-        assert_eq!(std::mem::align_of_val(&chunk), 8);
-        assert_eq!(chunk.blockid().data() as *const [u8] as *const u8, ptr);
-        assert_eq!(ptr, &chunk.block_id.data as *const u8);
-
-        assert_eq!(chunk.blob_offset, 0);
-        assert_eq!(chunk.file_offset, 0);
-        assert_eq!(chunk.compress_size, 0);
-        chunk.set_file_offset(0x1);
-        chunk.set_blob_offset(0x2);
-        chunk.set_compress_size(0x3);
-        assert_eq!(chunk.file_offset, 0x1);
-        assert_eq!(chunk.blob_offset, 0x2);
-        assert_eq!(chunk.compress_size, 0x3);
-        assert_eq!(chunk.file_offset(), 0x1);
-        assert_eq!(chunk.blob_offset(), 0x2);
-        assert_eq!(chunk.compress_size(), 0x3);
-
-        assert_eq!(chunk.blobid(), "");
-        chunk.set_blobid("test").unwrap();
-        assert_eq!(chunk.blobid(), "test");
-    }
-
-    #[test]
-    fn test_rafs_ondisk_digest() {
-        let buf = [0u8; RAFS_SHA256_LENGTH];
-        let ptr = &buf as *const [u8];
-        let digest: &OndiskDigest = buf.as_ref().try_into().unwrap();
-
-        assert_eq!(std::mem::size_of::<OndiskDigest>(), 32);
-        assert_eq!(std::mem::size_of_val(digest), 32);
-        assert_eq!(std::mem::align_of_val(digest), 1);
-        assert_eq!(digest.data() as *const [u8], ptr);
-        assert_eq!(ptr, &digest.data as *const [u8]);
-
-        let mut buf = [0xa5u8; RAFS_SHA256_LENGTH];
-        let ptr = &mut buf as *mut [u8];
-        let digest: &mut OndiskDigest = buf.as_mut().try_into().unwrap();
-        assert_eq!(ptr, &mut digest.data as *mut [u8]);
-        assert_eq!(digest.data()[0], 0xa5);
-        assert_eq!(digest.data()[RAFS_SHA256_LENGTH - 1], 0xa5);
-
-        digest.digest("a5".as_bytes());
-        assert_eq!(
-            digest.data,
-            [
-                0x66, 0x22, 0x0e, 0x71, 0x59, 0x1b, 0x2d, 0x93, 0x3c, 0x0e, 0x93, 0x5c, 0x13, 0x8e,
-                0xbf, 0xd6, 0x07, 0x10, 0xb9, 0x1f, 0xe2, 0xfb, 0x75, 0x99, 0xec, 0xed, 0x44, 0x30,
-                0xb3, 0xdb, 0xb3, 0xc9
-            ]
-        );
     }
 }

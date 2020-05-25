@@ -16,14 +16,8 @@ use fuse_rs::abi::linux_abi::Attr;
 use fuse_rs::api::filesystem::{Entry, ROOT_ID};
 
 use crate::fs::Inode;
-use crate::metadata::layout::{
-    OndiskChunkInfo, OndiskDigest, OndiskInode, OndiskSymlinkInfo, RAFS_CHUNK_INFO_SIZE,
-    RAFS_SUPER_VERSION_V4, RAFS_SUPER_VERSION_V5,
-};
-use crate::metadata::{
-    parse_string, RafsChunkInfo, RafsDigest, RafsInode, RafsSuper, RafsSuperInodes, RafsSuperMeta,
-    RAFS_BLOB_ID_MAX_LENGTH, RAFS_INODE_BLOCKSIZE, RAFS_MAX_NAME,
-};
+use crate::metadata::layout::*;
+use crate::metadata::*;
 use crate::storage::device::{RafsBio, RafsBioDesc};
 use crate::{ebadf, einval, enoent, RafsIoReader};
 
@@ -387,7 +381,7 @@ impl RafsInode for CachedInode {
         }
     }
 
-    fn get_symlink(&self) -> Result<OndiskSymlinkInfo> {
+    fn get_symlink(&self) -> Result<OndiskSymlink> {
         if !self.is_symlink() {
             Err(einval())
         } else {

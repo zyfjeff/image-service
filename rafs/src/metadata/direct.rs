@@ -5,31 +5,77 @@
 use std::fs::File;
 use std::io::{Error, Result};
 use std::mem::size_of;
-use std::os::unix::io::{FromRawFd, RawFd};
-use std::sync::Arc;
+use std::os::unix::io::FromRawFd;
+use std::slice;
 
 use crate::metadata::layout::*;
 use crate::metadata::*;
 
-struct DirectMapping {
-    base: *const u8,
-    end: *const u8,
-    size: usize,
+macro_rules! impl_getter_setter {
+    ($G: ident, $S: ident, $F: ident, $U: ty) => {
+        fn $G(&self) -> $U {
+            self.data.$F
+        }
+
+        fn $S(&mut self, $F: $U) {
+            self.data.$F = $F;
+        }
+    };
+}
+
+#[derive(Clone)]
+pub struct DirectMapping {
+    pub inode_table: OndiskInodeTable,
+    pub blob_table: OndiskBlobTable,
+    pub base: *const u8,
+    pub end: *const u8,
+    pub size: usize,
 }
 
 unsafe impl Send for DirectMapping {}
 unsafe impl Sync for DirectMapping {}
 
-impl DirectMapping {
-    fn new() -> Self {
-        DirectMapping {
+impl Default for DirectMapping {
+    fn default() -> Self {
+        Self {
+            inode_table: OndiskInodeTable::default(),
+            blob_table: OndiskBlobTable::default(),
             base: std::ptr::null(),
             end: std::ptr::null(),
             size: 0,
         }
     }
+}
 
-    fn from_raw_fd(fd: RawFd) -> Result<Self> {
+impl DirectMapping {
+    pub fn new(inode_table: OndiskInodeTable, blob_table: OndiskBlobTable) -> Self {
+        let mut dm = Self::default();
+        dm.inode_table = inode_table;
+        dm.blob_table = blob_table;
+        dm
+    }
+
+    fn cast_to_ref<'a, 'b, T>(&'a self, base: *const u8, offset: usize) -> Result<&'b T> {
+        let start = base.wrapping_add(offset);
+        let end = start.wrapping_add(size_of::<T>());
+
+        if start < self.base || end < self.base || end > self.end
+        // || start as usize & (std::mem::align_of::<T>() - 1) != 0
+        {
+            return Err(einval());
+        }
+
+        Ok(unsafe { &*(start as *const T) })
+    }
+}
+
+impl RafsSuperInodes for DirectMapping {
+    fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
+        let fd = unsafe { libc::dup(r.as_raw_fd()) };
+        if fd < 0 {
+            return Err(Error::last_os_error());
+        }
+
         let file = unsafe { File::from_raw_fd(fd) };
         let md = file.metadata()?;
         let len = md.len();
@@ -50,28 +96,18 @@ impl DirectMapping {
                 0,
             )
         } as *const u8;
+
         // Safe because the mmap area should covered the range [start, end)
         let end = unsafe { base.add(size) };
 
-        Ok(DirectMapping { base, end, size })
+        self.base = base;
+        self.end = end;
+        self.size = size;
+
+        Ok(())
     }
 
-    fn cast_to_ref<'a, 'b, T>(&'a self, base: *const u8, offset: usize) -> Result<&'b T> {
-        let start = base.wrapping_add(offset);
-        let end = start.wrapping_add(size_of::<T>());
-
-        if start < self.base || end < self.base || end > self.end
-        // || start as usize & (std::mem::align_of::<T>() - 1) != 0
-        {
-            return Err(einval());
-        }
-
-        Ok(unsafe { &*(start as *const T) })
-    }
-}
-
-impl Drop for DirectMapping {
-    fn drop(&mut self) {
+    fn destroy(&mut self) {
         if !self.base.is_null() {
             unsafe { libc::munmap(self.base as *mut u8 as *mut libc::c_void, self.size) };
             self.base = std::ptr::null();
@@ -79,197 +115,199 @@ impl Drop for DirectMapping {
             self.size = 0;
         }
     }
-}
 
-pub struct DirectMapInodes {
-    // TODO: use ArcSwap here to support swapping underlying metadata file.
-    mapping: Arc<DirectMapping>,
-    inode_table: Arc<OndiskInodeTable>,
-    blob_table: Arc<OndiskBlobTable>,
-}
-
-impl DirectMapInodes {
-    pub fn new(inode_table: Arc<OndiskInodeTable>, blob_table: Arc<OndiskBlobTable>) -> Self {
-        DirectMapInodes {
-            mapping: Arc::new(DirectMapping::new()),
-            inode_table,
-            blob_table,
-        }
-    }
-}
-
-impl RafsSuperInodes for DirectMapInodes {
-    fn load(&mut self, _sb: &mut RafsSuperMeta, r: &mut RafsIoReader) -> Result<()> {
-        let fd = unsafe { libc::dup(r.as_raw_fd()) };
-        if fd < 0 {
-            return Err(Error::last_os_error());
-        }
-
-        let mapping = DirectMapping::from_raw_fd(fd)?;
-        self.mapping = Arc::new(mapping);
-
-        Ok(())
-    }
-
-    fn destroy(&mut self) {
-        self.mapping = Arc::new(DirectMapping::new());
-    }
-
-    fn get_inode(&self, ino: u64) -> Result<&dyn RafsInode> {
+    fn get_inode(&self, ino: Inode, s_meta: RafsSuperMeta) -> Result<Box<dyn RafsInode>> {
         let offset = self.inode_table.get(ino)?;
-        let inode = self
-            .mapping
-            .cast_to_ref::<OndiskInode>(self.mapping.base, offset as usize)?;
-        Ok(inode as &dyn RafsInode)
+
+        let inode = self.cast_to_ref::<OndiskInode>(self.base, offset as usize)?;
+
+        Ok(Box::new(OndiskInodeMapping {
+            mapping: self.clone(),
+            data: *inode,
+            s_meta,
+        }) as Box<dyn RafsInode>)
+    }
+}
+
+pub struct OndiskInodeMapping {
+    pub mapping: DirectMapping,
+    pub data: OndiskInode,
+    pub s_meta: RafsSuperMeta,
+}
+
+impl OndiskInodeMapping {
+    pub fn get_child_by_index(&self, _idx: u32) -> Result<&dyn RafsInode> {
+        unimplemented!();
+    }
+}
+
+impl RafsInode for OndiskInodeMapping {
+    fn validate(&self) -> Result<()> {
+        unimplemented!();
     }
 
-    fn get_blob_id<'a>(&'a self, idx: u32) -> Result<&'a OndiskDigest> {
-        self.blob_table.get(idx)
+    fn name(&self) -> Result<&str> {
+        let offset = self.mapping.inode_table.get(self.ino())?;
+
+        let name = unsafe {
+            slice::from_raw_parts(
+                self.mapping
+                    .base
+                    .wrapping_add(offset as usize + std::mem::size_of::<OndiskInode>()),
+                self.data.i_name_size as usize,
+            )
+        };
+
+        parse_string(name)
     }
 
-    fn get_chunk_info(&self, inode: &dyn RafsInode, idx: u64) -> Result<&OndiskChunkInfo> {
-        let ptr = inode as *const dyn RafsInode as *const u8;
+    fn get_symlink(&self) -> Result<&str> {
+        let offset = self.mapping.inode_table.get(self.ino())?;
+
+        let start = self.mapping.base.wrapping_add(
+            offset as usize + std::mem::size_of::<OndiskInode>() + self.data.i_name_size as usize,
+        );
+        let symlink =
+            unsafe { std::slice::from_raw_parts(start, self.data.i_symlink_size as usize) };
+
+        parse_string(symlink)
+    }
+
+    fn get_chunk_info(&self, idx: u32) -> Result<&OndiskChunkInfo> {
+        let ptr = self as *const dyn RafsInode as *const u8;
         let chunk = ptr
             .wrapping_add(size_of::<OndiskInode>() + size_of::<OndiskChunkInfo>() * idx as usize);
-
         self.mapping.cast_to_ref::<OndiskChunkInfo>(chunk, 0)
     }
 
-    fn get_symlink(&self, inode: &dyn RafsInode) -> Result<OndiskSymlinkInfo> {
-        let sz = inode.chunk_cnt() as usize * RAFS_ALIGNMENT;
-        if sz == 0 || sz > (libc::PATH_MAX as usize) + RAFS_ALIGNMENT - 1 {
-            return Err(ebadf());
+    fn get_child_by_name(&self, name: &str) -> Result<&dyn RafsInode> {
+        let child_count = self.data.i_child_count;
+        let child_index = self.data.i_child_index;
+
+        for idx in child_index..child_index + child_count {
+            let inode = self.get_child_by_index(idx)?;
+            if inode.name()? == name {
+                return Ok(inode);
+            }
         }
 
-        let start = (inode as *const dyn RafsInode as *const u8).wrapping_add(RAFS_INODE_INFO_SIZE);
-        let input = unsafe { std::slice::from_raw_parts(start, sz) };
-
-        Ok(OndiskSymlinkInfo {
-            data: input.to_vec(),
-        })
+        Err(enoent())
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::metadata::layout::{
-        save_symlink_ondisk, OndiskInodeTable, OndiskSuperBlock, INO_FLAG_SYMLINK,
-    };
-    use crate::metadata::CachedIoBuf;
-    use crate::metadata::{calc_symlink_size, RafsSuper, RAFS_INODE_BLOCKSIZE};
-    use fuse_rs::api::filesystem::ROOT_ID;
+    fn get_child(&self, idx: u32) -> Result<&dyn RafsInode> {
+        let child_count = self.data.i_child_count;
+        let child_index = self.data.i_child_index;
 
-    #[test]
-    fn test_rafs_directmap_load_v5() {
-        let mut buf = CachedIoBuf::new();
-
-        let mut sb = OndiskSuperBlock::new();
-        sb.set_inode_size(4);
-        sb.set_inode_table_offset(RAFS_SUPERBLOCK_SIZE as u64);
-        buf.write_all(sb.as_ref()).unwrap();
-
-        let mut table = vec![0u8; 32];
-        table[4] = 0x4;
-        table[5] = 0x4;
-        table[8] = 0x44;
-        table[9] = 0x4;
-        table[12] = 0xa4;
-        table[13] = 0x4;
-        table[16] = 0xe4;
-        table[17] = 0x4;
-        buf.write_all(table.as_ref()).unwrap();
-
-        let mut ondisk = OndiskInode::new();
-        ondisk.set_name("root").unwrap();
-        ondisk.set_parent(ROOT_ID);
-        ondisk.set_ino(ROOT_ID);
-        ondisk.set_mode(libc::S_IFDIR);
-        buf.append_buf(ondisk.as_ref());
-
-        let mut ondisk = OndiskInode::new();
-        ondisk.set_name("a").unwrap();
-        ondisk.set_parent(ROOT_ID);
-        ondisk.set_ino(ROOT_ID + 1);
-        ondisk.set_chunk_cnt(2);
-        ondisk.set_mode(libc::S_IFREG);
-        ondisk.set_size(RAFS_INODE_BLOCKSIZE as u64 * 2);
-        buf.append_buf(ondisk.as_ref());
-        let mut ondisk = OndiskChunkInfo::new();
-        ondisk.set_blob_offset(0);
-        ondisk.set_compress_size(5);
-        buf.append_buf(ondisk.as_ref());
-        let mut ondisk = OndiskChunkInfo::new();
-        ondisk.set_blob_offset(10);
-        ondisk.set_compress_size(5);
-        buf.append_buf(ondisk.as_ref());
-
-        let mut ondisk = OndiskInode::new();
-        ondisk.set_name("b").unwrap();
-        ondisk.set_parent(ROOT_ID);
-        ondisk.set_ino(ROOT_ID + 2);
-        ondisk.set_mode(libc::S_IFDIR);
-        buf.append_buf(ondisk.as_ref());
-
-        let mut ondisk = OndiskInode::new();
-        ondisk.set_name("c").unwrap();
-        ondisk.set_parent(ROOT_ID + 2);
-        ondisk.set_ino(ROOT_ID + 3);
-        ondisk.set_mode(libc::S_IFLNK);
-        let (_, chunks) = calc_symlink_size("/a/b/d".len()).unwrap();
-        ondisk.set_chunk_cnt(chunks as u64);
-        ondisk.set_flags(INO_FLAG_SYMLINK);
-        buf.append_buf(ondisk.as_ref());
-        let mut buf1: Box<dyn RafsIoWrite> = Box::new(buf.clone());
-        save_symlink_ondisk("/a/b/d".as_bytes(), &mut buf1).unwrap();
-
-        let (base, size) = buf.as_buf();
-        let end = unsafe { base.add(size) };
-        let mut mapping_table = OndiskInodeTable::new(4);
-        mapping_table.set(ROOT_ID, 0x404).unwrap();
-        mapping_table.set(ROOT_ID + 1, 0x444).unwrap();
-        mapping_table.set(ROOT_ID + 2, 0x4a4).unwrap();
-        mapping_table.set(ROOT_ID + 3, 0x4e4).unwrap();
-        let mut inodes = DirectMapInodes::new(Arc::new(mapping_table));
-        inodes.mapping = Arc::new(DirectMapping { base, end, size });
-
-        let mut sb2 = RafsSuper::new();
-        sb2.s_inodes = Box::new(inodes);
-        sb2.s_meta.s_magic = sb.magic();
-        sb2.s_meta.s_version = sb.version();
-        sb2.s_meta.s_sb_size = sb.sb_size();
-        sb2.s_meta.s_inode_size = sb.inode_size();
-        sb2.s_meta.s_block_size = sb.block_size();
-        sb2.s_meta.s_chunkinfo_size = sb.chunkinfo_size();
-        sb2.s_meta.s_flags = sb.flags();
-        sb2.s_meta.s_blocks_count = 0;
-        sb2.s_meta.s_inodes_count = sb.inodes_count();
-        sb2.s_meta.s_inode_table_entries = sb.inode_table_entries();
-        sb2.s_meta.s_inode_table_offset = sb.inode_table_offset();
-
-        let inode = sb2.s_inodes.get_inode(ROOT_ID).unwrap();
-        assert_eq!(inode.ino(), ROOT_ID);
-        assert_eq!(inode.parent(), ROOT_ID);
-        assert_eq!(inode.is_dir(), true);
-
-        let inode = sb2.s_inodes.get_inode(ROOT_ID + 1).unwrap();
-        assert_eq!(inode.ino(), ROOT_ID + 1);
-        assert_eq!(inode.parent(), ROOT_ID);
-        assert_eq!(inode.is_reg(), true);
-        assert_eq!(inode.chunk_cnt(), 2);
-        // TODO: chunk
-
-        let inode = sb2.s_inodes.get_inode(ROOT_ID + 2).unwrap();
-        assert_eq!(inode.ino(), ROOT_ID + 2);
-        assert_eq!(inode.parent(), ROOT_ID);
-        assert_eq!(inode.is_dir(), true);
-
-        let inode = sb2.s_inodes.get_inode(ROOT_ID + 3).unwrap();
-        assert_eq!(inode.name(), "c");
-        assert_eq!(inode.ino(), ROOT_ID + 3);
-        assert_eq!(inode.parent(), ROOT_ID + 2);
-        assert_eq!(inode.is_symlink(), true);
-        assert_eq!(inode.chunk_cnt(), 1);
-        assert_eq!(inode.get_symlink(&sb2).unwrap(), "/a/b/d".as_bytes());
+        if idx >= child_count {
+            return Err(enoent());
+        }
+        match idx.checked_add(child_index) {
+            None => Err(enoent()),
+            Some(idx) => Ok(self.get_child_by_index(idx)?),
+        }
     }
+
+    fn get_child_count(&self) -> Result<usize> {
+        Ok(self.data.i_child_count as usize)
+    }
+
+    fn get_blob_id(&self, idx: u32) -> Result<&OndiskDigest> {
+        self.mapping.blob_table.get(idx)
+    }
+
+    fn get_entry(&self) -> Entry {
+        Entry {
+            attr: self.get_attr().into(),
+            inode: self.data.i_ino,
+            generation: 0,
+            attr_timeout: self.s_meta.s_attr_timeout,
+            entry_timeout: self.s_meta.s_entry_timeout,
+        }
+    }
+
+    fn get_attr(&self) -> Attr {
+        Attr {
+            ino: self.data.i_ino,
+            size: self.data.i_size,
+            blocks: self.data.i_blocks,
+            atime: self.data.i_atime,
+            ctime: self.data.i_ctime,
+            mtime: self.data.i_mtime,
+            mode: self.data.i_mode,
+            nlink: self.data.i_nlink as u32,
+            uid: self.data.i_uid,
+            gid: self.data.i_gid,
+            rdev: self.data.i_rdev as u32,
+            blksize: RAFS_INODE_BLOCKSIZE,
+            ..Default::default()
+        }
+    }
+
+    fn get_xattrs(&self) -> Result<HashMap<String, Vec<u8>>> {
+        unimplemented!();
+    }
+
+    fn alloc_bio_desc<'b>(&'b self, offset: u64, size: usize) -> Result<RafsBioDesc<'b>> {
+        let blksize = self.s_meta.s_block_size;
+        let mut desc = RafsBioDesc::new();
+        let end = offset + size as u64;
+
+        for idx in 0..self.data.i_child_count {
+            let blk = self.get_chunk_info(idx)?;
+            if (blk.file_offset() + blksize as u64) <= offset {
+                continue;
+            } else if blk.file_offset() >= end {
+                break;
+            }
+
+            let blob_id = self.get_blob_id(blk.blob_index())?;
+            let file_start = cmp::max(blk.file_offset(), offset);
+            let file_end = cmp::min(blk.file_offset() + blksize as u64, end);
+            let bio = RafsBio::new(
+                blk,
+                blob_id,
+                (file_start - blk.file_offset()) as u32,
+                (file_end - file_start) as usize,
+                blksize,
+            );
+
+            desc.bi_vec.push(bio);
+            desc.bi_size += bio.size;
+        }
+
+        Ok(desc)
+    }
+
+    fn is_dir(&self) -> bool {
+        self.data.is_dir()
+    }
+
+    fn is_symlink(&self) -> bool {
+        self.data.is_symlink()
+    }
+
+    fn is_reg(&self) -> bool {
+        self.data.is_reg()
+    }
+
+    fn is_hardlink(&self) -> bool {
+        self.data.is_hardlink()
+    }
+
+    fn has_xattr(&self) -> bool {
+        self.data.has_xattr()
+    }
+
+    fn digest(&self) -> &OndiskDigest {
+        &self.data.i_digest
+    }
+
+    fn set_digest(&mut self, digest: OndiskDigest) {
+        self.data.i_digest = digest;
+    }
+
+    // impl_getter_setter!(digest, set_digest, i_digest, OndiskDigest);
+    impl_getter_setter!(ino, set_ino, i_ino, u64);
+    impl_getter_setter!(parent, set_parent, i_parent, u64);
+    impl_getter_setter!(size, set_size, i_size, u64);
 }

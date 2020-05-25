@@ -113,15 +113,30 @@ impl<'a> Builder<'a> {
         self.create_dir(&dir.join("sub"))?;
         self.create_file(&dir.join("sub/test-1"), b"lower:sub/test-1")?;
         self.create_file(&dir.join("sub/test-2"), b"lower:sub/test-2")?;
+
+        let long_name = &"long-name.".repeat(100)[..255];
+        self.create_file(&dir.join(long_name), b"lower:sub/long-name")?;
+
         self.create_symlink(
             &Path::new("../test-3-large").to_path_buf(),
-            &dir.join("sub/test-3-symlink"),
+            &dir.join("sub/test-3-large-symlink"),
         )?;
-        self.create_hardlink(&dir.join("test-3-large"), &dir.join("sub/test-3-hardlink"))?;
+
+        self.create_hardlink(
+            &dir.join("test-3-large"),
+            &dir.join("sub/test-3-large-hardlink"),
+        )?;
+
         self.create_dir(&dir.join("sub/hide"))?;
         self.create_file(&dir.join("sub/hide/test-1"), b"lower:sub/hide/test-1")?;
         self.create_file(&dir.join("sub/hide/test-2"), b"lower:sub/hide/test-2")?;
         self.create_dir(&dir.join("sub/hide/sub"))?;
+
+        self.create_symlink(
+            &Path::new("../../hide/sub").to_path_buf(),
+            &dir.join("sub/hide/sub/hide-symlink"),
+        )?;
+
         self.create_file(
             &dir.join("sub/hide/sub/test-1"),
             b"lower:sub/hide/sub/test-1",
@@ -184,25 +199,24 @@ impl<'a> Builder<'a> {
     }
 
     pub fn check_bootstrap(&mut self) -> Result<()> {
-        let f_bootstrap = Box::new(
+        let mut f_bootstrap: Box<dyn RafsIoRead> = Box::new(
             OpenOptions::new()
                 .write(false)
                 .create(false)
                 .read(true)
                 .open(self.work_dir.join("parent-bootstrap"))?,
-        );
+        ) as Box<dyn RafsIoRead>;
 
-        let mut f_bootstrap: Box<dyn RafsIoRead> = f_bootstrap;
         let mut super_block = RafsSuper::new();
-        super_block.load(&mut f_bootstrap).unwrap();
+        super_block.load(&mut f_bootstrap)?;
 
-        for i in 1..15 {
+        for i in 1..17 {
             let inode = super_block.get_inode(i)?;
             if inode.is_symlink() {
-                let link = super_block.get_symlink(inode)?;
-                println!("link {:?}", link.to_str()?);
+                let link = inode.get_symlink()?;
+                println!("link {}", link);
             }
-            println!("inode {:?} {} {}", inode.name(), inode.size(), inode.ino());
+            println!("inode {:?} {} {}", inode.name()?, inode.size(), inode.ino());
         }
 
         Ok(())

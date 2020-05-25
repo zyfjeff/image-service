@@ -25,25 +25,15 @@ impl NoopInodes {
 }
 
 impl RafsSuperInodes for NoopInodes {
-    fn load(&mut self, _sb: &mut RafsSuperMeta, _r: &mut RafsIoReader) -> Result<()> {
+    fn load(&mut self, _r: &mut RafsIoReader) -> Result<()> {
         unimplemented!()
     }
 
-    fn destroy(&mut self) {}
-
-    fn get_inode(&self, _ino: u64) -> Result<&dyn RafsInode> {
+    fn destroy(&mut self) {
         unimplemented!()
     }
 
-    fn get_blob_id<'a>(&'a self, _index: u32) -> Result<&'a OndiskDigest> {
-        unimplemented!()
-    }
-
-    fn get_chunk_info(&self, _inode: &dyn RafsInode, _idx: u64) -> Result<&OndiskChunkInfo> {
-        unimplemented!()
-    }
-
-    fn get_symlink(&self, _inode: &dyn RafsInode) -> Result<OndiskSymlinkInfo> {
+    fn get_inode(&self, _ino: Inode, _s_meta: RafsSuperMeta) -> Result<Box<dyn RafsInode>> {
         unimplemented!()
     }
 }
