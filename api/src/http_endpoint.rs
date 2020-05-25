@@ -57,6 +57,7 @@ pub enum ApiResponsePayload {
 pub type ApiResponse = std::result::Result<ApiResponsePayload, ApiError>;
 
 #[allow(clippy::large_enum_variant)]
+#[derive(Debug)]
 pub enum ApiRequest {
     DaemonInfo(Sender<ApiResponse>),
     Mount(MountInfo, Sender<ApiResponse>),
