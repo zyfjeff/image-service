@@ -12,6 +12,7 @@ extern crate micro_http;
 extern crate vmm_sys_util;
 #[macro_use]
 extern crate lazy_static;
+extern crate url;
 
 pub mod http;
 pub mod http_endpoint;

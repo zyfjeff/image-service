@@ -13,6 +13,9 @@ use std::path::PathBuf;
 use std::sync::mpsc::Sender;
 use std::thread;
 
+use http::uri::Uri;
+use url::Url;
+
 use micro_http::{Body, HttpServer, MediaType, Request, Response, StatusCode, Version};
 use vmm_sys_util::eventfd::EventFd;
 
@@ -69,8 +72,9 @@ fn handle_http_request(
     api_notifier: &EventFd,
     api_sender: &Sender<ApiRequest>,
 ) -> Response {
-    let path = request.uri().get_abs_path().to_string();
-    let mut response = match HTTP_ROUTES.routes.get(&path) {
+    // Micro http should ensure that req path is legal.
+    let uri = request.uri().get_abs_path().parse::<Uri>().unwrap();
+    let mut response = match HTTP_ROUTES.routes.get(&uri.path().to_string()) {
         Some(route) => match api_notifier.try_clone() {
             Ok(notifier) => route.handle_request(&request, notifier, api_sender.clone()),
             Err(_) => {
@@ -92,6 +96,25 @@ fn handle_http_request(
     response.set_server("Nydus API");
     response.set_content_type(MediaType::ApplicationJson);
     response
+}
+
+pub fn extract_query_part(req: &Request, key: &str) -> Option<String> {
+    // Splicing req.uri with "http:" prefix might look weird, but since it depends on
+    // crate `Url` to generate query_pairs HashMap, which is working on top of Url not Uri.
+    // Better that we can add query part support to Micro-http in the future. But
+    // right now, below way makes it easy to obtain query parts from uri.
+    let http_prefix: String = String::from("http:");
+    let url = Url::parse((http_prefix + &req.uri().get_abs_path().to_string()).as_str()).unwrap();
+    let v: Option<String> = None;
+    for (k, v) in url.query_pairs().into_owned() {
+        if k.as_str() != key.chars().as_str() {
+            continue;
+        } else {
+            trace!("Got query part {:?}", (k, &v));
+            return Some(v);
+        }
+    }
+    v
 }
 
 pub fn start_http_thread(

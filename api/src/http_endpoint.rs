@@ -14,7 +14,7 @@ use micro_http::{Body, Method, Request, Response, StatusCode, Version};
 use serde_json::Error as SerdeError;
 use vmm_sys_util::eventfd::EventFd;
 
-use crate::http::EndpointHandler;
+use crate::http::{extract_query_part, EndpointHandler};
 
 /// API errors are sent back from the VMM API server through the ApiResponse.
 #[derive(Debug)]
@@ -143,11 +143,15 @@ pub fn mount_info(
     }
 }
 
-pub fn export_global_stats(api_evt: EventFd, api_sender: Sender<ApiRequest>) -> ApiResult<String> {
+pub fn export_global_stats(
+    api_evt: EventFd,
+    api_sender: Sender<ApiRequest>,
+    id: Option<String>,
+) -> ApiResult<String> {
     let (response_sender, response_receiver) = channel();
 
     api_sender
-        .send(ApiRequest::ExportGlobalMetrics(response_sender, None))
+        .send(ApiRequest::ExportGlobalMetrics(response_sender, id))
         .map_err(ApiError::RequestSend)?;
     api_evt.write(1).map_err(ApiError::EventFdWrite)?;
 
@@ -159,11 +163,15 @@ pub fn export_global_stats(api_evt: EventFd, api_sender: Sender<ApiRequest>) -> 
     }
 }
 
-pub fn export_files_stats(api_evt: EventFd, api_sender: Sender<ApiRequest>) -> ApiResult<String> {
+pub fn export_files_stats(
+    api_evt: EventFd,
+    api_sender: Sender<ApiRequest>,
+    id: Option<String>,
+) -> ApiResult<String> {
     let (response_sender, response_receiver) = channel();
 
     api_sender
-        .send(ApiRequest::ExportFilesMetrics(response_sender, None))
+        .send(ApiRequest::ExportFilesMetrics(response_sender, id))
         .map_err(ApiError::RequestSend)?;
     api_evt.write(1).map_err(ApiError::EventFdWrite)?;
 
@@ -289,7 +297,8 @@ impl EndpointHandler for MetricsHandler {
     ) -> Response {
         match req.method() {
             Method::Get => {
-                match export_global_stats(api_notifier, api_sender).map_err(HttpError::Info) {
+                let id = extract_query_part(req, &"id");
+                match export_global_stats(api_notifier, api_sender, id).map_err(HttpError::Info) {
                     Ok(info) => {
                         let mut response = Response::new(Version::Http11, StatusCode::OK);
                         response.set_body(Body::new(info));
@@ -314,7 +323,8 @@ impl EndpointHandler for MetricsFilesHandler {
     ) -> Response {
         match req.method() {
             Method::Get => {
-                match export_files_stats(api_notifier, api_sender).map_err(HttpError::Info) {
+                let id = extract_query_part(req, &"id");
+                match export_files_stats(api_notifier, api_sender, id).map_err(HttpError::Info) {
                     Ok(info) => {
                         let mut response = Response::new(Version::Http11, StatusCode::OK);
                         response.set_body(Body::new(info));

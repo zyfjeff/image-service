@@ -888,6 +888,7 @@ checksum = "b8f8bdf33df195859076e54ab11ee78a1b208382d3a26ec40d142ffc1ecc49ef"
 name = "nydus-api"
 version = "0.1.0"
 dependencies = [
+ "http",
  "lazy_static 1.4.0",
  "log 0.4.8",
  "micro_http",
@@ -895,6 +896,7 @@ dependencies = [
  "serde 1.0.106",
  "serde_derive",
  "serde_json",
+ "url",
  "vmm-sys-util",
 ]
 
