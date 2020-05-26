@@ -103,6 +103,11 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
+    pub fn set_xattr(&mut self, path: &PathBuf, key: &str, value: &[u8]) -> Result<()> {
+        xattr::set(path, key, value)?;
+        Ok(())
+    }
+
     pub fn make_parent(&mut self) -> Result<()> {
         let dir = self.work_dir.join("parent");
 
@@ -140,6 +145,18 @@ impl<'a> Builder<'a> {
         self.create_file(
             &dir.join("sub/hide/sub/test-1"),
             b"lower:sub/hide/sub/test-1",
+        )?;
+
+        self.set_xattr(
+            &dir.join("sub/hide/sub/test-1"),
+            "user.key1",
+            "value1".as_bytes(),
+        )?;
+
+        self.set_xattr(
+            &dir.join("sub/hide/sub/test-1"),
+            "user.key2",
+            "value2".as_bytes(),
         )?;
 
         Ok(())

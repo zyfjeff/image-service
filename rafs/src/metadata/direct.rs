@@ -270,7 +270,21 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
     }
 
     fn get_xattrs(&self) -> Result<HashMap<String, Vec<u8>>> {
-        unimplemented!();
+        if !self.data.has_xattr() {
+            return Ok(HashMap::new());
+        }
+
+        let start = self.data as *const OndiskInode as *const u8;
+        let start = start.wrapping_add(self.data.size());
+
+        let size = start as *const u32;
+
+        let _xattrs_data =
+            unsafe { slice::from_raw_parts(start.wrapping_add(size_of::<u32>()), *size as usize) };
+
+        // TODO
+
+        Ok(HashMap::new())
     }
 
     fn alloc_bio_desc<'b>(&'b self, offset: u64, size: usize) -> Result<RafsBioDesc<'b>> {

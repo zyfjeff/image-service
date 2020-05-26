@@ -7,7 +7,7 @@ use rafs::RafsIoWrite;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::prelude::*;
-use std::io::{Result, SeekFrom};
+use std::io::{Error, ErrorKind, Result, SeekFrom};
 use std::os::linux::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::str;
@@ -72,8 +72,8 @@ pub struct Node {
     pub chunks: Vec<OndiskChunkInfo>,
     // chunks info of symlink file
     pub symlink: Option<String>,
-    // xattr info of file
-    // pub xattr_chunks: RafsInodeXattrInfos,
+    // xattr list of file
+    pub xattrs: XAttrs,
 }
 
 impl Node {
@@ -87,7 +87,7 @@ impl Node {
             inode: OndiskInode::new(),
             chunks: Vec::new(),
             symlink: None,
-            // xattr_chunks: RafsInodeXattrInfos::new(),
+            xattrs: XAttrs::default(),
         }
     }
 
@@ -103,105 +103,23 @@ impl Node {
     }
 
     fn build_inode_xattr(&mut self) -> Result<()> {
-        let mut xattrs = xattr::list(&self.path)?.peekable();
+        let mut file_xattrs = xattr::list(&self.path)?.peekable();
 
-        if xattrs.peek().is_none() {
+        if file_xattrs.peek().is_none() {
             return Ok(());
         }
 
-        let mut xattr_chunk = OndiskXAttr::new();
-        for (count, key) in xattrs.enumerate() {
+        let mut xattrs = XAttrs::default();
+        for (count, key) in file_xattrs.enumerate() {
+            let key = key
+                .to_str()
+                .ok_or_else(|| Error::from(ErrorKind::InvalidData))?
+                .to_string();
             let value = xattr::get(&self.path, &key)?;
-            let mut pair = OndiskXAttrPair::new();
-            pair.set(key.to_str().unwrap(), value.unwrap_or_else(Vec::new));
-            xattr_chunk.push(pair);
+            xattrs.pairs.insert(key, value.unwrap_or_default());
         }
 
-        // let filepath = CString::new(self.path.as_str())?;
-        // // Safe because we are calling into C functions.
-        // let name_size =
-        //     unsafe { libc::llistxattr(filepath.as_ptr() as *const i8, std::ptr::null_mut(), 0) };
-        // if name_size <= 0 {
-        //     return Ok(());
-        // }
-
-        // let mut buf: Vec<u8> = Vec::new();
-        // buf.resize(name_size as usize, 0);
-        // // Safe because we are calling into C functions.
-        // unsafe {
-        //     let ret = libc::llistxattr(
-        //         filepath.as_ptr() as *const i8,
-        //         buf.as_mut_ptr() as *mut i8,
-        //         name_size as usize,
-        //     );
-        //     if ret <= 0 {
-        //         return Ok(());
-        //     }
-        // };
-
-        // let names = match str::from_utf8(&buf) {
-        //     Ok(s) => {
-        //         let s: Vec<&str> = s.split_terminator('\0').collect();
-        //         Ok(s)
-        //     }
-        //     Err(_) => Err(Error::from_raw_os_error(libc::EINVAL)),
-        // }?;
-
-        // let mut count = 0;
-        // for n in names.iter() {
-        //     // make sure name is nul terminated
-        //     let mut name = (*n).to_string();
-        //     name.push('\0');
-        //     let value_size = unsafe {
-        //         libc::lgetxattr(
-        //             filepath.as_ptr() as *const i8,
-        //             name.as_ptr() as *const i8,
-        //             std::ptr::null_mut(),
-        //             0,
-        //         )
-        //     };
-        //     if value_size < 0 {
-        //         continue;
-        //     }
-        //     if value_size == 0 {
-        //         count += 1;
-        //         self.xattr_chunks.data.insert(name, vec![]);
-        //         continue;
-        //     }
-        //     // Need to read xattr value
-        //     let mut value_buf: Vec<u8> = Vec::new();
-        //     value_buf.resize(value_size as usize, 0);
-        //     // Safe because we are calling into C functions.
-        //     unsafe {
-        //         let ret = libc::lgetxattr(
-        //             filepath.as_ptr() as *const i8,
-        //             name.as_ptr() as *const i8,
-        //             value_buf.as_mut_ptr() as *mut c_void,
-        //             value_size as usize,
-        //         );
-        //         if ret < 0 {
-        //             continue;
-        //         }
-        //         if ret == 0 {
-        //             count += 1;
-        //             self.xattr_chunks.data.insert(name, vec![]);
-        //             continue;
-        //         }
-        //     };
-        //     count += 1;
-        //     self.xattr_chunks.data.insert(name, value_buf);
-        // }
-
-        // if count > 0 {
-        //     self.inode.i_flags |= INO_FLAG_XATTR;
-        //     self.xattr_chunks.count = count;
-        //     trace!(
-        //         "\tinode {} has xattr {:?}",
-        //         self.inode.name,
-        //         self.xattr_chunks
-        //     );
-        // }
-        // Ok(())
+        self.inode.i_flags |= INO_FLAG_XATTR as u64;
 
         Ok(())
     }
@@ -310,7 +228,9 @@ impl Node {
             .store(f_bootstrap, self.name.as_bytes(), symlink_path)?;
 
         // dump inode xattr
-        // self.xattr_chunks.store(f_bootstrap)?;
+        if !self.xattrs.pairs.is_empty() {
+            self.xattrs.store(f_bootstrap)?;
+        }
 
         // dump chunk info
         for chunk in &mut self.chunks {

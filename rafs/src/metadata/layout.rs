@@ -32,7 +32,7 @@
 
 use std::convert::TryFrom;
 use std::io::{Error, ErrorKind, Result};
-use std::str;
+use std::mem::size_of;
 
 use super::*;
 use crate::{einval, enoent};
@@ -61,7 +61,7 @@ macro_rules! impl_metadata_converter {
 
             fn try_from(buf: &[u8]) -> std::result::Result<Self, Self::Error> {
                 let ptr = buf as *const [u8] as *const u8;
-                if buf.len() != std::mem::size_of::<$T>()
+                if buf.len() != size_of::<$T>()
                     || ptr as usize & (std::mem::align_of::<$T>() - 1) != 0
                 {
                     return Err(einval());
@@ -76,7 +76,7 @@ macro_rules! impl_metadata_converter {
 
             fn try_from(buf: &mut [u8]) -> std::result::Result<Self, Self::Error> {
                 let ptr = buf as *const [u8] as *const u8;
-                if buf.len() != std::mem::size_of::<$T>()
+                if buf.len() != size_of::<$T>()
                     || ptr as usize & (std::mem::align_of::<$T>() - 1) != 0
                 {
                     return Err(einval());
@@ -89,14 +89,14 @@ macro_rules! impl_metadata_converter {
         impl AsRef<[u8]> for $T {
             fn as_ref(&self) -> &[u8] {
                 let ptr = self as *const $T as *const u8;
-                unsafe { &*std::slice::from_raw_parts(ptr, std::mem::size_of::<$T>()) }
+                unsafe { &*std::slice::from_raw_parts(ptr, size_of::<$T>()) }
             }
         }
 
         impl AsMut<[u8]> for $T {
             fn as_mut(&mut self) -> &mut [u8] {
                 let ptr = self as *mut $T as *mut u8;
-                unsafe { &mut *std::slice::from_raw_parts_mut(ptr, std::mem::size_of::<$T>()) }
+                unsafe { &mut *std::slice::from_raw_parts_mut(ptr, size_of::<$T>()) }
             }
         }
     };
@@ -275,14 +275,14 @@ pub struct OndiskInodeTable {
 
 impl OndiskInodeTable {
     pub fn new(entries: usize) -> Self {
-        let table_size = entries + (RAFS_ALIGNMENT - (entries & (RAFS_ALIGNMENT - 1)));
+        let table_size = align_to_rafs(entries);
         OndiskInodeTable {
             data: vec![0; table_size],
         }
     }
 
     pub fn size(&self) -> usize {
-        self.data.len() * std::mem::size_of::<u32>()
+        self.data.len() * size_of::<u32>()
     }
 
     pub fn set(&mut self, ino: Inode, inode_offset: u32) -> Result<()> {
@@ -415,16 +415,15 @@ impl OndiskInode {
     }
 
     pub fn set_name_size(&mut self, name_len: usize) {
-        self.i_name_size = (name_len + (RAFS_ALIGNMENT - (name_len & (RAFS_ALIGNMENT - 1)))) as u16;
+        self.i_name_size = align_to_rafs(name_len) as u16;
     }
 
     pub fn set_symlink_size(&mut self, symlink_len: usize) {
-        self.i_symlink_size =
-            (symlink_len + (RAFS_ALIGNMENT - (symlink_len & (RAFS_ALIGNMENT - 1)))) as u16;
+        self.i_symlink_size = align_to_rafs(symlink_len) as u16;
     }
 
     pub fn size(&self) -> usize {
-        std::mem::size_of::<Self>() + (self.i_name_size + self.i_symlink_size) as usize
+        size_of::<Self>() + (self.i_name_size + self.i_symlink_size) as usize
     }
 
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
@@ -600,39 +599,48 @@ impl fmt::Display for OndiskDigest {
 /// On disk xattr data.
 #[repr(C)]
 #[derive(Clone, Default, Debug)]
-pub struct OndiskXAttr {
+pub struct OndiskXAttrs {
     size: u32,
-    data: Vec<OndiskXAttrPair>,
 }
 
-impl OndiskXAttr {
+impl OndiskXAttrs {
     pub fn new() -> Self {
-        OndiskXAttr {
+        OndiskXAttrs {
             ..Default::default()
         }
     }
-
-    pub fn push(&mut self, pair: OndiskXAttrPair) {
-        self.data.push(pair);
-    }
 }
 
-#[repr(C)]
-#[derive(Clone, Default, Debug)]
-pub struct OndiskXAttrPair {
-    size: u32,
-    key: Vec<u8>,
-    value: Vec<u8>,
+#[derive(Clone, Default)]
+pub struct XAttrs {
+    pub pairs: HashMap<String, Vec<u8>>,
 }
 
-impl OndiskXAttrPair {
-    pub fn new() -> Self {
-        OndiskXAttrPair {
-            ..Default::default()
+impl XAttrs {
+    pub fn size(&self) -> usize {
+        let mut size: usize = size_of::<u32>();
+        for (key, value) in self.pairs.iter() {
+            size += size_of::<u32>();
+            size += key.as_bytes().len() + value.len();
         }
+        size
     }
-    pub fn set(&mut self, key: &str, value: Vec<u8>) {
-        self.key = key.as_bytes().to_vec();
-        self.value = value;
+
+    pub fn store(&self, w: &mut RafsIoWriter) -> Result<()> {
+        if !self.pairs.is_empty() {
+            let size = align_to_rafs(self.size());
+            w.write_all(&(size as u32).to_be_bytes())?;
+            for (key, value) in self.pairs.iter() {
+                let pair_size = size_of::<u32>() + key.as_bytes().len() + value.len();
+                w.write_all(&(pair_size as u32).to_be_bytes())?;
+                w.write_all(key.as_bytes())?;
+                w.write_all(value)?;
+            }
+        }
+        Ok(())
     }
+}
+
+fn align_to_rafs(size: usize) -> usize {
+    size + (RAFS_ALIGNMENT - (size & (RAFS_ALIGNMENT - 1)))
 }
