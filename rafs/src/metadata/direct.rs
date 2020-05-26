@@ -11,6 +11,7 @@ use std::slice;
 use crate::metadata::layout::*;
 use crate::metadata::*;
 
+/// Impl get / set accessor for an object.
 #[allow(unused_macros)]
 macro_rules! impl_getter_setter {
     ($G: ident, $S: ident, $F: ident, $U: ty) => {
@@ -24,6 +25,7 @@ macro_rules! impl_getter_setter {
     };
 }
 
+/// Impl get accessor for an object.
 macro_rules! impl_getter {
     ($G: ident, $F: ident, $U: ty) => {
         fn $G(&self) -> $U {
@@ -32,6 +34,7 @@ macro_rules! impl_getter {
     };
 }
 
+/// Direct mode use mmap to access Ondisk metadata.
 #[derive(Clone)]
 pub struct DirectMapping {
     pub inode_table: OndiskInodeTable,
@@ -64,6 +67,7 @@ impl DirectMapping {
         dm
     }
 
+    /// Mmap to metadata ondisk data directly.
     fn cast_to_ref<'a, 'b, T>(&'a self, base: *const u8, offset: usize) -> Result<&'b T> {
         let start = base.wrapping_add(offset);
         let end = start.wrapping_add(size_of::<T>());
@@ -127,7 +131,8 @@ impl RafsSuperInodes for DirectMapping {
         }
     }
 
-    fn get_inode(&self, ino: Inode, s_meta: RafsSuperMeta) -> Result<Box<dyn RafsInode>> {
+    /// Find inode offset by ino from inode table and mmap to OndiskInode.
+    fn get_inode(&self, ino: Inode, meta: RafsSuperMeta) -> Result<Box<dyn RafsInode>> {
         let offset = self.inode_table.get(ino)?;
 
         let inode = self.cast_to_ref::<OndiskInode>(self.base, offset as usize)?;
@@ -135,7 +140,7 @@ impl RafsSuperInodes for DirectMapping {
         Ok(Box::new(OndiskInodeMapping {
             mapping: self.clone(),
             data: inode,
-            s_meta,
+            meta,
         }) as Box<dyn RafsInode>)
     }
 }
@@ -143,7 +148,7 @@ impl RafsSuperInodes for DirectMapping {
 pub struct OndiskInodeMapping<'a> {
     pub mapping: DirectMapping,
     pub data: &'a OndiskInode,
-    pub s_meta: RafsSuperMeta,
+    pub meta: RafsSuperMeta,
 }
 
 impl<'a> OndiskInodeMapping<'a> {
@@ -228,8 +233,8 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
             attr: self.get_attr().into(),
             inode: self.data.i_ino,
             generation: 0,
-            attr_timeout: self.s_meta.s_attr_timeout,
-            entry_timeout: self.s_meta.s_entry_timeout,
+            attr_timeout: self.meta.attr_timeout,
+            entry_timeout: self.meta.entry_timeout,
         }
     }
 
@@ -256,7 +261,7 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
     }
 
     fn alloc_bio_desc<'b>(&'b self, offset: u64, size: usize) -> Result<RafsBioDesc<'b>> {
-        let blksize = self.s_meta.s_block_size;
+        let blksize = self.meta.block_size;
         let mut desc = RafsBioDesc::new();
         let end = offset + size as u64;
 

@@ -164,7 +164,7 @@ impl Default for OndiskSuperBlock {
             s_magic: u32::to_le(RAFS_SUPER_MAGIC as u32),
             s_fs_version: u32::to_le(RAFS_SUPER_VERSION_V5),
             s_sb_size: u32::to_le(RAFS_SUPERBLOCK_SIZE as u32),
-            s_inode_size: u32::to_le(RAFS_INODE_INFO_SIZE as u32), // TOOD
+            s_inode_size: u32::to_le(RAFS_INODE_INFO_SIZE as u32),
             s_block_size: u32::to_le(RAFS_DEFAULT_BLOCK_SIZE as u32),
             s_chunkinfo_size: u32::to_le(RAFS_CHUNK_INFO_SIZE as u32),
             s_flags: u64::to_le(0),
@@ -385,7 +385,7 @@ impl OndiskBlobTable {
     }
 }
 
-/// Ondisk rafs inode, 512 bytes
+/// Ondisk rafs inode
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct OndiskInode {
@@ -408,12 +408,14 @@ pub struct OndiskInode {
     pub i_ctime: u64,
     /// HARDLINK | SYMLINK | PREFETCH_HINT
     pub i_flags: u64,
-    /// child / chunk
+    /// for dir, child start index
     pub i_child_index: u32,
+    /// for dir, means child count.
+    /// for regular file, means chunk info count.
     pub i_child_count: u32,
-    /// file name, [char; i_name_size]
+    /// file name size, [char; i_name_size]
     pub i_name_size: u16,
-    /// symlink path, [char; i_symlink_len]
+    /// symlink path size, [char; i_symlink_size]
     pub i_symlink_size: u16,
 }
 
@@ -619,6 +621,26 @@ impl fmt::Display for OndiskDigest {
     }
 }
 
+/// On disk xattr data.
+#[repr(C)]
+#[derive(Clone, Default, Debug)]
+pub struct OndiskXAttr {
+    size: u32,
+    data: Vec<OndiskXAttrPair>,
+}
+
+impl OndiskXAttr {
+    pub fn new() -> Self {
+        OndiskXAttr {
+            ..Default::default()
+        }
+    }
+
+    pub fn push(&mut self, pair: OndiskXAttrPair) {
+        self.data.push(pair);
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Default, Debug)]
 pub struct OndiskXAttrPair {
@@ -636,25 +658,5 @@ impl OndiskXAttrPair {
     pub fn set(&mut self, key: &str, value: Vec<u8>) {
         self.key = key.as_bytes().to_vec();
         self.value = value;
-    }
-}
-
-/// On disk sysmlink data.
-#[repr(C)]
-#[derive(Clone, Default, Debug)]
-pub struct OndiskXAttr {
-    size: u32,
-    data: Vec<OndiskXAttrPair>,
-}
-
-impl OndiskXAttr {
-    pub fn new() -> Self {
-        OndiskXAttr {
-            ..Default::default()
-        }
-    }
-
-    pub fn push(&mut self, pair: OndiskXAttrPair) {
-        self.data.push(pair);
     }
 }

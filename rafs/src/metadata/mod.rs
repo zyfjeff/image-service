@@ -13,21 +13,18 @@ use std::fmt::Write;
 use std::io::Result;
 use std::time::Duration;
 
-use crate::storage::device::{RafsBio, RafsBioDesc};
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 use fuse_rs::abi::linux_abi::Attr;
 use fuse_rs::api::filesystem::Entry;
 
-// use self::cached::CachedInodes;
+use self::direct::DirectMapping;
 use self::layout::*;
 use self::noop::NoopInodes;
 use crate::fs::{Inode, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
-use crate::metadata::direct::DirectMapping;
+use crate::storage::device::{RafsBio, RafsBioDesc};
 use crate::*;
-use crate::{ebadf, einval, RafsIoReader, RafsIoWriter};
 
-// pub mod cached;
 pub mod direct;
 pub mod layout;
 pub mod noop;
@@ -42,56 +39,52 @@ pub const RAFS_MAX_METADATA_SIZE: usize = 0x8000_0000;
 /// Cached Rafs super block metadata.
 #[derive(Clone, Copy)]
 pub struct RafsSuperMeta {
-    pub s_magic: u32,
-    pub s_version: u32,
-    pub s_sb_size: u32,
-    pub s_inode_size: u32,
-    pub s_root_inode: Inode,
-    pub s_block_size: u32,
-    pub s_blocks_count: u64,
-    pub s_inodes_count: u64,
-    pub s_chunkinfo_size: u32,
-    pub s_flags: u64,
-    pub s_inode_table_entries: u32,
-    pub s_inode_table_offset: u64,
-    pub s_blob_table_entries: u32,
-    pub s_blob_table_offset: u64,
-    pub s_attr_timeout: Duration,
-    pub s_entry_timeout: Duration,
+    pub magic: u32,
+    pub version: u32,
+    pub sb_size: u32,
+    pub inode_size: u32,
+    pub root_inode: Inode,
+    pub block_size: u32,
+    pub blocks_count: u64,
+    pub inodes_count: u64,
+    pub chunk_info_size: u32,
+    pub flags: u64,
+    pub inode_table_entries: u32,
+    pub inode_table_offset: u64,
+    pub blob_table_entries: u32,
+    pub blob_table_offset: u64,
+    pub attr_timeout: Duration,
+    pub entry_timeout: Duration,
 }
 
 /// Cached Rafs super block and inode information.
 pub struct RafsSuper {
-    pub s_meta: RafsSuperMeta,
-    pub s_inodes: Box<dyn RafsSuperInodes + Sync + Send>,
-    load_inodes: bool,
-    cache_inodes: bool,
+    pub meta: RafsSuperMeta,
+    pub inodes: Box<dyn RafsSuperInodes + Sync + Send>,
 }
 
 impl Default for RafsSuper {
     fn default() -> Self {
         Self {
-            s_meta: RafsSuperMeta {
-                s_magic: 0,
-                s_version: 0,
-                s_sb_size: 0,
-                s_inode_size: 0,
-                s_inodes_count: 0,
-                s_root_inode: 0,
-                s_block_size: 0,
-                s_blocks_count: 0,
-                s_chunkinfo_size: 0,
-                s_flags: 0,
-                s_inode_table_entries: 0,
-                s_inode_table_offset: 0,
-                s_blob_table_entries: 0,
-                s_blob_table_offset: 0,
-                s_attr_timeout: Duration::from_secs(RAFS_DEFAULT_ATTR_TIMEOUT),
-                s_entry_timeout: Duration::from_secs(RAFS_DEFAULT_ENTRY_TIMEOUT),
+            meta: RafsSuperMeta {
+                magic: 0,
+                version: 0,
+                sb_size: 0,
+                inode_size: 0,
+                inodes_count: 0,
+                root_inode: 0,
+                block_size: 0,
+                blocks_count: 0,
+                chunk_info_size: 0,
+                flags: 0,
+                inode_table_entries: 0,
+                inode_table_offset: 0,
+                blob_table_entries: 0,
+                blob_table_offset: 0,
+                attr_timeout: Duration::from_secs(RAFS_DEFAULT_ATTR_TIMEOUT),
+                entry_timeout: Duration::from_secs(RAFS_DEFAULT_ENTRY_TIMEOUT),
             },
-            s_inodes: Box::new(NoopInodes::new()),
-            load_inodes: true,
-            cache_inodes: false,
+            inodes: Box::new(NoopInodes::new()),
         }
     }
 }
@@ -102,7 +95,7 @@ impl RafsSuper {
     }
 
     pub fn destroy(&mut self) {
-        self.s_inodes.destroy();
+        self.inodes.destroy();
     }
 
     /// Load RAFS super block and optionally cache inodes.
@@ -112,51 +105,40 @@ impl RafsSuper {
         r.read_exact(sb.as_mut())?;
         sb.validate()?;
 
-        self.s_meta.s_magic = sb.magic();
-        self.s_meta.s_version = sb.version();
-        self.s_meta.s_sb_size = sb.sb_size();
-        self.s_meta.s_inode_size = sb.inode_size();
-        self.s_meta.s_block_size = sb.block_size();
-        self.s_meta.s_chunkinfo_size = sb.chunkinfo_size();
-        self.s_meta.s_flags = sb.flags();
-        self.s_meta.s_blocks_count = 0;
-        match self.s_meta.s_version {
+        self.meta.magic = sb.magic();
+        self.meta.version = sb.version();
+        self.meta.sb_size = sb.sb_size();
+        self.meta.inode_size = sb.inode_size();
+        self.meta.block_size = sb.block_size();
+        self.meta.chunk_info_size = sb.chunkinfo_size();
+        self.meta.flags = sb.flags();
+        self.meta.blocks_count = 0;
+        match self.meta.version {
             RAFS_SUPER_VERSION_V4 => {
-                self.s_meta.s_inodes_count = std::u64::MAX;
+                self.meta.inodes_count = std::u64::MAX;
             }
             RAFS_SUPER_VERSION_V5 => {
-                self.s_meta.s_inodes_count = sb.inodes_count();
-                self.s_meta.s_inode_table_entries = sb.inode_table_entries();
-                self.s_meta.s_inode_table_offset = sb.inode_table_offset();
+                self.meta.inodes_count = sb.inodes_count();
+                self.meta.inode_table_entries = sb.inode_table_entries();
+                self.meta.inode_table_offset = sb.inode_table_offset();
             }
             _ => return Err(ebadf()),
         }
 
         match sb.version() {
-            RAFS_SUPER_VERSION_V4 => {
-                // let mut inodes = Box::new(CachedInodes::new());
-                // inodes.load(&mut self.s_meta, r)?;
-                // self.s_inodes.destroy();
-                // self.s_inodes = inodes;
-            }
+            // TODO: Handle Rafs v5 cached mode, and Rafs v4
+            RAFS_SUPER_VERSION_V4 => {}
             RAFS_SUPER_VERSION_V5 => {
-                if self.load_inodes {
-                    if self.cache_inodes {
-                        unimplemented!();
-                    } else {
-                        let mut inode_table =
-                            OndiskInodeTable::new(sb.inode_table_entries() as usize);
-                        inode_table.load(r)?;
+                let mut inode_table = OndiskInodeTable::new(sb.inode_table_entries() as usize);
+                inode_table.load(r)?;
 
-                        let mut blob_table = OndiskBlobTable::new(sb.blob_table_entries() as usize);
-                        blob_table.load(r)?;
+                let mut blob_table = OndiskBlobTable::new(sb.blob_table_entries() as usize);
+                blob_table.load(r)?;
 
-                        let mut inodes = Box::new(DirectMapping::new(inode_table, blob_table));
-                        inodes.load(r)?;
+                let mut inodes = Box::new(DirectMapping::new(inode_table, blob_table));
+                inodes.load(r)?;
 
-                        self.s_inodes = inodes;
-                    }
-                }
+                self.inodes = inodes;
             }
             _ => return Err(einval()),
         }
@@ -168,33 +150,36 @@ impl RafsSuper {
     pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
         let mut sb = OndiskSuperBlock::new();
 
-        sb.set_magic(self.s_meta.s_magic);
-        sb.set_version(self.s_meta.s_version);
-        sb.set_sb_size(self.s_meta.s_sb_size);
-        sb.set_inode_size(self.s_meta.s_inode_size);
-        sb.set_block_size(self.s_meta.s_block_size);
-        sb.set_chunkinfo_size(self.s_meta.s_chunkinfo_size);
-        sb.set_flags(self.s_meta.s_flags);
-        match self.s_meta.s_version {
+        sb.set_magic(self.meta.magic);
+        sb.set_version(self.meta.version);
+        sb.set_sb_size(self.meta.sb_size);
+        sb.set_inode_size(self.meta.inode_size);
+        sb.set_block_size(self.meta.block_size);
+        sb.set_chunkinfo_size(self.meta.chunk_info_size);
+        sb.set_flags(self.meta.flags);
+
+        match self.meta.version {
             RAFS_SUPER_VERSION_V4 => {}
             RAFS_SUPER_VERSION_V5 => {
-                sb.set_inodes_count(self.s_meta.s_inodes_count);
-                sb.set_inode_table_entries(self.s_meta.s_inode_table_entries);
-                sb.set_inode_table_offset(self.s_meta.s_inode_table_offset);
+                sb.set_inodes_count(self.meta.inodes_count);
+                sb.set_inode_table_entries(self.meta.inode_table_entries);
+                sb.set_inode_table_offset(self.meta.inode_table_offset);
             }
             _ => return Err(einval()),
         }
+
         sb.validate()?;
         w.write_all(sb.as_ref())?;
+
         trace!("written superblock: {}", &sb);
 
-        // TODO: write out other metadata
+        // TODO: Write out other metadata
 
         Ok(std::mem::size_of::<OndiskSuperBlock>())
     }
 
     pub fn get_inode(&self, ino: Inode) -> Result<Box<dyn RafsInode>> {
-        self.s_inodes.get_inode(ino, self.s_meta)
+        self.inodes.get_inode(ino, self.meta)
     }
 }
 
@@ -210,7 +195,6 @@ pub trait RafsSuperInodes {
 /// Trait to access Rafs Inode Information.
 pub trait RafsInode {
     /// Validate the object for safety.
-    ///
     /// The object may be transmuted from a raw buffer read from an external file, so the caller
     /// must validate it before accessing any fields of the object.
     fn validate(&self) -> Result<()>;
@@ -241,10 +225,6 @@ pub trait RafsInode {
 
 /// Trait to access Rafs Data Chunk Information.
 pub trait RafsChunkInfo {
-    /// Validate the object for safety.
-    ///
-    /// The object may be transmuted from a raw buffer read from an external file, so the caller
-    /// must validate it before accessing any fields of the object.
     fn validate(&self, sb: &RafsSuperMeta) -> Result<()>;
 
     fn block_id(&self) -> &OndiskDigest;
@@ -266,10 +246,6 @@ pub trait RafsChunkInfo {
 
 /// Trait to access Rafs SHA256 message digest data.
 pub trait RafsDigest {
-    /// Validate the object for safety.
-    ///
-    /// The object may be transmuted from a raw buffer read from an external file, so the caller
-    /// must validate it before accessing any fields of the object.
     fn validate(&self) -> Result<()>;
 
     /// Get size of Rafs SHA256 message digest data.
@@ -291,6 +267,7 @@ pub trait RafsDigest {
     /// Get a mutable reference to the underlying data.
     fn data_mut(&mut self) -> &mut [u8];
 
+    // Get a hex represetation for SHA256 message digest.
     fn as_str(&self) -> Result<Cow<str>> {
         let mut ret = String::new();
         for c in self.data() {
@@ -300,6 +277,7 @@ pub trait RafsDigest {
     }
 }
 
+// Parse a `buf` to utf-8 string.
 pub fn parse_string(buf: &[u8]) -> Result<&str> {
     std::str::from_utf8(buf)
         .map(|s| {

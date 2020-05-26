@@ -222,7 +222,7 @@ impl FileSystem for Rafs {
     ) -> Result<(libc::stat64, Duration)> {
         let inode = self.sb.get_inode(ino)?;
 
-        Ok((inode.get_attr().into(), self.sb.s_meta.s_attr_timeout))
+        Ok((inode.get_attr().into(), self.sb.meta.attr_timeout))
     }
 
     fn readlink(&self, _ctx: Context, ino: u64) -> Result<Vec<u8>> {
@@ -272,9 +272,9 @@ impl FileSystem for Rafs {
         // filesystem doesn't implement this method.
         st.f_namemax = 255;
         st.f_bsize = 512;
-        st.f_blocks = self.sb.s_meta.s_blocks_count;
-        st.f_fsid = self.sb.s_meta.s_magic as u64;
-        st.f_files = self.sb.s_meta.s_inodes_count;
+        st.f_blocks = self.sb.meta.blocks_count;
+        st.f_fsid = self.sb.meta.magic as u64;
+        st.f_files = self.sb.meta.inodes_count;
 
         Ok(st)
     }
