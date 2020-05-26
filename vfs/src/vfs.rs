@@ -13,8 +13,10 @@ use std::time::Duration;
 
 use bimap::hash::BiHashMap;
 use fuse_rs::abi::linux_abi::*;
+#[cfg(feature = "vhost-user-fs")]
 use fuse_rs::abi::virtio_fs;
 use fuse_rs::api::filesystem::*;
+#[cfg(feature = "vhost-user-fs")]
 use fuse_rs::transport::FsCacheReqHandler;
 
 use crate::pseudo_fs::PseudoFs;
@@ -776,6 +778,7 @@ impl FileSystem for Vfs {
         }
     }
 
+    #[cfg(feature = "vhost-user-fs")]
     fn setupmapping(
         &self,
         ctx: Context,
@@ -797,6 +800,7 @@ impl FileSystem for Vfs {
         }
     }
 
+    #[cfg(feature = "vhost-user-fs")]
     fn removemapping(
         &self,
         ctx: Context,
