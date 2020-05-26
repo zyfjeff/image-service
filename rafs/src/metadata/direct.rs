@@ -151,11 +151,7 @@ pub struct OndiskInodeMapping<'a> {
     pub meta: RafsSuperMeta,
 }
 
-impl<'a> OndiskInodeMapping<'a> {
-    pub fn get_child_by_index(&self, _idx: u32) -> Result<&dyn RafsInode> {
-        unimplemented!();
-    }
-}
+impl<'a> OndiskInodeMapping<'a> {}
 
 impl<'a> RafsInode for OndiskInodeMapping<'a> {
     fn validate(&self) -> Result<()> {
@@ -185,6 +181,14 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
     }
 
     fn get_chunk_info(&self, idx: u32) -> Result<&OndiskChunkInfo> {
+        if !self.is_reg() {
+            return Err(enoent());
+        }
+
+        if idx > self.data.i_child_count - 1 {
+            return Err(enoent());
+        }
+
         let start = self.data as *const OndiskInode as *const u8;
 
         let chunk =
@@ -193,12 +197,16 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
         self.mapping.cast_to_ref::<OndiskChunkInfo>(chunk, 0)
     }
 
-    fn get_child_by_name(&self, name: &str) -> Result<&dyn RafsInode> {
+    fn get_child_by_name(&self, name: &str) -> Result<Box<dyn RafsInode>> {
         let child_count = self.data.i_child_count;
         let child_index = self.data.i_child_index;
 
+        if !self.is_dir() {
+            return Err(einval());
+        }
+
         for idx in child_index..child_index + child_count {
-            let inode = self.get_child_by_index(idx)?;
+            let inode = self.get_child_by_index(idx as u64)?;
             if inode.name()? == name {
                 return Ok(inode);
             }
@@ -207,16 +215,21 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
         Err(enoent())
     }
 
-    fn get_child(&self, idx: u32) -> Result<&dyn RafsInode> {
-        let child_count = self.data.i_child_count;
-        let child_index = self.data.i_child_index;
+    fn get_child_by_index(&self, idx: Inode) -> Result<Box<dyn RafsInode>> {
+        let child_count = self.data.i_child_count as u64;
+        let child_index = self.data.i_child_index as u64;
 
-        if idx >= child_count {
+        if !self.is_dir() {
+            return Err(einval());
+        }
+
+        if idx > child_count - 1 {
             return Err(enoent());
         }
+
         match idx.checked_add(child_index) {
             None => Err(enoent()),
-            Some(idx) => Ok(self.get_child_by_index(idx)?),
+            Some(idx) => Ok(self.mapping.get_inode(idx, self.meta)?),
         }
     }
 
@@ -224,7 +237,7 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
         Ok(self.data.i_child_count as usize)
     }
 
-    fn get_blob_id(&self, idx: u32) -> Result<&OndiskDigest> {
+    fn get_chunk_blob_id(&self, idx: u32) -> Result<&OndiskDigest> {
         self.mapping.blob_table.get(idx)
     }
 
@@ -267,19 +280,19 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
 
         for idx in 0..self.data.i_child_count {
             let blk = self.get_chunk_info(idx)?;
-            if (blk.file_offset() + blksize as u64) <= offset {
+            if (blk.file_offset + blksize as u64) <= offset {
                 continue;
-            } else if blk.file_offset() >= end {
+            } else if blk.file_offset >= end {
                 break;
             }
 
-            let blob_id = self.get_blob_id(blk.blob_index())?;
-            let file_start = cmp::max(blk.file_offset(), offset);
-            let file_end = cmp::min(blk.file_offset() + blksize as u64, end);
+            let blob_id = self.get_chunk_blob_id(blk.blob_index)?;
+            let file_start = cmp::max(blk.file_offset, offset);
+            let file_end = cmp::min(blk.file_offset + blksize as u64, end);
             let bio = RafsBio::new(
                 blk,
                 blob_id,
-                (file_start - blk.file_offset()) as u32,
+                (file_start - blk.file_offset) as u32,
                 (file_end - file_start) as usize,
                 blksize,
             );

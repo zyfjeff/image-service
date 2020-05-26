@@ -230,7 +230,7 @@ impl Node {
             let mut chunk = OndiskChunkInfo::new();
 
             // get chunk info
-            chunk.set_file_offset((i * RAFS_DEFAULT_BLOCK_SIZE as u32) as u64);
+            chunk.file_offset = (i * RAFS_DEFAULT_BLOCK_SIZE as u32) as u64;
             let len = if i == self.inode.i_child_count - 1 {
                 (file_size % RAFS_DEFAULT_BLOCK_SIZE as u64) as usize
             } else {
@@ -238,28 +238,29 @@ impl Node {
             };
 
             // get chunk data
-            file.seek(SeekFrom::Start(chunk.file_offset()))?;
+            file.seek(SeekFrom::Start(chunk.file_offset))?;
             let mut chunk_data = vec![0; len];
             file.read_exact(&mut chunk_data)?;
 
             // calc chunk digest
             let digest = OndiskDigest::from_buf(chunk_data.as_slice());
-            chunk.set_block_id(&digest);
+            chunk.block_id = digest;
 
             // compress chunk data
             let compressed = utils::compress(&chunk_data)?;
             let compressed_size = compressed.len();
-            chunk.set_blob_offset(self.blob_offset);
-            chunk.set_compress_size(compressed_size as u32);
+            chunk.blob_offset = self.blob_offset;
+            chunk.compress_size = compressed_size as u32;
+            chunk.flags |= CHUNK_FLAG_COMPRESSED;
 
             // move cursor to offset of next chunk
             self.blob_offset += compressed_size as u64;
 
             trace!(
                 "\tbuilding chunk: file offset {}, blob offset {}, size {}",
-                chunk.file_offset(),
-                chunk.blob_offset(),
-                chunk.compress_size(),
+                chunk.file_offset,
+                chunk.blob_offset,
+                chunk.compress_size,
             );
 
             // calc blob hash
@@ -269,7 +270,7 @@ impl Node {
             f_blob.write_all(&compressed)?;
 
             // calc inode digest
-            inode_hash.input(&chunk.block_id().data());
+            inode_hash.input(&chunk.block_id.data());
 
             // stash chunk
             self.chunks.push(chunk);
@@ -313,7 +314,7 @@ impl Node {
 
         // dump chunk info
         for chunk in &mut self.chunks {
-            chunk.set_blob_index(blob_index);
+            chunk.blob_index = blob_index;
             chunk.store(f_bootstrap)?;
         }
 

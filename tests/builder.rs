@@ -114,7 +114,7 @@ impl<'a> Builder<'a> {
         self.create_file(&dir.join("sub/test-1"), b"lower:sub/test-1")?;
         self.create_file(&dir.join("sub/test-2"), b"lower:sub/test-2")?;
 
-        let long_name = &"long-name.".repeat(100)[..255];
+        let long_name = &"中文-name.".repeat(100)[..255];
         self.create_file(&dir.join(long_name), b"lower:sub/long-name")?;
 
         self.create_symlink(
@@ -207,16 +207,45 @@ impl<'a> Builder<'a> {
                 .open(self.work_dir.join("parent-bootstrap"))?,
         ) as Box<dyn RafsIoRead>;
 
-        let mut super_block = RafsSuper::new();
+        let mut super_block = RafsSuper::new("direct")?;
         super_block.load(&mut f_bootstrap)?;
+
+        exec(
+            format!(
+                "shasum -a 256 {}",
+                self.work_dir.join("parent-blob").to_str().unwrap()
+            )
+            .as_str(),
+        )?;
 
         for i in 1..17 {
             let inode = super_block.get_inode(i)?;
             if inode.is_symlink() {
                 let link = inode.get_symlink()?;
                 println!("link {}", link);
+            } else if inode.is_dir() {
+                println!("dir {}", inode.get_child_count()?);
+                if inode.name()? == "/" {
+                    let child = inode.get_child_by_name("test-3-large")?;
+                    println!("dir child {}", child.name()?);
+                } else {
+                    let child = inode.get_child_by_index(0)?;
+                    println!("dir child {}", child.name()?);
+                }
+            } else if inode.is_reg() {
+                let chunk_count = inode.get_child_count()?;
+                let chunk = inode.get_chunk_info(0)?;
+                let blob_id = inode.get_chunk_blob_id(chunk.blob_index)?;
+                println!(
+                    "inode name: {:?} size: {} ino: {} chunk_count {} blob_id {} chunk: {}",
+                    inode.name()?,
+                    inode.size(),
+                    inode.ino(),
+                    chunk_count,
+                    blob_id,
+                    chunk,
+                );
             }
-            println!("inode {:?} {} {}", inode.name()?, inode.size(), inode.ino());
         }
 
         Ok(())

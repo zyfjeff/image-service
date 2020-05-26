@@ -719,7 +719,7 @@ fn main() -> Result<()> {
         vfs.mount(Box::new(passthrough_fs), "/")?;
         info!("vfs mounted");
     } else if !metadata.is_empty() {
-        let mut rafs = Rafs::new(rafs_conf.clone(), &"/".to_string());
+        let mut rafs = Rafs::new(rafs_conf.clone(), &"/".to_string())?;
         let mut file = Box::new(File::open(metadata)?) as Box<dyn rafs::RafsIoRead>;
         rafs.import(&mut file)?;
         info!("rafs mounted");

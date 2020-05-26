@@ -21,18 +21,6 @@ use crate::metadata::*;
 use crate::storage::device::{RafsBio, RafsBioDesc};
 use crate::{ebadf, einval, enoent, RafsIoReader};
 
-macro_rules! impl_getter_setter {
-    ($G: ident, $S: ident, $F: ident, $U: ty) => {
-        fn $G(&self) -> $U {
-            self.$F
-        }
-
-        fn $S(&mut self, $F: $U) {
-            self.$F = $F;
-        }
-    };
-}
-
 pub struct CachedInodes {
     s_inodes: BTreeMap<Inode, Arc<CachedInode>>,
 }
@@ -191,7 +179,7 @@ impl RafsSuperInodes for CachedInodes {
             .ok_or_else(enoent)
     }
 
-    fn get_blob_id<'a>(&'a self, _index: u32) -> Result<&'a OndiskDigest> {
+    fn get_chunk_blob_id<'a>(&'a self, _index: u32) -> Result<&'a OndiskDigest> {
         unimplemented!() // TODO
     }
 }
@@ -449,7 +437,7 @@ impl RafsInode for CachedInode {
                 break;
             }
 
-            let blob_id = _sb.s_inodes.get_blob_id(blk.blob_index())?;
+            let blob_id = _sb.s_inodes.get_chunk_blob_id(blk.blob_index())?;
             let file_start = cmp::max(blk.file_offset(), offset);
             let file_end = cmp::min(blk.file_offset() + blksize as u64, end);
             let bio = RafsBio::new(

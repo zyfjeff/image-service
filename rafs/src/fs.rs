@@ -67,13 +67,16 @@ impl Rafs {
     pub fn new(conf: RafsConfig, id: &str) -> Self {
         let dev_config = conf.dev_config();
 
-        Rafs {
+        let rafs_mode = dev_config.rafs.mode.as_str();
+
+        let rafs = Rafs {
             _conf: conf,
-            device: device::RafsDevice::new(dev_config),
-            sb: RafsSuper::new(),
+            device: device::RafsDevice::new(dev_config.clone()),
+            sb: RafsSuper::new(rafs_mode)?,
             initialized: false,
-            ios: io_stats::ios_new(id),
-        }
+        };
+
+        Ok(rafs)
     }
 
     /// Import an rafs metadata to initialize the filesystem instance.
@@ -121,7 +124,7 @@ impl Rafs {
 
         let mut idx = offset as usize;
         while idx < parent.get_child_count()? {
-            let child = parent.get_child(idx as u32)?;
+            let child = parent.get_child_by_index(idx as u64)?;
             match add_entry(DirEntry {
                 ino: child.ino(),
                 offset: (idx + 1) as u64,

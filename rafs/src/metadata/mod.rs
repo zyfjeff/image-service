@@ -36,6 +36,28 @@ pub const RAFS_MAX_NAME: usize = 255;
 pub const RAFS_DEFAULT_BLOCK_SIZE: usize = 1024 * 1024;
 pub const RAFS_MAX_METADATA_SIZE: usize = 0x8000_0000;
 
+#[macro_export]
+macro_rules! impl_getter_setter {
+    ($G: ident, $S: ident, $F: ident, $U: ty) => {
+        fn $G(&self) -> $U {
+            self.$F
+        }
+
+        fn $S(&mut self, $F: $U) {
+            self.$F = $F;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! impl_getter {
+    ($G: ident, $F: ident, $U: ty) => {
+        fn $G(&self) -> $U {
+            self.$F
+        }
+    };
+}
+
 /// Cached Rafs super block metadata.
 #[derive(Clone, Copy)]
 pub struct RafsSuperMeta {
@@ -57,8 +79,14 @@ pub struct RafsSuperMeta {
     pub entry_timeout: Duration,
 }
 
+pub enum RafsMode {
+    Cached,
+    Direct,
+}
+
 /// Cached Rafs super block and inode information.
 pub struct RafsSuper {
+    pub mode: RafsMode,
     pub meta: RafsSuperMeta,
     pub inodes: Box<dyn RafsSuperInodes + Sync + Send>,
 }
@@ -66,6 +94,7 @@ pub struct RafsSuper {
 impl Default for RafsSuper {
     fn default() -> Self {
         Self {
+            mode: RafsMode::Direct,
             meta: RafsSuperMeta {
                 magic: 0,
                 version: 0,
@@ -90,8 +119,23 @@ impl Default for RafsSuper {
 }
 
 impl RafsSuper {
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(mode: &str) -> Result<Self> {
+        let mut rs = Self::default();
+
+        match mode {
+            "direct" => {
+                rs.mode = RafsMode::Direct;
+            }
+            "cached" => {
+                rs.mode = RafsMode::Cached;
+            }
+            _ => {
+                error!("Rafs mode should be 'direct' or 'cached'.");
+                return Err(einval());
+            }
+        }
+
+        Ok(rs)
     }
 
     pub fn destroy(&mut self) {
@@ -113,6 +157,7 @@ impl RafsSuper {
         self.meta.chunk_info_size = sb.chunkinfo_size();
         self.meta.flags = sb.flags();
         self.meta.blocks_count = 0;
+
         match self.meta.version {
             RAFS_SUPER_VERSION_V4 => {
                 self.meta.inodes_count = std::u64::MAX;
@@ -126,19 +171,27 @@ impl RafsSuper {
         }
 
         match sb.version() {
-            // TODO: Handle Rafs v5 cached mode, and Rafs v4
-            RAFS_SUPER_VERSION_V4 => {}
+            RAFS_SUPER_VERSION_V4 => {
+                // TODO: Support Rafs v4
+                unimplemented!();
+            }
             RAFS_SUPER_VERSION_V5 => {
-                let mut inode_table = OndiskInodeTable::new(sb.inode_table_entries() as usize);
-                inode_table.load(r)?;
-
-                let mut blob_table = OndiskBlobTable::new(sb.blob_table_entries() as usize);
-                blob_table.load(r)?;
-
-                let mut inodes = Box::new(DirectMapping::new(inode_table, blob_table));
-                inodes.load(r)?;
-
-                self.inodes = inodes;
+                match self.mode {
+                    RafsMode::Direct => {
+                        let mut inode_table =
+                            OndiskInodeTable::new(sb.inode_table_entries() as usize);
+                        inode_table.load(r)?;
+                        let mut blob_table = OndiskBlobTable::new(sb.blob_table_entries() as usize);
+                        blob_table.load(r)?;
+                        let mut inodes = Box::new(DirectMapping::new(inode_table, blob_table));
+                        inodes.load(r)?;
+                        self.inodes = inodes;
+                    }
+                    RafsMode::Cached => {
+                        // TODO: Support Rafs v5 cached mode
+                        unimplemented!();
+                    }
+                }
             }
             _ => return Err(einval()),
         }
@@ -201,11 +254,11 @@ pub trait RafsInode {
 
     fn name(&self) -> Result<&str>;
     fn get_symlink(&self) -> Result<&str>;
-    fn get_chunk_info(&self, idx: u32) -> Result<&OndiskChunkInfo>;
-    fn get_child_by_name(&self, name: &str) -> Result<&dyn RafsInode>;
-    fn get_child(&self, idx: u32) -> Result<&dyn RafsInode>;
+    fn get_child_by_name(&self, name: &str) -> Result<Box<dyn RafsInode>>;
+    fn get_child_by_index(&self, idx: Inode) -> Result<Box<dyn RafsInode>>;
     fn get_child_count(&self) -> Result<usize>;
-    fn get_blob_id(&self, idx: u32) -> Result<&OndiskDigest>;
+    fn get_chunk_info(&self, idx: u32) -> Result<&OndiskChunkInfo>;
+    fn get_chunk_blob_id(&self, idx: u32) -> Result<&OndiskDigest>;
     fn get_entry(&self) -> Entry;
     fn get_attr(&self) -> Attr;
     fn get_xattrs(&self) -> Result<HashMap<String, Vec<u8>>>;
@@ -227,21 +280,8 @@ pub trait RafsInode {
 pub trait RafsChunkInfo {
     fn validate(&self, sb: &RafsSuperMeta) -> Result<()>;
 
-    fn block_id(&self) -> &OndiskDigest;
-    fn block_id_mut(&mut self) -> &mut OndiskDigest;
-    fn set_block_id(&mut self, digest: &OndiskDigest);
-
-    fn blob_index(&self) -> u32;
-    fn set_blob_index(&mut self, blob_index: u32);
-
-    fn file_offset(&self) -> u64;
-    fn set_file_offset(&mut self, val: u64);
-
     fn blob_offset(&self) -> u64;
-    fn set_blob_offset(&mut self, val: u64);
-
     fn compress_size(&self) -> u32;
-    fn set_compress_size(&mut self, val: u32);
 }
 
 /// Trait to access Rafs SHA256 message digest data.

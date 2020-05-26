@@ -12,7 +12,6 @@ use std::io::Result;
 use std::path::PathBuf;
 
 use rafs::metadata::layout::*;
-use rafs::metadata::RafsChunkInfo;
 use rafs::{RafsIoRead, RafsIoWrite};
 
 use crate::node::*;
@@ -104,7 +103,7 @@ impl Builder {
     fn fill_blob_id(&mut self) {
         for node in &mut self.additions {
             for chunk in &mut node.chunks {
-                chunk.set_blob_index(0);
+                chunk.blob_index = 0;
             }
         }
     }

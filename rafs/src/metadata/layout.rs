@@ -114,18 +114,6 @@ macro_rules! impl_pub_getter_setter {
     };
 }
 
-macro_rules! impl_getter_setter {
-    ($G: ident, $S: ident, $F: ident, $U: ty) => {
-        fn $G(&self) -> $U {
-            <$U>::from_le(self.$F)
-        }
-
-        fn $S(&mut self, $F: $U) {
-            self.$F = <$U>::to_le($F);
-        }
-    };
-}
-
 /// RAFS SuperBlock on disk data format, 8192 bytes.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -355,7 +343,9 @@ impl OndiskBlobTable {
         if index > (self.data.len() - 1) as u32 {
             return Err(enoent());
         }
+
         self.data[index as usize] = digest;
+
         Ok(())
     }
 
@@ -483,19 +473,19 @@ impl_metadata_converter!(OndiskInode);
 #[derive(Clone, Copy)]
 pub struct OndiskChunkInfo {
     /// sha256(chunk), [char; RAFS_SHA256_LENGTH]
-    block_id: OndiskDigest,
+    pub block_id: OndiskDigest,
     /// blob index (blob_digest = blob_table[blob_index])
-    blob_index: u32,
+    pub blob_index: u32,
     /// compressed size
-    compress_size: u32,
+    pub compress_size: u32,
     /// file position of block, with fixed block length
-    file_offset: u64,
+    pub file_offset: u64,
     /// blob offset
-    blob_offset: u64,
+    pub blob_offset: u64,
     /// CHUNK_FLAG_COMPRESSED
-    flags: u32,
+    pub flags: u32,
     /// reserved
-    reserved: u32,
+    pub reserved: u32,
 }
 
 impl OndiskChunkInfo {
@@ -518,22 +508,8 @@ impl RafsChunkInfo for OndiskChunkInfo {
         Ok(())
     }
 
-    fn block_id(&self) -> &OndiskDigest {
-        &self.block_id
-    }
-
-    fn block_id_mut(&mut self) -> &mut OndiskDigest {
-        &mut self.block_id
-    }
-
-    fn set_block_id(&mut self, digest: &OndiskDigest) {
-        self.block_id = *digest;
-    }
-
-    impl_getter_setter!(blob_index, set_blob_index, blob_index, u32);
-    impl_getter_setter!(file_offset, set_file_offset, file_offset, u64);
-    impl_getter_setter!(blob_offset, set_blob_offset, blob_offset, u64);
-    impl_getter_setter!(compress_size, set_compress_size, compress_size, u32);
+    impl_getter!(blob_offset, blob_offset, u64);
+    impl_getter!(compress_size, compress_size, u32);
 }
 
 impl_metadata_converter!(OndiskChunkInfo);
@@ -556,9 +532,9 @@ impl fmt::Display for OndiskChunkInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "chunkinfo block_id: {}, blob_index: {} file offset: {}, blob offset: {}, compressed size: {}",
-            self.block_id(), self.blob_index(), self.file_offset(), self.blob_offset(),
-            self.compress_size()
+            "chunk_info block_id: {}, blob_index: {} file offset: {}, blob offset: {}, compressed size: {}",
+            self.block_id, self.blob_index, self.file_offset, self.blob_offset,
+            self.compress_size
         )
     }
 }
