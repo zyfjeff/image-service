@@ -14,6 +14,7 @@ use std::{cmp, mem};
 
 use fuse_rs::abi::linux_abi::*;
 use fuse_rs::api::filesystem::*;
+use fuse_rs::api::BackendFileSystem;
 
 use crate::io_stats;
 use crate::io_stats::{InodeStatsCounter, StatsFop};
@@ -307,6 +308,16 @@ impl RafsSuper {
         Ok(entry)
     }
 
+    fn get_max_ino(&self) -> u64 {
+        self.s_inodes
+            .read()
+            .unwrap()
+            .iter()
+            .map(|(ino, _)| *ino)
+            .max()
+            .unwrap_or_default()
+    }
+
     fn destroy(&mut self) -> Result<()> {
         self.s_inodes.write().unwrap().clear();
         Ok(())
@@ -539,6 +550,13 @@ fn enoent() -> Error {
 
 fn enoattr() -> Error {
     Error::from_raw_os_error(libc::ENODATA)
+}
+
+impl BackendFileSystem for Rafs {
+    fn mount(&self) -> Result<(Entry, u64)> {
+        let entry = self.sb.get_entry(ROOT_ID)?;
+        Ok((entry, self.sb.get_max_ino()))
+    }
 }
 
 impl FileSystem for Rafs {

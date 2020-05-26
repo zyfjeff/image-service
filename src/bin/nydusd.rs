@@ -29,6 +29,7 @@ use libc::EFD_NONBLOCK;
 
 use clap::{App, Arg};
 use fuse_rs::api::server::Server;
+use fuse_rs::api::{Vfs, VfsOptions};
 use fuse_rs::passthrough::{Config, PassthroughFs};
 #[cfg(feature = "virtiofsd")]
 use fuse_rs::transport::{Error as FuseTransportError, FsCacheReqHandler, Reader, Writer};
@@ -49,7 +50,6 @@ use rafs::fs::{Rafs, RafsConfig};
 use rafs::io_stats;
 #[cfg(feature = "fusedev")]
 use utils::*;
-use vfs::vfs::{Vfs, VfsOptions};
 
 #[cfg(feature = "virtiofsd")]
 const VIRTIO_F_VERSION_1: u32 = 32;

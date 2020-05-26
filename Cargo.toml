@@ -22,7 +22,6 @@ mktemp = "0.4.0"
 serde_json = "1.0.51"
 uuid = { version = "0.8", features = ["serde", "v4"] }
 rafs = { path = "rafs" }
-vfs = { path = "vfs" }
 utils = { path = "utils" }
 image_builder = { path = "image_builder" }
 nydus-api = { path = "api" }
@@ -40,6 +39,5 @@ members = [
     "utils",
     "rafs",
     "image_builder",
-    "vfs",
     "api",
 ]

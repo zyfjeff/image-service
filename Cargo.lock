@@ -314,8 +314,9 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 [[package]]
 name = "fuse-rs"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git#5797eebddc1aea584007e6177944a052bfff1b95"
 dependencies = [
+ "arc-swap",
+ "bimap",
  "bitflags",
  "libc",
  "log 0.4.8",
@@ -916,7 +917,6 @@ dependencies = [
  "stderrlog",
  "utils",
  "uuid 0.8.1",
- "vfs",
  "vhost",
  "vhost-user-backend",
  "vm-memory",
@@ -1803,17 +1803,6 @@ name = "version_check"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "078775d0255232fb988e6fccf26ddc9d1ac274299aaedcedce21c6f72cc533ce"
-
-[[package]]
-name = "vfs"
-version = "0.1.0"
-dependencies = [
- "arc-swap",
- "bimap",
- "fuse-rs",
- "libc",
- "log 0.4.8",
-]
 
 [[package]]
 name = "vhost"
