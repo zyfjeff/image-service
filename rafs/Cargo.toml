@@ -19,7 +19,7 @@ url = "2.1.1"
 config = "0.10"
 compress = "0.1.2"
 vm-memory = ">=0.2.0"
-fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git", branch = "bergwolf/transport" }
+fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git" }
 lazy_static = "1.4.0"
 serde = {version = ">=1.0.27", features = ["rc"] }
 serde_derive = ">=1.0.27"
