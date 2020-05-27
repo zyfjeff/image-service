@@ -119,6 +119,7 @@ impl Node {
             xattrs.pairs.insert(key, value.unwrap_or_default());
         }
 
+        self.xattrs = xattrs;
         self.inode.i_flags |= INO_FLAG_XATTR as u64;
 
         Ok(())
@@ -224,7 +225,8 @@ impl Node {
         if let Some(symlink) = &self.symlink {
             symlink_path = symlink.as_bytes();
         }
-        self.inode
+        let inode_size = self
+            .inode
             .store(f_bootstrap, self.name.as_bytes(), symlink_path)?;
 
         // dump inode xattr

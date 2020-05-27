@@ -316,16 +316,3 @@ pub trait RafsDigest {
         Ok(Cow::Owned(ret))
     }
 }
-
-// Parse a `buf` to utf-8 string.
-pub fn parse_string(buf: &[u8]) -> Result<&str> {
-    std::str::from_utf8(buf)
-        .map(|s| {
-            if let Some(pos) = s.find('\0') {
-                s.split_at(pos).0
-            } else {
-                s
-            }
-        })
-        .map_err(|_| einval())
-}

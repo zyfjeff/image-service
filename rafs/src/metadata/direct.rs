@@ -185,16 +185,20 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
             return Err(enoent());
         }
 
-        if idx > self.data.i_child_count - 1 {
+        if self.data.i_child_count == 0 || idx > self.data.i_child_count - 1 {
             return Err(enoent());
         }
 
         let start = self.data as *const OndiskInode as *const u8;
 
-        let chunk =
-            start.wrapping_add(self.data.size() + size_of::<OndiskChunkInfo>() * idx as usize);
+        let mut offset = self.data.size();
+        if self.data.has_xattr() {
+            let xattrs = start.wrapping_add(self.data.size()) as *const OndiskXAttrs;
+            offset += size_of::<OndiskXAttrs>() + unsafe { align_to_rafs((*xattrs).size()) };
+        }
+        offset += size_of::<OndiskChunkInfo>() * idx as usize;
 
-        self.mapping.cast_to_ref::<OndiskChunkInfo>(chunk, 0)
+        self.mapping.cast_to_ref::<OndiskChunkInfo>(start, offset)
     }
 
     fn get_child_by_name(&self, name: &str) -> Result<Box<dyn RafsInode>> {
@@ -276,15 +280,14 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
 
         let start = self.data as *const OndiskInode as *const u8;
         let start = start.wrapping_add(self.data.size());
+        let xattrs = start as *const OndiskXAttrs;
+        let xattrs_size = unsafe { (*xattrs).size() };
 
-        let size = start as *const u32;
+        let xattrs_data = unsafe {
+            slice::from_raw_parts(start.wrapping_add(size_of::<OndiskXAttrs>()), xattrs_size)
+        };
 
-        let _xattrs_data =
-            unsafe { slice::from_raw_parts(start.wrapping_add(size_of::<u32>()), *size as usize) };
-
-        // TODO
-
-        Ok(HashMap::new())
+        parse_xattrs(xattrs_data, xattrs_size)
     }
 
     fn alloc_bio_desc<'b>(&'b self, offset: u64, size: usize) -> Result<RafsBioDesc<'b>> {

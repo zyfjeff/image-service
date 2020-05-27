@@ -31,6 +31,7 @@
 //!    inode_ptr = sb_base_ptr + inode_offset_from_sb(child_index)
 
 use std::convert::TryFrom;
+use std::convert::TryInto;
 use std::io::{Error, ErrorKind, Result};
 use std::mem::size_of;
 
@@ -430,18 +431,28 @@ impl OndiskInode {
         r.read_exact(self.as_mut())
     }
 
-    pub fn store(&self, w: &mut RafsIoWriter, name: &[u8], symlink: &[u8]) -> Result<()> {
-        w.write_all(self.as_ref())?;
+    pub fn store(&self, w: &mut RafsIoWriter, name: &[u8], symlink: &[u8]) -> Result<usize> {
+        let mut size: usize = 0;
+
+        let inode_data = self.as_ref();
+        w.write_all(inode_data)?;
+        size += inode_data.len();
 
         w.write_all(name)?;
-        w.write_all(&[0].repeat(self.i_name_size as usize - name.len()))?;
+        size += name.len();
+        let padding = [0].repeat(self.i_name_size as usize - name.len());
+        w.write_all(&padding)?;
+        size += padding.len();
 
         if !symlink.is_empty() {
             w.write_all(symlink)?;
-            w.write_all(&[0].repeat(self.i_symlink_size as usize - symlink.len()))?;
+            size += symlink.len();
+            let padding = [0].repeat(self.i_symlink_size as usize - symlink.len());
+            w.write_all(&padding)?;
+            size += padding.len();
         }
 
-        Ok(())
+        Ok(size)
     }
 
     pub fn is_dir(&self) -> bool {
@@ -600,7 +611,7 @@ impl fmt::Display for OndiskDigest {
 #[repr(C)]
 #[derive(Clone, Default, Debug)]
 pub struct OndiskXAttrs {
-    size: u32,
+    pub size: u64,
 }
 
 impl OndiskXAttrs {
@@ -608,6 +619,10 @@ impl OndiskXAttrs {
         OndiskXAttrs {
             ..Default::default()
         }
+    }
+
+    pub fn size(&self) -> usize {
+        self.size as usize
     }
 }
 
@@ -618,29 +633,88 @@ pub struct XAttrs {
 
 impl XAttrs {
     pub fn size(&self) -> usize {
-        let mut size: usize = size_of::<u32>();
+        let mut size: usize = 0;
+
         for (key, value) in self.pairs.iter() {
             size += size_of::<u32>();
-            size += key.as_bytes().len() + value.len();
+            size += key.as_bytes().len() + 1 + value.len();
         }
+
         size
     }
 
-    pub fn store(&self, w: &mut RafsIoWriter) -> Result<()> {
+    pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
+        let mut size = 0;
+
         if !self.pairs.is_empty() {
-            let size = align_to_rafs(self.size());
-            w.write_all(&(size as u32).to_be_bytes())?;
+            let size_data = (self.size() as u64).to_le_bytes();
+            w.write_all(&size_data)?;
+            size += size_data.len();
+
             for (key, value) in self.pairs.iter() {
-                let pair_size = size_of::<u32>() + key.as_bytes().len() + value.len();
-                w.write_all(&(pair_size as u32).to_be_bytes())?;
-                w.write_all(key.as_bytes())?;
+                let pair_size = key.as_bytes().len() + 1 + value.len();
+                let pair_size_data = (pair_size as u32).to_le_bytes();
+                w.write_all(&pair_size_data)?;
+                size += pair_size_data.len();
+
+                let key_data = key.as_bytes();
+                w.write_all(key_data)?;
+                w.write_all(&[0u8])?;
+                size += key_data.len() + 1;
+
                 w.write_all(value)?;
+                size += value.len();
             }
         }
-        Ok(())
+
+        let final_size = align_to_rafs(size);
+        let padding = [0].repeat(final_size - size);
+        w.write_all(&padding)?;
+        size += padding.len();
+
+        Ok(size)
     }
 }
 
-fn align_to_rafs(size: usize) -> usize {
+pub fn align_to_rafs(size: usize) -> usize {
     size + (RAFS_ALIGNMENT - (size & (RAFS_ALIGNMENT - 1)))
+}
+
+/// Parse a `buf` to utf-8 string.
+pub fn parse_string(buf: &[u8]) -> Result<&str> {
+    std::str::from_utf8(buf)
+        .map(|s| {
+            if let Some(pos) = s.find('\0') {
+                s.split_at(pos).0
+            } else {
+                s
+            }
+        })
+        .map_err(|_| einval())
+}
+
+/// Parse a 'buf' to xattrs.
+pub fn parse_xattrs(data: &[u8], size: usize) -> Result<HashMap<String, Vec<u8>>> {
+    let mut result = HashMap::new();
+
+    let mut i: usize = 0;
+    let mut rest_data = data;
+
+    while i < size {
+        let (pair_size, rest) = rest_data.split_at(size_of::<u32>());
+        let pair_size = u32::from_le_bytes(pair_size.try_into().map_err(|_| einval())?) as usize;
+        i += size_of::<u32>();
+
+        let (pair, rest) = rest.split_at(pair_size);
+        if let Some(pos) = pair.iter().position(|&c| c == 0) {
+            let (key, value) = pair.split_at(pos);
+            let key = std::str::from_utf8(key).map_err(|_| einval())?;
+            result.insert(key.to_string(), value[1..].to_vec());
+        }
+        i += pair_size;
+
+        rest_data = rest;
+    }
+
+    Ok(result)
 }

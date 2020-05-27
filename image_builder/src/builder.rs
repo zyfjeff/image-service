@@ -9,6 +9,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::Result;
 // use std::os::linux::fs::MetadataExt;
+use std::mem::size_of;
 use std::path::PathBuf;
 
 use rafs::metadata::layout::*;
@@ -169,33 +170,39 @@ impl Builder {
 
     fn dump(&mut self) -> Result<()> {
         // inode table
+        let super_block_size = size_of::<OndiskSuperBlock>();
         let inode_table_entries = self.additions.len() as u32;
         let mut inode_table = OndiskInodeTable::new(inode_table_entries as usize);
         let inode_table_size = inode_table.size();
-        let inode_table_offset = RAFS_SUPERBLOCK_SIZE as u64;
 
         // blob table
         let blob_table_entries: usize = 1;
         let blob_table = OndiskBlobTable::new(blob_table_entries);
         let blob_table_size = blob_table.size();
-        let blob_table_offset = (RAFS_SUPERBLOCK_SIZE + inode_table_size) as u64;
+        let blob_table_offset = (super_block_size + inode_table_size) as u64;
 
         // super block
         let mut super_block = OndiskSuperBlock::new();
         let inodes_count = self.inode_map.len() as u64;
         super_block.set_inodes_count(inodes_count);
-        super_block.set_inode_table_offset(inode_table_offset);
+        super_block.set_inode_table_offset(super_block_size as u64);
         super_block.set_inode_table_entries(inode_table_entries);
         super_block.set_blob_table_offset(blob_table_offset);
         super_block.set_blob_table_entries(blob_table_entries as u32);
 
         // dump blob
-        let mut inode_offset = (RAFS_SUPERBLOCK_SIZE + inode_table_size + blob_table_size) as u32;
+        let mut inode_offset = (super_block_size + inode_table_size + blob_table_size) as u32;
         for node in &mut self.additions {
             inode_table.set(node.inode.i_ino, inode_offset)?;
+            // add inode size
             inode_offset += node.inode.size() as u32;
+            if node.inode.has_xattr() {
+                // add xattr size
+                inode_offset += node.xattrs.size() as u32;
+            }
             node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
-            inode_offset += (node.chunks.len() * std::mem::size_of::<OndiskChunkInfo>()) as u32;
+            // add chunks size
+            inode_offset += (node.chunks.len() * size_of::<OndiskChunkInfo>()) as u32;
         }
         let blob_id = OndiskDigest::from_raw(&mut self.blob_hash);
         let mut blob_table = OndiskBlobTable::new(1);

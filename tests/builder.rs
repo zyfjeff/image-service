@@ -149,14 +149,14 @@ impl<'a> Builder<'a> {
 
         self.set_xattr(
             &dir.join("sub/hide/sub/test-1"),
-            "user.key1",
-            "value1".as_bytes(),
+            "user.key-a",
+            "value-b".as_bytes(),
         )?;
 
         self.set_xattr(
             &dir.join("sub/hide/sub/test-1"),
-            "user.key2",
-            "value2".as_bytes(),
+            "user.key-cd",
+            "value-ef".as_bytes(),
         )?;
 
         Ok(())
@@ -253,6 +253,10 @@ impl<'a> Builder<'a> {
                 let chunk_count = inode.get_child_count()?;
                 let chunk = inode.get_chunk_info(0)?;
                 let blob_id = inode.get_chunk_blob_id(chunk.blob_index)?;
+                if inode.has_xattr() {
+                    let xattrs = inode.get_xattrs();
+                    println!("xattrs {:?}", xattrs);
+                }
                 println!(
                     "inode name: {:?} size: {} ino: {} chunk_count {} blob_id {} chunk: {}",
                     inode.name()?,
