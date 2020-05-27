@@ -734,7 +734,28 @@ fn main() -> Result<()> {
             env!("CARGO_PKG_VERSION").to_string(),
             apisock.to_string(),
             move |info| {
-                let mut rafs = Rafs::new(rafs_conf.clone(), &info.mountpoint);
+                let mut rafs = match info.config.as_ref() {
+                    Some(config) => {
+                        let mut settings = config::Config::new();
+                        settings
+                            .merge(config::File::from(Path::new(config)))
+                            .map_err(|e| {
+                                ApiError::MountFailure(io::Error::new(
+                                    io::ErrorKind::Other,
+                                    e.to_string(),
+                                ))
+                            })?;
+                        let rafs_conf: RafsConfig = settings.try_into().map_err(|e| {
+                            ApiError::MountFailure(io::Error::new(
+                                io::ErrorKind::Other,
+                                e.to_string(),
+                            ))
+                        })?;
+
+                        Rafs::new(rafs_conf, &info.mountpoint)
+                    }
+                    None => Rafs::new(rafs_conf.clone(), &info.mountpoint),
+                };
                 let mut file = File::open(&info.source).map_err(ApiError::MountFailure)?;
                 rafs.import(&mut file).map_err(ApiError::MountFailure)?;
                 info!("rafs mounted");

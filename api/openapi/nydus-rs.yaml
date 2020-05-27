@@ -170,6 +170,7 @@ components:
         source: /foo/bar/bootstrap
         fstype: rafs
         mountpoint: /foo/bar
+        config: /foo/bar/config
       properties:
         fstype:
           description: mount type
@@ -182,6 +183,10 @@ components:
         mountpoint:
           description: mount target
           example: /foo/bar
+          type: string
+        config:
+          description: backend config file
+          example: /foo/bar/config
           type: string
       required:
         - fstype

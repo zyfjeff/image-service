@@ -78,6 +78,7 @@ pub struct MountInfo {
     pub source: String,
     pub fstype: String,
     pub mountpoint: String,
+    pub config: Option<String>,
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
