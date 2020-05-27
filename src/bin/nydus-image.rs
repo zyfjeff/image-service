@@ -159,8 +159,10 @@ fn main() -> Result<()> {
             if let Some(backend_config) = matches.value_of("backend_config") {
                 let config = factory::BackendConfig {
                     backend_type: backend_type.to_owned(),
-                    backend_config: serde_json::from_str(backend_config)
-                        .expect("failed to parse backend_config json"),
+                    backend_config: serde_json::from_str(backend_config).map_err(|e| {
+                        error!("failed to parse backend_config json: {}", e);
+                        e
+                    })?,
                 };
                 let blob_backend = factory::new_uploader(&config).unwrap();
                 upload_blob(blob_backend, blob_id.as_str(), real_blob_path)?;
