@@ -180,6 +180,7 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
         parse_string(symlink)
     }
 
+    #[allow(clippy::cast_ptr_alignment)]
     fn get_chunk_info(&self, idx: u32) -> Result<&OndiskChunkInfo> {
         if !self.is_reg() {
             return Err(enoent());
@@ -273,6 +274,7 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
         }
     }
 
+    #[allow(clippy::cast_ptr_alignment)]
     fn get_xattrs(&self) -> Result<HashMap<String, Vec<u8>>> {
         if !self.data.has_xattr() {
             return Ok(HashMap::new());
