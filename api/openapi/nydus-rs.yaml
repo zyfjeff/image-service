@@ -82,6 +82,13 @@ paths:
   /metrics:
     get:
       operationId: exportRafsMetrics
+      parameters:
+        - name: id
+          in: query
+          description: "Specify rafs id to get its metrics"
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -99,6 +106,13 @@ paths:
   /metrics/files:
     get:
       operationId: exportRafsFilesMetrics
+      parameters:
+        - name: id
+          in: query
+          description: "Specify rafs id to get its all files metrics"
+          required: false
+          schema:
+            type: string
       responses:
         "200":
           content:
