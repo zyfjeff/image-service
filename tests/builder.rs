@@ -237,35 +237,29 @@ impl<'a> Builder<'a> {
 
         for i in 1..17 {
             let inode = super_block.get_inode(i)?;
+
+            println!(
+                "----- inode name: {:?} size: {} ino: {} idx: {} has_xattr {}",
+                inode.name()?,
+                inode.size(),
+                inode.ino(),
+                i,
+                inode.has_xattr(),
+            );
+
             if inode.is_symlink() {
                 let link = inode.get_symlink()?;
-                println!("link {}", link);
+                println!("\tlink {}", link);
             } else if inode.is_dir() {
-                println!("dir {}", inode.get_child_count()?);
-                if inode.name()? == "/" {
-                    let child = inode.get_child_by_name("test-3-large")?;
-                    println!("dir child {}", child.name()?);
-                } else {
-                    let child = inode.get_child_by_index(0)?;
-                    println!("dir child {}", child.name()?);
+                for i in 0..inode.get_child_count()? {
+                    let child = inode.get_child_by_index(i as u64)?;
+                    println!("\tchild {}", child.name()?);
                 }
             } else if inode.is_reg() {
-                let chunk_count = inode.get_child_count()?;
-                let chunk = inode.get_chunk_info(0)?;
-                let blob_id = inode.get_chunk_blob_id(chunk.blob_index)?;
                 if inode.has_xattr() {
                     let xattrs = inode.get_xattrs();
-                    println!("xattrs {:?}", xattrs);
+                    println!("\txattrs {:?}", xattrs);
                 }
-                println!(
-                    "inode name: {:?} size: {} ino: {} chunk_count {} blob_id {} chunk: {}",
-                    inode.name()?,
-                    inode.size(),
-                    inode.ino(),
-                    chunk_count,
-                    blob_id,
-                    chunk,
-                );
             }
         }
 

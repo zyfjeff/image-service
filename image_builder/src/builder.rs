@@ -2,15 +2,16 @@
 // Use of this source code is governed by a Apache 2.0 license that can be
 // found in the LICENSE file.
 
-// use crypto::digest::Digest;
-use crypto::sha2::Sha256;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::Result;
 // use std::os::linux::fs::MetadataExt;
+use rafs::metadata::RafsDigest;
 use std::mem::size_of;
 use std::path::PathBuf;
+
+use crypto::sha2::Sha256;
 
 use rafs::metadata::layout::*;
 use rafs::{RafsIoRead, RafsIoWrite};
@@ -193,12 +194,26 @@ impl Builder {
         // dump blob
         let mut inode_offset = (super_block_size + inode_table_size + blob_table_size) as u32;
         for node in &mut self.additions {
+            let file_type = node.get_type();
+            if file_type != "" {
+                info!(
+                    "upper building {} {:?} ino {} child_count {}, child_index {} i_name_size {} i_symlink_size {} has_xattr {}",
+                    file_type,
+                    node.get_rootfs(),
+                    node.inode.i_ino,
+                    node.inode.i_child_count,
+                    node.inode.i_child_index,
+                    node.inode.i_name_size,
+                    node.inode.i_symlink_size,
+                    node.inode.has_xattr(),
+                );
+            }
             inode_table.set(node.inode.i_ino, inode_offset)?;
             // add inode size
             inode_offset += node.inode.size() as u32;
             if node.inode.has_xattr() {
                 // add xattr size
-                inode_offset += node.xattrs.size() as u32;
+                inode_offset += (size_of::<OndiskXAttrs>() + node.xattrs.aligned_size()) as u32;
             }
             node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
             // add chunks size
@@ -207,6 +222,10 @@ impl Builder {
         let blob_id = OndiskDigest::from_raw(&mut self.blob_hash);
         let mut blob_table = OndiskBlobTable::new(1);
         blob_table.set(0, blob_id)?;
+
+        if self.blob_id == "" {
+            self.blob_id = blob_id.as_str()?.to_string();
+        }
 
         // dump bootstrap
         super_block.store(&mut self.f_bootstrap)?;

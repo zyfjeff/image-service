@@ -484,7 +484,7 @@ impl_metadata_converter!(OndiskInode);
 pub struct OndiskChunkInfo {
     /// sha256(chunk), [char; RAFS_SHA256_LENGTH]
     pub block_id: OndiskDigest,
-    /// blob index (blob_digest = blob_table[blob_index])
+    /// blob index (blob_id = blob_table[blob_index])
     pub blob_index: u32,
     /// compressed size
     pub compress_size: u32,
@@ -624,6 +624,10 @@ impl OndiskXAttrs {
     pub fn size(&self) -> usize {
         self.size as usize
     }
+
+    pub fn aligned_size(&self) -> usize {
+        align_to_rafs(self.size())
+    }
 }
 
 #[derive(Clone, Default)]
@@ -641,6 +645,10 @@ impl XAttrs {
         }
 
         size
+    }
+
+    pub fn aligned_size(&self) -> usize {
+        align_to_rafs(self.size())
     }
 
     pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
@@ -677,6 +685,9 @@ impl XAttrs {
 }
 
 pub fn align_to_rafs(size: usize) -> usize {
+    if size & (RAFS_ALIGNMENT - 1) == 0 {
+        return size;
+    }
     size + (RAFS_ALIGNMENT - (size & (RAFS_ALIGNMENT - 1)))
 }
 
@@ -698,7 +709,7 @@ pub fn parse_xattrs(data: &[u8], size: usize) -> Result<HashMap<String, Vec<u8>>
     let mut result = HashMap::new();
 
     let mut i: usize = 0;
-    let mut rest_data = data;
+    let mut rest_data = &data[0..size];
 
     while i < size {
         let (pair_size, rest) = rest_data.split_at(size_of::<u32>());

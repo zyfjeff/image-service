@@ -200,15 +200,6 @@ impl Node {
         inode_hash.result(&mut inode_hash_buf);
         inode_digest.data_mut().clone_from_slice(&inode_hash_buf);
 
-        info!(
-            "\tbuilding inode: name {}, ino {}, digest {}, parent {}, child_count {}",
-            self.name,
-            self.inode.i_ino,
-            self.inode.i_digest,
-            self.inode.i_parent,
-            self.inode.i_child_count,
-        );
-
         self.inode.i_digest = inode_digest;
 
         Ok(inode_digest)
@@ -278,6 +269,7 @@ impl Node {
             .unwrap();
 
         self.name = file_name;
+        println!("set_name_size {}", self.name);
         self.inode.set_name_size(self.name.as_bytes().len());
         self.build_inode_stat()?;
         self.build_inode_xattr()?;
@@ -298,6 +290,7 @@ impl Node {
             self.inode.i_flags |= INO_FLAG_SYMLINK as u64;
             let target_path = fs::read_link(&self.path)?;
             self.symlink = Some(target_path.to_str().unwrap().to_owned());
+            println!("set_symlink_size {}", self.symlink.as_ref().unwrap());
             self.inode
                 .set_symlink_size(self.symlink.as_ref().unwrap().len());
         }

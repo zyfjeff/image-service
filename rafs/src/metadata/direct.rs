@@ -195,7 +195,7 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
         let mut offset = self.data.size();
         if self.data.has_xattr() {
             let xattrs = start.wrapping_add(self.data.size()) as *const OndiskXAttrs;
-            offset += size_of::<OndiskXAttrs>() + unsafe { align_to_rafs((*xattrs).size()) };
+            offset += size_of::<OndiskXAttrs>() + unsafe { (*xattrs).aligned_size() };
         }
         offset += size_of::<OndiskChunkInfo>() * idx as usize;
 
@@ -284,9 +284,13 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
         let start = start.wrapping_add(self.data.size());
         let xattrs = start as *const OndiskXAttrs;
         let xattrs_size = unsafe { (*xattrs).size() };
+        let xattrs_aligned_size = unsafe { (*xattrs).aligned_size() };
 
         let xattrs_data = unsafe {
-            slice::from_raw_parts(start.wrapping_add(size_of::<OndiskXAttrs>()), xattrs_size)
+            slice::from_raw_parts(
+                start.wrapping_add(size_of::<OndiskXAttrs>()),
+                xattrs_aligned_size,
+            )
         };
 
         parse_xattrs(xattrs_data, xattrs_size)

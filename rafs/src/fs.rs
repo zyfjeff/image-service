@@ -296,7 +296,10 @@ impl FileSystem for Rafs {
             }
         }
 
-        Err(enoent())
+        match size {
+            0 => Ok(GetxattrReply::Count(0)),
+            _ => Ok(GetxattrReply::Value(Vec::new())),
+        }
     }
 
     fn listxattr(&self, _ctx: Context, inode: u64, size: u32) -> Result<ListxattrReply> {
