@@ -60,8 +60,6 @@ pub struct Node {
     pub name: String,
     /// type
     pub overlay: Overlay,
-    /// offset of blob file
-    pub blob_offset: u64,
     /// source path
     pub root: PathBuf,
     /// file path
@@ -77,10 +75,9 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new(blob_offset: u64, root: PathBuf, path: PathBuf, overlay: Overlay) -> Node {
+    pub fn new(root: PathBuf, path: PathBuf, overlay: Overlay) -> Node {
         Node {
             name: String::new(),
-            blob_offset,
             root,
             path,
             overlay,
@@ -130,6 +127,7 @@ impl Node {
         &mut self,
         f_blob: &mut Box<dyn RafsIoWrite>,
         blob_hash: &mut Sha256,
+        blob_offset: &mut u64,
     ) -> Result<OndiskDigest> {
         let mut inode_digest = OndiskDigest::new();
 
@@ -168,15 +166,15 @@ impl Node {
             // compress chunk data
             let compressed = utils::compress(&chunk_data)?;
             let compressed_size = compressed.len();
-            chunk.blob_offset = self.blob_offset;
+            chunk.blob_offset = *blob_offset;
             chunk.compress_size = compressed_size as u32;
             chunk.flags |= CHUNK_FLAG_COMPRESSED;
 
             // move cursor to offset of next chunk
-            self.blob_offset += compressed_size as u64;
+            *blob_offset += compressed_size as u64;
 
             trace!(
-                "\tbuilding chunk: file offset {}, blob offset {}, size {}",
+                "\tbuilding chunk: file_offset {}, blob_offset {}, compress_size {}",
                 chunk.file_offset,
                 chunk.blob_offset,
                 chunk.compress_size,
@@ -269,7 +267,6 @@ impl Node {
             .unwrap();
 
         self.name = file_name;
-        println!("set_name_size {}", self.name);
         self.inode.set_name_size(self.name.as_bytes().len());
         self.build_inode_stat()?;
         self.build_inode_xattr()?;
@@ -290,7 +287,6 @@ impl Node {
             self.inode.i_flags |= INO_FLAG_SYMLINK as u64;
             let target_path = fs::read_link(&self.path)?;
             self.symlink = Some(target_path.to_str().unwrap().to_owned());
-            println!("set_symlink_size {}", self.symlink.as_ref().unwrap());
             self.inode
                 .set_symlink_size(self.symlink.as_ref().unwrap().len());
         }

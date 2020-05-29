@@ -122,6 +122,11 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
     fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
         if self.buf.is_empty() {
             let mut buf = Vec::new();
+            println!(
+                "chunk offset {}, compress_size {}",
+                self.bio.chunkinfo.blob_offset(),
+                self.bio.chunkinfo.compress_size()
+            );
             let len = self.dev.b.read(
                 &self.bio.blob_id.as_str()?,
                 &mut buf,

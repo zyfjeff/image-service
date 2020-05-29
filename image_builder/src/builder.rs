@@ -111,12 +111,7 @@ impl Builder {
     }
 
     fn new_node(&self, path: &PathBuf) -> Node {
-        Node::new(
-            self.blob_offset,
-            self.root.clone(),
-            path.clone(),
-            Overlay::UpperAddition,
-        )
+        Node::new(self.root.clone(), path.clone(), Overlay::UpperAddition)
     }
 
     /// Directory walk by BFS
@@ -192,12 +187,13 @@ impl Builder {
         super_block.set_blob_table_entries(blob_table_entries as u32);
 
         // dump blob
+        let mut blob_offset = 0u64;
         let mut inode_offset = (super_block_size + inode_table_size + blob_table_size) as u32;
         for node in &mut self.additions {
             let file_type = node.get_type();
             if file_type != "" {
                 info!(
-                    "upper building {} {:?} ino {} child_count {}, child_index {} i_name_size {} i_symlink_size {} has_xattr {}",
+                    "upper building {} {:?}: ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} has_xattr {}",
                     file_type,
                     node.get_rootfs(),
                     node.inode.i_ino,
@@ -215,7 +211,7 @@ impl Builder {
                 // add xattr size
                 inode_offset += (size_of::<OndiskXAttrs>() + node.xattrs.aligned_size()) as u32;
             }
-            node.dump_blob(&mut self.f_blob, &mut self.blob_hash)?;
+            node.dump_blob(&mut self.f_blob, &mut self.blob_hash, &mut blob_offset)?;
             // add chunks size
             inode_offset += (node.chunks.len() * size_of::<OndiskChunkInfo>()) as u32;
         }
