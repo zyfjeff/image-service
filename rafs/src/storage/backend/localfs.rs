@@ -79,6 +79,9 @@ impl BlobBackendUploader for LocalFs {
         _callback: fn((usize, usize)),
     ) -> Result<usize> {
         let blob = Path::new(&self.dir).join(blobid);
+        if let Some(parent) = blob.parent() {
+            fs::create_dir_all(parent)?;
+        }
 
         let mut w = OpenOptions::new()
             .read(true)
