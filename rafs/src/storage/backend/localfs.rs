@@ -84,8 +84,11 @@ impl BlobBackendUploader for LocalFs {
             .read(true)
             .write(true)
             .create(true)
-            .open(&blob)?;
-
+            .open(&blob)
+            .map_err(|e| {
+                error!("localfs update: open failed {:?}", e);
+                e
+            })?;
         let len = io::copy(&mut reader, &mut w)?;
         Ok(len as usize)
     }

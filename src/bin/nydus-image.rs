@@ -25,18 +25,30 @@ fn upload_blob(
     blob_id: &str,
     blob_path: &str,
 ) -> Result<()> {
-    let blob_file = OpenOptions::new().read(true).write(false).open(blob_path)?;
+    let blob_file = OpenOptions::new()
+        .read(true)
+        .write(false)
+        .open(blob_path)
+        .map_err(|e| {
+            error!("upload_blob open failed {:?}", e);
+            e
+        })?;
     let size = blob_file.metadata()?.st_size() as usize;
-    backend.upload(blob_id, blob_file, size, |(current, total)| {
-        io::stdout().flush().unwrap();
-        print!("\r");
-        print!(
-            "Backend blob uploading: {}/{} bytes ({}%)",
-            current,
-            total,
-            current * 100 / total,
-        );
-    })?;
+    backend
+        .upload(blob_id, blob_file, size, |(current, total)| {
+            io::stdout().flush().unwrap();
+            print!("\r");
+            print!(
+                "Backend blob uploading: {}/{} bytes ({}%)",
+                current,
+                total,
+                current * 100 / total,
+            );
+        })
+        .map_err(|e| {
+            error!("upload_blob backend.upload {:?}", e);
+            e
+        })?;
 
     print!("\r");
     io::stdout().flush().unwrap();
