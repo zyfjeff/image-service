@@ -14,12 +14,6 @@ use std::io::{Error, Result};
 #[derive(Default, Clone, Deserialize)]
 pub struct Config {
     pub backend: BackendConfig,
-    pub rafs: RafsConfig,
-}
-
-#[derive(Default, Clone, Deserialize)]
-pub struct RafsConfig {
-    pub mode: String,
 }
 
 #[derive(Default, Clone, Deserialize)]

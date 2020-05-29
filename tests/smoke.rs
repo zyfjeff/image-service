@@ -2,6 +2,7 @@ use mktemp::Temp;
 use std::io::Result;
 
 mod builder;
+mod nydusd;
 
 #[test]
 fn run() -> Result<()> {
@@ -12,7 +13,11 @@ fn run() -> Result<()> {
     // create & build parent rootfs
     builder.make_parent()?;
     builder.build_parent()?;
-    builder.check_bootstrap()?;
+
+    let nydusd = nydusd::new(&work_dir)?;
+    nydusd.start()?;
+
+    builder.check()?;
 
     // create & build source rootfs based parent
     builder.make_source()?;

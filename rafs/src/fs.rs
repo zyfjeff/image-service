@@ -35,7 +35,8 @@ const DOTDOT: &str = "..";
 /// Rafs storage backend configuration information.
 #[derive(Clone, Default, Deserialize)]
 pub struct RafsConfig {
-    pub device_config: factory::Config,
+    pub device: factory::Config,
+    pub mode: String,
 }
 
 impl RafsConfig {
@@ -44,21 +45,13 @@ impl RafsConfig {
             ..Default::default()
         }
     }
-
-    fn dev_config(&self) -> factory::Config {
-        self.device_config.clone()
-    }
-
-    pub fn set_dev_config(&mut self, device_config: factory::Config) {
-        self.device_config = device_config;
-    }
 }
 
 /// Main entrance of the RAFS readonly FUSE file system.
 pub struct Rafs {
     conf: RafsConfig,
-    sb: RafsSuper,
     device: device::RafsDevice,
+    sb: RafsSuper,
     initialized: bool,
     ios: Arc<io_stats::GlobalIOStats>,
 }
@@ -66,13 +59,11 @@ pub struct Rafs {
 impl Rafs {
     pub fn new(conf: RafsConfig, id: &str) -> Self {
         let dev_config = conf.dev_config();
-
         let rafs_mode = dev_config.rafs.mode.as_str();
 
         let rafs = Rafs {
-            _conf: conf,
-            device: device::RafsDevice::new(dev_config.clone()),
-            sb: RafsSuper::new(rafs_mode)?,
+            device: device::RafsDevice::new(conf.device.clone()),
+            sb: RafsSuper::new(conf.mode.as_str())?,
             initialized: false,
         };
 

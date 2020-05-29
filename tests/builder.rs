@@ -88,7 +88,13 @@ impl<'a> Builder<'a> {
     }
 
     pub fn create_rnd_file(&mut self, path: &PathBuf, size: &str) -> Result<()> {
-        exec(format!("dd if=/dev/urandom of={:?} bs={} count=1", path, size).as_str())?;
+        exec(
+            format!(
+                "dd if=/dev/urandom of={:?} bs={} count=1 2>/dev/null",
+                path, size
+            )
+            .as_str(),
+        )?;
 
         let mut file = File::open(path)?;
         let mut data = Vec::new();
@@ -110,8 +116,8 @@ impl<'a> Builder<'a> {
 
     pub fn make_parent(&mut self) -> Result<()> {
         let dir = self.work_dir.join("parent");
-
         self.create_dir(&dir)?;
+
         self.create_file(&dir.join("test-1"), b"lower:test-1")?;
         self.create_file(&dir.join("test-2"), b"lower:test-2")?;
         self.create_rnd_file(&dir.join("test-3-large"), "2MB")?;
@@ -181,14 +187,16 @@ impl<'a> Builder<'a> {
     pub fn build_parent(&mut self) -> Result<()> {
         let parent_dir = self.work_dir.join("parent");
 
-        exec(format!("tree {:?} -a", parent_dir).as_str())?;
+        self.create_dir(&self.work_dir.join("blobs"))?;
+
+        // exec(format!("tree {:?} -a", parent_dir).as_str())?;
         exec(
             format!(
-                "{:?} create --blob {:?} --bootstrap {:?} {:?}",
+                "{:?} create --bootstrap {:?} {:?} --backend_type localfs --backend_config '{{\"dir\": {:?}}}' --log_level error",
                 NYDUS_IMAGE,
-                self.work_dir.join("parent-blob"),
                 self.work_dir.join("parent-bootstrap"),
                 parent_dir,
+                self.work_dir.join("blobs"),
             )
             .as_str(),
         )?;
@@ -199,10 +207,10 @@ impl<'a> Builder<'a> {
     pub fn build_source(&mut self) -> Result<()> {
         let source_dir = self.work_dir.join("source").to_path_buf();
 
-        exec(format!("tree {:?} -a", source_dir).as_str())?;
+        // exec(format!("tree {:?} -a", source_dir).as_str())?;
         exec(
             format!(
-                "{:?} create --blob {:?} --bootstrap {:?} --parent_bootstrap {:?} {:?}",
+                "{:?} create --blob {:?} --bootstrap {:?} --parent_bootstrap {:?} {:?} --log_level error",
                 NYDUS_IMAGE,
                 self.work_dir.join("source-blob"),
                 self.work_dir.join("bootstrap"),
@@ -215,6 +223,16 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
+    pub fn check(&mut self) -> Result<()> {
+        let mount_path = self.work_dir.join("mnt");
+
+        exec(format!("tree -a {:?}", mount_path).as_str())?;
+        exec(format!("find {:?} -type f -exec md5sum {{}} +", mount_path).as_str())?;
+
+        Ok(())
+    }
+
+    #[allow(dead_code)]
     pub fn check_bootstrap(&mut self) -> Result<()> {
         let mut f_bootstrap: Box<dyn RafsIoRead> = Box::new(
             OpenOptions::new()
@@ -226,14 +244,6 @@ impl<'a> Builder<'a> {
 
         let mut super_block = RafsSuper::new("direct")?;
         super_block.load(&mut f_bootstrap)?;
-
-        exec(
-            format!(
-                "shasum -a 256 {}",
-                self.work_dir.join("parent-blob").to_str().unwrap()
-            )
-            .as_str(),
-        )?;
 
         for i in 1..17 {
             let inode = super_block.get_inode(i)?;
