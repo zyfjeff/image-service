@@ -30,12 +30,8 @@ pub struct Builder {
     f_bootstrap: Box<dyn RafsIoWrite>,
     /// parent bootstrap file reader
     f_parent_bootstrap: Option<Box<dyn RafsIoRead>>,
-    /// record current blob offset cursor
-    blob_offset: u64,
     /// blob id (user specified or sha256(blob))
     blob_id: String,
-    /// blob sha256
-    blob_hash: Sha256,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
     inode_map: HashMap<u64, Node>,
     /// mutilple layers build: upper source nodes
@@ -83,9 +79,7 @@ impl Builder {
             f_blob,
             f_bootstrap,
             f_parent_bootstrap,
-            blob_offset: 0,
             blob_id,
-            blob_hash: Sha256::new(),
             inode_map: HashMap::new(),
             additions: Vec::new(),
             removals: HashMap::new(),
@@ -117,11 +111,12 @@ impl Builder {
     /// Directory walk by BFS
     pub fn walk(&mut self) -> Result<()> {
         let mut dirs = vec![0];
-        let mut ino: u64 = 1;
+        let mut iter_ino: u64 = 1;
         let mut root_node = self.new_node(&self.root);
         root_node.build_inode(None)?;
+        root_node.index = iter_ino;
+        root_node.inode.i_ino = iter_ino;
 
-        root_node.inode.i_ino = 1;
         self.inode_map
             .insert(root_node.inode.i_ino, root_node.clone());
         self.additions.push(root_node);
@@ -135,23 +130,32 @@ impl Builder {
                 let dir_ino = dir_node.inode.i_ino;
                 let mut child_count: usize = 0;
 
-                dir_node.inode.i_child_index = (ino + 1) as u32;
+                dir_node.inode.i_child_index = (iter_ino + 1) as u32;
 
                 for child in childs {
                     let entry = &child?;
                     let path = entry.path();
                     let mut node = self.new_node(&path);
-                    node.build_inode(None)?;
+                    let real_ino = node.get_real_ino();
 
-                    ino += 1;
+                    iter_ino += 1;
                     child_count += 1;
-                    node.inode.i_ino = ino;
+                    let mut hardlink: Option<Node> = None;
+                    if let Some(_hardlink) = self.inode_map.get(&real_ino) {
+                        node.inode.i_ino = _hardlink.inode.i_ino;
+                        hardlink = Some(_hardlink.clone());
+                    } else {
+                        node.inode.i_ino = iter_ino;
+                    }
+                    node.build_inode(hardlink)?;
+
+                    node.index = iter_ino;
                     node.inode.i_parent = dir_ino;
 
                     if node.is_dir() && !node.is_symlink() {
                         next_dirs.push(self.additions.len());
                     }
-                    self.inode_map.insert(node.inode.i_ino, node.clone());
+                    self.inode_map.insert(real_ino, node.clone());
                     self.additions.push(node);
                 }
 
@@ -188,14 +192,16 @@ impl Builder {
 
         // dump blob
         let mut blob_offset = 0u64;
+        let mut blob_hash = Sha256::new();
         let mut inode_offset = (super_block_size + inode_table_size + blob_table_size) as u32;
         for node in &mut self.additions {
             let file_type = node.get_type();
             if file_type != "" {
                 info!(
-                    "upper building {} {:?}: ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} has_xattr {}",
+                    "upper building {} {:?}: index {} ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} has_xattr {}",
                     file_type,
                     node.get_rootfs(),
+                    node.index,
                     node.inode.i_ino,
                     node.inode.i_child_count,
                     node.inode.i_child_index,
@@ -204,18 +210,18 @@ impl Builder {
                     node.inode.has_xattr(),
                 );
             }
-            inode_table.set(node.inode.i_ino, inode_offset)?;
+            inode_table.set(node.index, inode_offset)?;
             // add inode size
             inode_offset += node.inode.size() as u32;
             if node.inode.has_xattr() {
                 // add xattr size
                 inode_offset += (size_of::<OndiskXAttrs>() + node.xattrs.aligned_size()) as u32;
             }
-            node.dump_blob(&mut self.f_blob, &mut self.blob_hash, &mut blob_offset)?;
+            node.dump_blob(&mut self.f_blob, &mut blob_hash, &mut blob_offset)?;
             // add chunks size
             inode_offset += (node.chunks.len() * size_of::<OndiskChunkInfo>()) as u32;
         }
-        let blob_id = OndiskDigest::from_raw(&mut self.blob_hash);
+        let blob_id = OndiskDigest::from_raw(&mut blob_hash);
         let mut blob_table = OndiskBlobTable::new(1);
         blob_table.set(0, blob_id)?;
 

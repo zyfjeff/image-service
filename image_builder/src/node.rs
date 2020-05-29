@@ -56,6 +56,7 @@ impl fmt::Display for Node {
 
 #[derive(Clone)]
 pub struct Node {
+    pub index: u64,
     /// inode name
     pub name: String,
     /// type
@@ -77,6 +78,7 @@ pub struct Node {
 impl Node {
     pub fn new(root: PathBuf, path: PathBuf, overlay: Overlay) -> Node {
         Node {
+            index: 0,
             name: String::new(),
             root,
             path,
@@ -86,17 +88,6 @@ impl Node {
             symlink: None,
             xattrs: XAttrs::default(),
         }
-    }
-
-    pub fn build(&mut self, hardlink_node: Option<Node>) -> Result<bool> {
-        self.build_inode(hardlink_node)?;
-        let file_type = self.get_type();
-        if file_type != "" {
-            info!("upper building {} {:?}", file_type, self.get_rootfs());
-            return Ok(true);
-        }
-        info!("skip build {:?}", self.get_rootfs());
-        Ok(false)
     }
 
     fn build_inode_xattr(&mut self) -> Result<()> {
@@ -312,6 +303,10 @@ impl Node {
 
     pub fn is_hardlink(&self) -> bool {
         self.meta().st_nlink() > 1
+    }
+
+    pub fn get_real_ino(&self) -> u64 {
+        self.meta().st_ino()
     }
 
     pub fn get_type(&self) -> &str {
