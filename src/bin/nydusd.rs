@@ -804,36 +804,57 @@ fn main() -> Result<()> {
             "nydusd".to_string(),
             env!("CARGO_PKG_VERSION").to_string(),
             apisock.to_string(),
-            move |info| {
-                let mut rafs = match info.config.as_ref() {
-                    Some(config) => {
-                        let mut settings = config::Config::new();
-                        settings
-                            .merge(config::File::from(Path::new(config)))
-                            .map_err(|e| ApiError::MountFailure(einval!(e)))?;
+            move |info| match info.ops.as_str() {
+                "mount" => {
+                    let mut rafs = match info.config.as_ref() {
+                        Some(config) => {
+                            let mut settings = config::Config::new();
+                            settings
+                                .merge(config::File::from(Path::new(config)))
+                                .map_err(|e| ApiError::MountFailure(einval!(e)))?;
 
-                        let rafs_conf: RafsConfig = settings
-                            .try_into()
-                            .map_err(|e| ApiError::MountFailure(einval!(e)))?;
+                            let rafs_conf: RafsConfig = settings
+                                .try_into()
+                                .map_err(|e| ApiError::MountFailure(einval!(e)))?;
 
-                        Rafs::new(rafs_conf, &info.mountpoint)
-                            .map_err(|e| ApiError::MountFailure(einval!(e)))?
+                            Rafs::new(rafs_conf, &info.mountpoint)
+                                .map_err(|e| ApiError::MountFailure(einval!(e)))?
+                        }
+                        None => Rafs::new(rafs_conf.clone(), &info.mountpoint)
+                            .map_err(|e| ApiError::MountFailure(einval!(e)))?,
+                    };
+                    if let Some(source) = info.source.as_ref() {
+                        let mut file = Box::new(File::open(source).map_err(ApiError::MountFailure)?)
+                            as Box<dyn rafs::RafsIoRead>;
+                        rafs.import(&mut file).map_err(ApiError::MountFailure)?;
+                        info!("rafs mounted");
+
+                        match vfs.mount(Box::new(rafs), &info.mountpoint) {
+                            Ok(()) => Ok(ApiResponsePayload::Mount),
+                            Err(e) => Err(ApiError::MountFailure(einval!(format!(
+                                "mount {:?} failed {}",
+                                info, e
+                            )))),
+                        }
+                    } else {
+                        Err(ApiError::MountFailure(einval!(format!(
+                            "mount {:?} failed {}",
+                            info, e
+                        ))))
                     }
-                    None => Rafs::new(rafs_conf.clone(), &info.mountpoint)
-                        .map_err(|e| ApiError::MountFailure(einval!(e)))?,
-                };
-                let mut file = Box::new(File::open(&info.source).map_err(ApiError::MountFailure)?)
-                    as Box<dyn rafs::RafsIoRead>;
-                rafs.import(&mut file).map_err(ApiError::MountFailure)?;
-                info!("rafs mounted in {} mode", rafs_conf.mode);
+                }
 
-                match vfs.mount(Box::new(rafs), &info.mountpoint) {
+                "umount" => match vfs.umount(&info.mountpoint) {
                     Ok(()) => Ok(ApiResponsePayload::Mount),
                     Err(e) => Err(ApiError::MountFailure(einval!(format!(
                         "mount {:?} failed {}",
                         info, e
                     )))),
-                }
+                },
+                _ => Err(ApiError::MountFailure(einval!(format!(
+                    "invalid ops, mount {:?} failed {}",
+                    info, e
+                )))),
             },
         )?;
         info!("api server running at {}", apisock);

@@ -71,10 +71,14 @@ pub struct DaemonInfo {
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct MountInfo {
-    pub source: String,
-    pub fstype: String,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub fstype: Option<String>,
     pub mountpoint: String,
+    #[serde(default)]
     pub config: Option<String>,
+    pub ops: String,
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
