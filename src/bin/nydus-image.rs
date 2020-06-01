@@ -127,7 +127,7 @@ fn main() -> Result<()> {
 
     stderrlog::new()
         .quiet(false)
-        .modules(vec![module_path!(), "image_builder"])
+        .modules(vec![module_path!(), "image_builder", "rafs"])
         .verbosity(utils::log_level_to_verbosity(v))
         .timestamp(stderrlog::Timestamp::Second)
         .init()
