@@ -300,16 +300,16 @@ impl Node {
             let mut chunk = RafsChunkInfo::new();
 
             // get chunk info
-            chunk.file_offset = (i * DEFAULT_RAFS_BLOCK_SIZE as u64) as u64;
+            chunk.file_offset = i * DEFAULT_RAFS_BLOCK_SIZE;
             let len = if i == self.inode.i_chunk_cnt - 1 {
-                (file_size % DEFAULT_RAFS_BLOCK_SIZE as u64) as usize
+                file_size - DEFAULT_RAFS_BLOCK_SIZE * i
             } else {
                 DEFAULT_RAFS_BLOCK_SIZE
             };
 
             // get chunk data
             file.seek(SeekFrom::Start(chunk.file_offset))?;
-            let mut chunk_data = vec![0; len];
+            let mut chunk_data = vec![0; len as usize];
             file.read_exact(&mut chunk_data)?;
 
             // calc chunk digest

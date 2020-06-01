@@ -28,7 +28,7 @@ pub const RAFS_SUPERBLOCK_SIZE: usize = 8192;
 pub const RAFS_INODE_INFO_SIZE: usize = 512;
 pub const RAFS_CHUNK_INFO_SIZE: usize = 128;
 
-pub const DEFAULT_RAFS_BLOCK_SIZE: usize = 1024 * 1024;
+pub const DEFAULT_RAFS_BLOCK_SIZE: u64 = 1024 * 1024;
 pub const RAFS_SUPER_MAGIC: u32 = 0x5241_4653;
 
 const RAFS_XATTR_ALIGNMENT: usize = 8;
