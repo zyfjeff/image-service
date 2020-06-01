@@ -234,6 +234,10 @@ impl RafsSuper {
     pub fn get_inode(&self, ino: Inode) -> Result<Box<dyn RafsInode>> {
         self.inodes.get_inode(ino, self.meta)
     }
+
+    pub fn get_max_ino(&self) -> Inode {
+        self.inodes.get_max_ino()
+    }
 }
 
 /// Trait to manage all inodes of a file system.
@@ -243,6 +247,8 @@ pub trait RafsSuperInodes {
     fn destroy(&mut self);
 
     fn get_inode(&self, ino: Inode, s_meta: RafsSuperMeta) -> Result<Box<dyn RafsInode>>;
+
+    fn get_max_ino(&self) -> Inode;
 }
 
 /// Trait to access Rafs Inode Information.

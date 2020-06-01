@@ -49,18 +49,13 @@ impl RafsConfig {
 
 /// Main entrance of the RAFS readonly FUSE file system.
 pub struct Rafs {
-    conf: RafsConfig,
     device: device::RafsDevice,
     sb: RafsSuper,
     initialized: bool,
-    ios: Arc<io_stats::GlobalIOStats>,
 }
 
 impl Rafs {
-    pub fn new(conf: RafsConfig, id: &str) -> Self {
-        let dev_config = conf.dev_config();
-        let rafs_mode = dev_config.rafs.mode.as_str();
-
+    pub fn new(conf: RafsConfig, _id: &str) -> Result<Self> {
         let rafs = Rafs {
             device: device::RafsDevice::new(conf.device.clone()),
             sb: RafsSuper::new(conf.mode.as_str())?,
@@ -136,25 +131,14 @@ fn ebadf() -> Error {
     Error::from_raw_os_error(libc::EBADF)
 }
 
-fn enosys() -> Error {
-    Error::from_raw_os_error(libc::ENOSYS)
-}
-
 fn einval() -> Error {
     Error::from_raw_os_error(libc::EINVAL)
 }
 
-fn enoent() -> Error {
-    Error::from_raw_os_error(libc::ENOENT)
-}
-
-fn enoattr() -> Error {
-    Error::from_raw_os_error(libc::ENODATA)
-}
-
 impl BackendFileSystem for Rafs {
     fn mount(&self) -> Result<(Entry, u64)> {
-        let entry = self.sb.get_entry(ROOT_ID)?;
+        let root_inode = self.sb.get_inode(ROOT_ID)?;
+        let entry = root_inode.get_entry();
         Ok((entry, self.sb.get_max_ino()))
     }
 }

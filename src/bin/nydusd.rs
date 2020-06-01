@@ -746,6 +746,7 @@ fn main() -> Result<()> {
                                     e.to_string(),
                                 ))
                             })?;
+
                         let rafs_conf: RafsConfig = settings.try_into().map_err(|e| {
                             ApiError::MountFailure(io::Error::new(
                                 io::ErrorKind::Other,
@@ -753,9 +754,16 @@ fn main() -> Result<()> {
                             ))
                         })?;
 
-                        Rafs::new(rafs_conf, &info.mountpoint)
+                        Rafs::new(rafs_conf, &info.mountpoint).map_err(|e| {
+                            ApiError::MountFailure(io::Error::new(
+                                io::ErrorKind::Other,
+                                e.to_string(),
+                            ))
+                        })?
                     }
-                    None => Rafs::new(rafs_conf.clone(), &info.mountpoint),
+                    None => Rafs::new(rafs_conf.clone(), &info.mountpoint).map_err(|e| {
+                        ApiError::MountFailure(io::Error::new(io::ErrorKind::Other, e.to_string()))
+                    })?,
                 };
                 let mut file = Box::new(File::open(&info.source).map_err(ApiError::MountFailure)?)
                     as Box<dyn rafs::RafsIoRead>;

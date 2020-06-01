@@ -143,6 +143,10 @@ impl RafsSuperInodes for DirectMapping {
             meta,
         }) as Box<dyn RafsInode>)
     }
+
+    fn get_max_ino(&self) -> Inode {
+        self.inode_table.len() as u64
+    }
 }
 
 pub struct OndiskInodeMapping<'a> {

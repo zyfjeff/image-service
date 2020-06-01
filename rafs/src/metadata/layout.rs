@@ -286,6 +286,14 @@ impl OndiskInodeTable {
         self.data.len() * size_of::<u32>()
     }
 
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.data.len() == 0
+    }
+
     pub fn set(&mut self, ino: Inode, inode_offset: u32) -> Result<()> {
         if ino > self.data.len() as u64 {
             return Err(enoent());

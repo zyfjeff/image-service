@@ -36,4 +36,8 @@ impl RafsSuperInodes for NoopInodes {
     fn get_inode(&self, _ino: Inode, _s_meta: RafsSuperMeta) -> Result<Box<dyn RafsInode>> {
         unimplemented!()
     }
+
+    fn get_max_ino(&self) -> Inode {
+        unimplemented!()
+    }
 }
