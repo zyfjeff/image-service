@@ -72,3 +72,7 @@ pub fn decompress(src: &[u8], blksize: u32) -> Result<Vec<u8>> {
 pub fn log_level_to_verbosity(level: log::LevelFilter) -> usize {
     level as usize - 1
 }
+
+pub fn div_round_up(n: u64, d: u64) -> u64 {
+    (n + d - 1) / d
+}

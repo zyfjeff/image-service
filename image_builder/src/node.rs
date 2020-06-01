@@ -254,17 +254,16 @@ impl Node {
                     return Ok(true);
                 }
             }
-            let file_size = self.inode.i_size;
-            let chunk_count = (file_size as f64 / DEFAULT_RAFS_BLOCK_SIZE as f64).ceil() as u64;
-            self.inode.i_chunk_cnt = chunk_count;
+            self.inode.i_chunk_cnt =
+                utils::div_round_up(self.inode.i_size, DEFAULT_RAFS_BLOCK_SIZE);
         } else if self.is_symlink() {
             self.inode.i_flags |= INO_FLAG_SYMLINK;
             let target_path = fs::read_link(self.path.as_str())?;
             let target_path_str = target_path.to_str().unwrap();
-            let chunk_info_count = (target_path_str.as_bytes().len() as f64
-                / RAFS_CHUNK_INFO_SIZE as f64)
-                .ceil() as usize;
-            self.inode.i_chunk_cnt = chunk_info_count as u64;
+            self.inode.i_chunk_cnt = utils::div_round_up(
+                target_path_str.as_bytes().len() as u64,
+                RAFS_CHUNK_INFO_SIZE as u64,
+            );
         }
 
         Ok(true)
