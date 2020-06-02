@@ -12,12 +12,17 @@ fn run() -> Result<()> {
 
     // create & build parent rootfs
     builder.make_parent()?;
-    builder.build_parent()?;
+    let build_ret = builder.build_parent()?;
 
     let nydusd = nydusd::new(&work_dir)?;
     nydusd.start()?;
 
-    builder.check()?;
+    let mount_ret = builder.mount_check()?;
+
+    println!("build result: {}", build_ret);
+    println!("mount result: {}", mount_ret);
+
+    assert_eq!(build_ret, mount_ret);
 
     // create & build source rootfs based parent
     builder.make_source()?;

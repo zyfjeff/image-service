@@ -33,7 +33,7 @@ pub const RAFS_SHA256_LENGTH: usize = 32;
 pub const RAFS_BLOB_ID_MAX_LENGTH: usize = 72;
 pub const RAFS_INODE_BLOCKSIZE: u32 = 4096;
 pub const RAFS_MAX_NAME: usize = 255;
-pub const RAFS_DEFAULT_BLOCK_SIZE: usize = 1024 * 1024;
+pub const RAFS_DEFAULT_BLOCK_SIZE: u64 = 1024 * 1024;
 pub const RAFS_MAX_METADATA_SIZE: usize = 0x8000_0000;
 
 #[macro_export]
@@ -287,6 +287,7 @@ pub trait RafsChunkInfo {
     fn validate(&self, sb: &RafsSuperMeta) -> Result<()>;
 
     fn blob_offset(&self) -> u64;
+    fn file_offset(&self) -> u64;
     fn compress_size(&self) -> u32;
 }
 

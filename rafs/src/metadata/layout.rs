@@ -527,6 +527,7 @@ impl RafsChunkInfo for OndiskChunkInfo {
     }
 
     impl_getter!(blob_offset, blob_offset, u64);
+    impl_getter!(file_offset, file_offset, u64);
     impl_getter!(compress_size, compress_size, u32);
 }
 

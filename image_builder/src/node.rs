@@ -138,11 +138,11 @@ impl Node {
             let mut chunk = OndiskChunkInfo::new();
 
             // get chunk info
-            chunk.file_offset = (i * RAFS_DEFAULT_BLOCK_SIZE as u32) as u64;
+            chunk.file_offset = i as u64 * RAFS_DEFAULT_BLOCK_SIZE;
             let len = if i == self.inode.i_child_count - 1 {
-                (file_size % RAFS_DEFAULT_BLOCK_SIZE as u64) as usize
+                file_size as usize - (RAFS_DEFAULT_BLOCK_SIZE as usize * i as usize)
             } else {
-                RAFS_DEFAULT_BLOCK_SIZE
+                RAFS_DEFAULT_BLOCK_SIZE as usize
             };
 
             // get chunk data
@@ -165,10 +165,11 @@ impl Node {
             *blob_offset += compressed_size as u64;
 
             trace!(
-                "\tbuilding chunk: file_offset {}, blob_offset {}, compress_size {}",
+                "\tbuilding chunk: file_offset {}, blob_offset {}, compress_size {}, chunk_size {}",
                 chunk.file_offset,
                 chunk.blob_offset,
                 chunk.compress_size,
+                chunk_data.len(),
             );
 
             // calc blob hash
@@ -271,9 +272,8 @@ impl Node {
                     return Ok(());
                 }
             }
-            let file_size = self.inode.i_size;
-            let chunk_count = (file_size as f64 / RAFS_DEFAULT_BLOCK_SIZE as f64).ceil() as u32;
-            self.inode.i_child_count = chunk_count;
+            self.inode.i_child_count =
+                utils::div_round_up(self.inode.i_size, RAFS_DEFAULT_BLOCK_SIZE) as u32;
         } else if self.is_symlink() {
             self.inode.i_flags |= INO_FLAG_SYMLINK as u64;
             let target_path = fs::read_link(&self.path)?;

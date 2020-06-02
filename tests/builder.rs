@@ -4,7 +4,7 @@ use std::fs::{self, File};
 use std::io::{Error, ErrorKind, Read, Result, Write};
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
@@ -14,25 +14,22 @@ use rafs::RafsIoRead;
 
 const NYDUS_IMAGE: &str = "./target-fusedev/debug/nydus-image";
 
-pub fn exec(cmd: &str) -> Result<()> {
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()?;
-    let status = child.wait()?;
+pub fn exec(cmd: &str) -> Result<String> {
+    let child = Command::new("sh").arg("-c").arg(cmd).output()?;
+    let status = child.status;
 
     let status = status
         .code()
         .ok_or(Error::new(ErrorKind::Other, "exited with unknown status"))?;
 
+    let stdout = std::str::from_utf8(&child.stdout).map_err(|e| Error::new(ErrorKind::Other, e))?;
+    let stderr = std::str::from_utf8(&child.stderr).map_err(|e| Error::new(ErrorKind::Other, e))?;
+
     if status != 0 {
-        return Err(Error::new(ErrorKind::Other, "exited with non-zero"));
+        return Err(Error::new(ErrorKind::Other, stderr));
     }
 
-    Ok(())
+    Ok(stdout.to_string())
 }
 
 pub fn hash(data: &[u8]) -> String {
@@ -121,6 +118,7 @@ impl<'a> Builder<'a> {
         self.create_file(&dir.join("test-1"), b"lower:test-1")?;
         self.create_file(&dir.join("test-2"), b"lower:test-2")?;
         self.create_rnd_file(&dir.join("test-3-large"), "2MB")?;
+        self.create_rnd_file(&dir.join("test-4-large"), "2M")?;
         self.create_dir(&dir.join("sub"))?;
         self.create_file(&dir.join("sub/test-1"), b"lower:sub/test-1")?;
         self.create_file(&dir.join("sub/test-2"), b"lower:sub/test-2")?;
@@ -184,12 +182,20 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    pub fn build_parent(&mut self) -> Result<()> {
+    pub fn build_parent(&mut self) -> Result<String> {
         let parent_dir = self.work_dir.join("parent");
 
         self.create_dir(&self.work_dir.join("blobs"))?;
 
-        // exec(format!("tree {:?} -a", parent_dir).as_str())?;
+        let tree_ret = exec(format!("tree -a {:?}", parent_dir).as_str())?;
+        let md5_ret = exec(format!("find {:?} -type f -exec md5sum {{}} +", parent_dir).as_str())?;
+
+        let ret = format!(
+            "{}{}",
+            tree_ret.replace(parent_dir.to_str().unwrap(), ""),
+            md5_ret.replace(parent_dir.to_str().unwrap(), "")
+        );
+
         exec(
             format!(
                 "{:?} create --bootstrap {:?} {:?} --backend_type localfs --backend_config '{{\"dir\": {:?}}}' --log_level error",
@@ -201,7 +207,7 @@ impl<'a> Builder<'a> {
             .as_str(),
         )?;
 
-        Ok(())
+        Ok(ret)
     }
 
     pub fn build_source(&mut self) -> Result<()> {
@@ -223,13 +229,19 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    pub fn check(&mut self) -> Result<()> {
+    pub fn mount_check(&mut self) -> Result<String> {
         let mount_path = self.work_dir.join("mnt");
 
-        exec(format!("tree -a {:?}", mount_path).as_str())?;
-        exec(format!("find {:?} -type f -exec md5sum {{}} +", mount_path).as_str())?;
+        let tree_ret = exec(format!("tree -a {:?}", mount_path).as_str())?;
+        let md5_ret = exec(format!("find {:?} -type f -exec md5sum {{}} +", mount_path).as_str())?;
 
-        Ok(())
+        let ret = format!(
+            "{}{}",
+            tree_ret.replace(mount_path.to_str().unwrap(), ""),
+            md5_ret.replace(mount_path.to_str().unwrap(), "")
+        );
+
+        Ok(ret)
     }
 
     #[allow(dead_code)]
