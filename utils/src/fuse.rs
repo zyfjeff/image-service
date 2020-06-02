@@ -18,7 +18,7 @@ use nix::Error as nixError;
 
 use fuse_rs::transport::{FuseBuf, Reader, Writer};
 
-/// These follows definitioin from libfuse
+/// These follows definition from libfuse
 const FUSE_KERN_BUF_SIZE: usize = 32;
 const FUSE_HEADER_SIZE: usize = 0x1000;
 
