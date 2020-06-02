@@ -16,7 +16,7 @@ where the `config.json` is of format like:
 oss backend with blobcache:
 ```
 {
-  "device_config": {
+  "device": {
     "backend": {
       "type": "oss",
       "config": {
@@ -32,14 +32,15 @@ oss backend with blobcache:
         "work_dir": "/cache"
       }
     }
-  }
+  },
+  "mode": "direct"
 }
 ```
 
 registry backend:
 ```
 {
-  "device_config": {
+  "device": {
     "backend": {
       "type": "registry",
       "config": {
@@ -47,14 +48,15 @@ registry backend:
         "repo": ""
       }
     }
-  }
+  },
+  "mode": "direct"
 }
 ```
 
 localfs backend:
 ```
 {
-  "device_config": {
+  "device": {
     "backend": {
       "type": "localfs",
       "config": {
@@ -62,7 +64,8 @@ localfs backend:
       }
     },
     "cache": {}
-  }
+  },
+  "mode": "direct"
 }
 ```
 

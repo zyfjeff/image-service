@@ -197,8 +197,8 @@ impl Builder {
         for node in &mut self.additions {
             let file_type = node.get_type();
             if file_type != "" {
-                info!(
-                    "upper building {} {:?}: index {} ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} has_xattr {}",
+                debug!(
+                    "upper building {} {:?}: index {} ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} i_nlink {} has_xattr {}",
                     file_type,
                     node.get_rootfs(),
                     node.index,
@@ -207,6 +207,7 @@ impl Builder {
                     node.inode.i_child_index,
                     node.inode.i_name_size,
                     node.inode.i_symlink_size,
+                    node.inode.i_nlink,
                     node.inode.has_xattr(),
                 );
             }
