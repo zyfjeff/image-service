@@ -208,13 +208,12 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
 
     fn get_child_by_name(&self, name: &str) -> Result<Box<dyn RafsInode>> {
         let child_count = self.data.i_child_count;
-        let child_index = self.data.i_child_index;
 
         if !self.is_dir() {
             return Err(einval());
         }
 
-        for idx in child_index..child_index + child_count {
+        for idx in 0..child_count {
             let inode = self.get_child_by_index(idx as u64)?;
             if inode.name()? == name {
                 return Ok(inode);
