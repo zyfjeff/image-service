@@ -10,8 +10,8 @@ use std::io::Error;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex, RwLock};
 
-use crate::fs::RafsBlk;
-use crate::layout::{RafsDigest, RafsSuperBlockInfo};
+use crate::metadata::layout::OndiskDigest;
+use crate::metadata::{RafsChunkInfo, RafsDigest, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::RafsCache;
 use crate::storage::device::RafsBuffer;
@@ -22,50 +22,47 @@ enum CacheStatus {
     NotReady,
 }
 
-#[derive(Clone)]
 struct BlobCacheEntry {
     status: CacheStatus,
-    chunk_info: RafsBlk,
+    chunk: Arc<dyn RafsChunkInfo>,
     fd: RawFd,
 }
 
 impl BlobCacheEntry {
-    fn new(chunk: &RafsBlk, fd: RawFd) -> BlobCacheEntry {
+    fn new(chunk: Arc<dyn RafsChunkInfo>, fd: RawFd) -> BlobCacheEntry {
         BlobCacheEntry {
             status: CacheStatus::NotReady,
-            chunk_info: chunk.clone(),
+            chunk,
             fd,
         }
     }
 
     fn read(&self) -> io::Result<Vec<u8>> {
-        let mut buf = vec![0u8; self.chunk_info.compr_size as usize];
-        let nr_read = uio::pread(
-            self.fd,
-            buf.as_mut_slice(),
-            self.chunk_info.blob_offset as i64,
-        )
-        .map_err(|_| Error::last_os_error())?;
+        let mut buf = vec![0u8; self.chunk.compress_size() as usize];
+        let nr_read = uio::pread(self.fd, buf.as_mut_slice(), self.chunk.blob_offset() as i64)
+            .map_err(|_| Error::last_os_error())?;
         debug!(
             "read {}(off={}) bytes from blob file",
-            nr_read, self.chunk_info.blob_offset
+            nr_read,
+            self.chunk.blob_offset()
         );
         Ok(buf)
     }
 
     fn write(&self, src: &[u8]) -> io::Result<usize> {
-        let nr_write = uio::pwrite(self.fd, src, self.chunk_info.blob_offset as i64)
+        let nr_write = uio::pwrite(self.fd, src, self.chunk.blob_offset() as i64)
             .map_err(|_| Error::last_os_error())?;
         debug!(
             "write {}(off={}) bytes to blob file",
-            nr_write, self.chunk_info.blob_offset
+            nr_write,
+            self.chunk.blob_offset()
         );
         Ok(nr_write)
     }
 }
 
 pub struct BlobCache {
-    cache: RwLock<HashMap<RafsDigest, Arc<Mutex<BlobCacheEntry>>>>,
+    cache: RwLock<HashMap<String, Arc<Mutex<BlobCacheEntry>>>>,
     file_table: RwLock<HashMap<String, File>>,
     work_dir: String,
     blksize: u32,
@@ -73,79 +70,96 @@ pub struct BlobCache {
 }
 
 impl BlobCache {
-    fn get_blob_fd(&self, blk: &RafsBlk) -> io::Result<RawFd> {
-        if let Some(file) = self.file_table.read().unwrap().get(&blk.blob_id) {
+    fn get_blob_fd(&self, blob_id: &str) -> io::Result<RawFd> {
+        if let Some(file) = self.file_table.read().unwrap().get(&blob_id.to_string()) {
             return Ok(file.as_raw_fd());
         }
         let mut file_table = self.file_table.write().unwrap();
-        let blob_file_path = format!("{}/{}", self.work_dir, blk.blob_id);
+        let blob_file_path = format!("{}/{}", self.work_dir, blob_id);
         let file = OpenOptions::new()
             .create(true)
             .write(true)
             .read(true)
             .open(blob_file_path)?;
         let fd = file.as_raw_fd();
-        file_table.insert(blk.blob_id.clone(), file);
+        file_table.insert(blob_id.to_string(), file);
         Ok(fd)
     }
 
-    fn get(&self, blk: &RafsBlk) -> Option<Arc<Mutex<BlobCacheEntry>>> {
-        match self.cache.read().unwrap().get(&blk.block_id) {
+    fn get(&self, blk: Arc<dyn RafsChunkInfo>) -> Option<Arc<Mutex<BlobCacheEntry>>> {
+        let block_id = blk.block_id().to_string();
+        match self.cache.read().unwrap().get(&block_id) {
             Some(entry) => Some(entry.clone()),
             None => None,
         }
     }
 
-    fn set(&self, blk: &RafsBlk) -> Option<Arc<Mutex<BlobCacheEntry>>> {
+    fn set(
+        &self,
+        blob_id: &str,
+        blk: Arc<dyn RafsChunkInfo>,
+    ) -> Option<Arc<Mutex<BlobCacheEntry>>> {
         let mut cache_map = self.cache.write().unwrap();
-        if let Some(entry) = cache_map.get(&blk.block_id) {
+        if let Some(entry) = cache_map.get(&blob_id.to_string()) {
             return Some(entry.clone());
         }
-        let fd = self.get_blob_fd(blk).unwrap();
+        let fd = self.get_blob_fd(blob_id).unwrap();
         cache_map.insert(
-            blk.block_id.clone(),
+            blob_id.to_string(),
             Arc::new(Mutex::new(BlobCacheEntry::new(blk, fd))),
         );
-        match cache_map.get(&blk.block_id) {
+        match cache_map.get(&blob_id.to_string()) {
             Some(entry) => Some(entry.clone()),
             None => None,
         }
     }
 
-    fn read_from_backend(&self, blk: &RafsBlk) -> io::Result<Vec<u8>> {
+    fn read_from_backend(
+        &self,
+        blob_id: &str,
+        blk: &Arc<dyn RafsChunkInfo>,
+    ) -> io::Result<Vec<u8>> {
         let mut buf = Vec::new();
-        let res = self
-            .backend
-            .read(&blk.blob_id, &mut buf, blk.blob_offset, blk.compr_size)?;
-        if res != blk.compr_size {
+        let res = self.backend.read(
+            blob_id,
+            &mut buf,
+            blk.blob_offset(),
+            blk.compress_size() as usize,
+        )?;
+        if res != blk.compress_size() as usize {
             error!("read from backend err!");
             return Err(Error::from_raw_os_error(libc::EIO));
         }
         Ok(buf)
     }
 
-    fn entry_read(&self, entry: &Arc<Mutex<BlobCacheEntry>>) -> io::Result<RafsBuffer> {
+    fn entry_read(
+        &self,
+        blob_id: &str,
+        entry: &Arc<Mutex<BlobCacheEntry>>,
+    ) -> io::Result<RafsBuffer> {
         let b_entry = {
             // need mutex lock protection
-            let mut chunk_info = entry.lock().unwrap();
-            if let CacheStatus::NotReady = chunk_info.status {
+            let mut cache_entry = entry.lock().unwrap();
+            if let CacheStatus::NotReady = cache_entry.status {
                 // check on local disk
-                if let Some(buf) = chunk_info
+                if let Some(buf) = cache_entry
                     .read()
                     .map_or(None, |b| utils::decompress(b.as_slice(), self.blksize).ok())
                 {
-                    if chunk_info.chunk_info.block_id == RafsDigest::from_buf(buf.as_slice()) {
-                        chunk_info.status = CacheStatus::Ready;
+                    let block_id = cache_entry.chunk.block_id().to_string();
+                    if block_id == OndiskDigest::from_buf(buf.as_slice()).to_string() {
+                        cache_entry.status = CacheStatus::Ready;
                         return Ok(RafsBuffer::new_decompressed(buf));
                     }
                 }
                 // do downloading
-                let buf = self.read_from_backend(&chunk_info.chunk_info)?;
-                chunk_info.write(buf.as_slice())?;
-                chunk_info.status = CacheStatus::Ready;
+                let buf = self.read_from_backend(blob_id, &cache_entry.chunk)?;
+                cache_entry.write(buf.as_slice())?;
+                cache_entry.status = CacheStatus::Ready;
                 return Ok(RafsBuffer::new_compressed(buf));
             }
-            (*chunk_info).clone()
+            cache_entry
         };
         Ok(RafsBuffer::new_compressed(b_entry.read()?))
     }
@@ -153,18 +167,20 @@ impl BlobCache {
 
 impl RafsCache for BlobCache {
     /* whether has a block data */
-    fn has(&self, blk: &RafsBlk) -> bool {
-        self.cache.read().unwrap().contains_key(&blk.block_id)
+    fn has(&self, blk: Arc<dyn RafsChunkInfo>) -> bool {
+        let block_id = blk.block_id().to_string();
+        self.cache.read().unwrap().contains_key(&block_id)
     }
 
-    fn init(&mut self, sb_info: &RafsSuperBlockInfo) -> io::Result<()> {
-        self.blksize = sb_info.s_block_size;
+    fn init(&mut self, sb_meta: &RafsSuperMeta) -> io::Result<()> {
+        self.blksize = sb_meta.block_size;
         Ok(())
     }
 
     /* evict block data */
-    fn evict(&self, blk: &RafsBlk) -> io::Result<()> {
-        self.cache.write().unwrap().remove(&blk.block_id);
+    fn evict(&self, blk: Arc<dyn RafsChunkInfo>) -> io::Result<()> {
+        let block_id = blk.block_id().to_string();
+        self.cache.write().unwrap().remove(&block_id);
         Ok(())
     }
 
@@ -173,15 +189,20 @@ impl RafsCache for BlobCache {
         Err(Error::from_raw_os_error(libc::ENOSYS))
     }
 
-    fn read(&self, blk: &RafsBlk) -> io::Result<RafsBuffer> {
-        if let Some(entry) = self.get(blk).or_else(|| self.set(blk)) {
-            return self.entry_read(&entry);
+    fn read(&self, blob_id: &str, blk: Arc<dyn RafsChunkInfo>) -> io::Result<RafsBuffer> {
+        if let Some(entry) = self.get(blk.clone()).or_else(|| self.set(blob_id, blk)) {
+            return self.entry_read(blob_id, &entry);
         }
         error!("blob cache set err");
         Err(Error::from_raw_os_error(libc::EIO))
     }
 
-    fn write(&self, _blk: &RafsBlk, _buf: &[u8]) -> io::Result<usize> {
+    fn write(
+        &self,
+        _blob_id: &str,
+        _blk: Arc<dyn RafsChunkInfo>,
+        _buf: &[u8],
+    ) -> io::Result<usize> {
         Err(Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -218,13 +239,14 @@ pub fn new<S: std::hash::BuildHasher>(
 
 #[cfg(test)]
 mod blob_cache_tests {
-    use crate::fs::RafsBlk;
-    use crate::layout::RafsDigest;
+    use std::collections::HashMap;
+    use std::io::Result;
+    use std::sync::Arc;
+
+    use crate::metadata::layout::{OndiskChunkInfo, OndiskDigest};
     use crate::storage::backend::BlobBackend;
     use crate::storage::cache::blobcache;
     use crate::storage::cache::RafsCache;
-    use std::collections::HashMap;
-    use std::io::Result;
 
     struct MockBackend {}
 
@@ -272,21 +294,21 @@ mod blob_cache_tests {
             .backend
             .read(blobid, expect.as_mut(), 0, 100)
             .unwrap();
-        let mut chunk = RafsBlk::new();
-        chunk.block_id = RafsDigest::from_buf(&block_id);
-        chunk.blob_id = blobid.to_string();
-        chunk.file_pos = 0;
+
+        let mut chunk = OndiskChunkInfo::new();
+        chunk.block_id = OndiskDigest::from_raw(&block_id);
+        chunk.file_offset = 0;
         chunk.blob_offset = 0;
-        chunk.compr_size = 100;
+        chunk.compress_size = 100;
 
         let r1 = blob_cache
-            .read(&chunk)
+            .read(blobid, Arc::new(chunk))
             .expect("read err")
             .decompressed(&|b| Ok(b.to_vec()))
             .unwrap();
         assert_eq!(expect, r1);
         let r2 = blob_cache
-            .read(&chunk)
+            .read(blobid, Arc::new(chunk))
             .expect("read err")
             .decompressed(&|b| Ok(b.to_vec()))
             .unwrap();

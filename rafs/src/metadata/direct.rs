@@ -185,7 +185,7 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
     }
 
     #[allow(clippy::cast_ptr_alignment)]
-    fn get_chunk_info(&self, idx: u32) -> Result<&OndiskChunkInfo> {
+    fn get_chunk_info(&self, idx: u32) -> Result<Arc<OndiskChunkInfo>> {
         if !self.is_reg() {
             return Err(enoent());
         }
@@ -203,7 +203,9 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
         }
         offset += size_of::<OndiskChunkInfo>() * idx as usize;
 
-        self.mapping.cast_to_ref::<OndiskChunkInfo>(start, offset)
+        let chunk = self.mapping.cast_to_ref::<OndiskChunkInfo>(start, offset)?;
+
+        Ok(Arc::new(*chunk))
     }
 
     fn get_child_by_name(&self, name: &str) -> Result<Box<dyn RafsInode>> {
@@ -245,8 +247,9 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
         Ok(self.data.i_child_count as usize)
     }
 
-    fn get_chunk_blob_id(&self, idx: u32) -> Result<&OndiskDigest> {
-        self.mapping.blob_table.get(idx)
+    fn get_chunk_blob_id(&self, idx: u32) -> Result<Box<dyn RafsDigest>> {
+        let digest = self.mapping.blob_table.get(idx)?;
+        Ok(digest as Box<dyn RafsDigest>)
     }
 
     fn get_entry(&self) -> Entry {
@@ -299,7 +302,7 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
         parse_xattrs(xattrs_data, xattrs_size)
     }
 
-    fn alloc_bio_desc<'b>(&'b self, offset: u64, size: usize) -> Result<RafsBioDesc<'b>> {
+    fn alloc_bio_desc(&self, offset: u64, size: usize) -> Result<RafsBioDesc> {
         let blksize = self.meta.block_size;
         let mut desc = RafsBioDesc::new();
         let end = offset + size as u64;
@@ -316,15 +319,15 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
             let file_start = cmp::max(blk.file_offset, offset);
             let file_end = cmp::min(blk.file_offset + blksize as u64, end);
             let bio = RafsBio::new(
-                blk,
+                blk.clone(),
                 blob_id,
                 (file_start - blk.file_offset) as u32,
                 (file_end - file_start) as usize,
                 blksize,
             );
 
-            desc.bi_vec.push(bio);
             desc.bi_size += bio.size;
+            desc.bi_vec.push(bio);
         }
 
         Ok(desc)

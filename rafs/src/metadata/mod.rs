@@ -5,12 +5,12 @@
 
 //! Structs and Traits for RAFS file system meta data management.
 
-use std::borrow::Cow;
 use std::cmp;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write;
 use std::io::Result;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crypto::digest::Digest;
@@ -263,12 +263,12 @@ pub trait RafsInode {
     fn get_child_by_name(&self, name: &str) -> Result<Box<dyn RafsInode>>;
     fn get_child_by_index(&self, idx: Inode) -> Result<Box<dyn RafsInode>>;
     fn get_child_count(&self) -> Result<usize>;
-    fn get_chunk_info(&self, idx: u32) -> Result<&OndiskChunkInfo>;
-    fn get_chunk_blob_id(&self, idx: u32) -> Result<&OndiskDigest>;
+    fn get_chunk_info(&self, idx: u32) -> Result<Arc<OndiskChunkInfo>>;
+    fn get_chunk_blob_id(&self, idx: u32) -> Result<Box<dyn RafsDigest>>;
     fn get_entry(&self) -> Entry;
     fn get_attr(&self) -> Attr;
     fn get_xattrs(&self) -> Result<HashMap<String, Vec<u8>>>;
-    fn alloc_bio_desc<'b>(&'b self, offset: u64, size: usize) -> Result<RafsBioDesc<'b>>;
+    fn alloc_bio_desc(&self, offset: u64, size: usize) -> Result<RafsBioDesc>;
 
     fn is_dir(&self) -> bool;
     fn is_symlink(&self) -> bool;
@@ -283,9 +283,10 @@ pub trait RafsInode {
 }
 
 /// Trait to access Rafs Data Chunk Information.
-pub trait RafsChunkInfo {
+pub trait RafsChunkInfo: Sync + Send {
     fn validate(&self, sb: &RafsSuperMeta) -> Result<()>;
 
+    fn block_id(&self) -> &dyn RafsDigest;
     fn blob_offset(&self) -> u64;
     fn file_offset(&self) -> u64;
     fn compress_size(&self) -> u32;
@@ -314,12 +315,5 @@ pub trait RafsDigest {
     /// Get a mutable reference to the underlying data.
     fn data_mut(&mut self) -> &mut [u8];
 
-    // Get a hex represetation for SHA256 message digest.
-    fn as_str(&self) -> Result<Cow<str>> {
-        let mut ret = String::new();
-        for c in self.data() {
-            write!(ret, "{:02x}", c).map_err(|_| einval())?;
-        }
-        Ok(Cow::Owned(ret))
-    }
+    fn to_string(&self) -> String;
 }

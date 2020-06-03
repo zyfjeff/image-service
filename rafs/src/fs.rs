@@ -72,12 +72,12 @@ impl Rafs {
             return Err(Error::new(ErrorKind::AlreadyExists, "Already mounted"));
         }
 
-        self.device.init()?;
         self.sb.load(r).or_else(|e| {
             self.sb.destroy();
-            self.device.close();
             Err(e)
         })?;
+
+        self.device.init(&self.sb.meta)?;
 
         self.initialized = true;
         info!("rafs imported");
@@ -86,13 +86,16 @@ impl Rafs {
     }
 
     /// umount a previously mounted rafs virtual path
-    pub fn destroy(&mut self) {
+    pub fn destroy(&mut self) -> Result<()> {
         info! {"Destroy rafs"}
+
         if self.initialized {
             self.sb.destroy();
-            self.device.close();
+            self.device.close()?;
             self.initialized = false;
         }
+
+        Ok(())
     }
 
     fn do_readdir<F>(&self, ino: Inode, size: u32, offset: u64, mut add_entry: F) -> Result<()>

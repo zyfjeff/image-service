@@ -358,11 +358,11 @@ impl OndiskBlobTable {
         Ok(())
     }
 
-    pub fn get(&self, index: u32) -> Result<&OndiskDigest> {
+    pub fn get(&self, index: u32) -> Result<Box<OndiskDigest>> {
         if index > (self.data.len() - 1) as u32 {
             return Err(enoent());
         }
-        Ok(&self.data[index as usize])
+        Ok(Box::new(self.data[index as usize]))
     }
 
     pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
@@ -526,6 +526,10 @@ impl RafsChunkInfo for OndiskChunkInfo {
         Ok(())
     }
 
+    fn block_id(&self) -> &dyn RafsDigest {
+        &self.block_id
+    }
+
     impl_getter!(blob_offset, blob_offset, u64);
     impl_getter!(file_offset, file_offset, u64);
     impl_getter!(compress_size, compress_size, u32);
@@ -551,7 +555,7 @@ impl fmt::Display for OndiskChunkInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "chunk_info block_id: {}, blob_index: {} file offset: {}, blob offset: {}, compressed size: {}",
+            "chunk_info block_id: {:?}, blob_index: {} file offset: {}, blob offset: {}, compressed size: {}",
             self.block_id, self.blob_index, self.file_offset, self.blob_offset,
             self.compress_size
         )
@@ -572,6 +576,14 @@ impl OndiskDigest {
         }
     }
 
+    pub fn from_digest(sha: &mut Sha256) -> Self {
+        let mut hash = [0; RAFS_SHA256_LENGTH];
+        sha.result(&mut hash);
+        let mut digest = OndiskDigest::new();
+        digest.data.clone_from_slice(&hash);
+        digest
+    }
+
     pub fn from_buf(buf: &[u8]) -> Self {
         let mut hash = Sha256::new();
         let mut hash_buf = [0; RAFS_SHA256_LENGTH];
@@ -582,12 +594,8 @@ impl OndiskDigest {
         digest
     }
 
-    pub fn from_raw(sha: &mut Sha256) -> Self {
-        let mut hash = [0; RAFS_SHA256_LENGTH];
-        sha.result(&mut hash);
-        let mut digest = OndiskDigest::new();
-        digest.data.clone_from_slice(&hash);
-        digest
+    pub fn from_raw(data: &[u8; RAFS_SHA256_LENGTH]) -> Self {
+        OndiskDigest { data: *data }
     }
 }
 
@@ -603,18 +611,19 @@ impl RafsDigest for OndiskDigest {
     fn data_mut(&mut self) -> &mut [u8] {
         &mut self.data
     }
+
+    fn to_string(&self) -> String {
+        let mut ret = String::new();
+
+        for c in &self.data {
+            write!(ret, "{:02x}", c).unwrap();
+        }
+
+        ret
+    }
 }
 
 impl_metadata_converter!(OndiskDigest);
-
-impl fmt::Display for OndiskDigest {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for c in self.data[..].iter() {
-            write!(f, "{:02x}", c)?;
-        }
-        Ok(())
-    }
-}
 
 /// On disk xattr data.
 #[repr(C)]

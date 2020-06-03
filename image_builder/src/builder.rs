@@ -222,12 +222,12 @@ impl Builder {
             // add chunks size
             inode_offset += (node.chunks.len() * size_of::<OndiskChunkInfo>()) as u32;
         }
-        let blob_id = OndiskDigest::from_raw(&mut blob_hash);
+        let blob_id = OndiskDigest::from_digest(&mut blob_hash);
         let mut blob_table = OndiskBlobTable::new(1);
         blob_table.set(0, blob_id)?;
 
         if self.blob_id == "" {
-            self.blob_id = blob_id.as_str()?.to_string();
+            self.blob_id = blob_id.to_string();
         }
 
         // dump bootstrap

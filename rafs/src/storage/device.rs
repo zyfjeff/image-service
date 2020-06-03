@@ -5,35 +5,38 @@
 use std::cmp;
 use std::io;
 use std::io::Error;
+use std::sync::Arc;
 
 use fuse_rs::api::filesystem::{ZeroCopyReader, ZeroCopyWriter};
 use fuse_rs::transport::FileReadWriteVolatile;
 use vm_memory::VolatileSlice;
 
+use crate::metadata::RafsSuperMeta;
 use crate::metadata::{RafsChunkInfo, RafsDigest};
-use crate::storage::backend::*;
+use crate::storage::cache::RafsCache;
 use crate::storage::factory;
 
 static ZEROS: &[u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
 
 // A rafs storage device
 pub struct RafsDevice {
-    c: factory::Config,
-    b: Box<dyn BlobBackend + Send + Sync>,
+    rw_layer: Box<dyn RafsCache + Send + Sync>,
 }
 
 impl RafsDevice {
-    pub fn new(c: factory::Config) -> Self {
-        let backend = factory::new_backend(&c.backend).unwrap();
-        RafsDevice { c, b: backend }
+    pub fn new(config: factory::Config) -> Self {
+        RafsDevice {
+            rw_layer: factory::new_rw_layer(&config).unwrap(),
+        }
     }
 
-    pub fn init(&mut self) -> io::Result<()> {
+    pub fn init(&mut self, sb_meta: &RafsSuperMeta) -> io::Result<()> {
+        self.rw_layer.init(sb_meta)
+    }
+
+    pub fn close(&mut self) -> io::Result<()> {
+        self.rw_layer.release();
         Ok(())
-    }
-
-    pub fn close(&mut self) {
-        self.b.close();
     }
 
     /// Read a range of data from blob into the provided writer
@@ -88,13 +91,13 @@ impl RafsBuffer {
 }
 
 struct RafsBioDevice<'a> {
-    bio: &'a RafsBio<'a>,
+    bio: &'a RafsBio,
     dev: &'a RafsDevice,
     buf: Vec<u8>,
 }
 
 impl<'a> RafsBioDevice<'a> {
-    fn new(bio: &'a RafsBio<'a>, b: &'a RafsDevice) -> io::Result<Self> {
+    fn new(bio: &'a RafsBio, b: &'a RafsDevice) -> io::Result<Self> {
         // FIXME: make sure bio is valid
         Ok(RafsBioDevice {
             bio,
@@ -121,15 +124,11 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
 
     fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
         if self.buf.is_empty() {
-            let mut buf = Vec::new();
-            let len = self.dev.b.read(
-                &self.bio.blob_id.as_str()?,
-                &mut buf,
-                self.bio.chunkinfo.blob_offset(),
-                self.bio.chunkinfo.compress_size() as usize,
-            )?;
-            debug_assert_eq!(len, buf.len());
-            self.buf = utils::decompress(&buf, self.bio.blksize)?;
+            self.buf = self
+                .dev
+                .rw_layer
+                .read(&self.bio.blob_id.to_string(), self.bio.chunkinfo.clone())?
+                .decompressed(&|b| utils::decompress(b, self.bio.blksize))?;
         }
 
         let count = cmp::min(
@@ -168,13 +167,19 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
         Ok(count)
     }
 
-    fn write_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
+    fn write_at_volatile(&mut self, slice: VolatileSlice, _offset: u64) -> Result<usize, Error> {
         let mut buf = vec![0u8; slice.len()];
         slice.copy_to(&mut buf);
-        let compressed = utils::compress(&buf)?;
-        self.dev
-            .b
-            .write(&self.bio.blob_id.as_str()?, &compressed, offset)?;
+        let wbuf = if self.dev.rw_layer.compressed() {
+            utils::compress(&buf)?
+        } else {
+            buf
+        };
+        self.dev.rw_layer.write(
+            &self.bio.blob_id.to_string(),
+            self.bio.chunkinfo.clone(),
+            &wbuf,
+        )?;
         // Need to return slice length because that's what upper layer asks to write
         Ok(slice.len())
     }
@@ -199,17 +204,17 @@ impl RafsBioDevice<'_> {
 }
 
 // Rafs device blob IO descriptor
-#[derive(Clone, Default)]
-pub struct RafsBioDesc<'a> {
+#[derive(Default)]
+pub struct RafsBioDesc {
     // Blob IO flags
     pub bi_flags: u32,
     // Totol IO size to be performed
     pub bi_size: usize,
     // Array of blob IO info. Corresponding data should be read from/write to IO stream sequentially
-    pub bi_vec: Vec<RafsBio<'a>>,
+    pub bi_vec: Vec<RafsBio>,
 }
 
-impl RafsBioDesc<'_> {
+impl RafsBioDesc {
     pub fn new() -> Self {
         RafsBioDesc {
             ..Default::default()
@@ -218,12 +223,11 @@ impl RafsBioDesc<'_> {
 }
 
 // Rafs blob IO info
-#[derive(Copy, Clone)]
-pub struct RafsBio<'a> {
+pub struct RafsBio {
     /// Reference to the chunk.
-    pub chunkinfo: &'a dyn RafsChunkInfo,
+    pub chunkinfo: Arc<dyn RafsChunkInfo>,
     /// blob id of chunk
-    pub blob_id: &'a dyn RafsDigest,
+    pub blob_id: Box<dyn RafsDigest>,
     /// offset within the block
     pub offset: u32,
     /// size of data to transfer
@@ -232,10 +236,10 @@ pub struct RafsBio<'a> {
     pub blksize: u32,
 }
 
-impl<'a> RafsBio<'a> {
+impl RafsBio {
     pub fn new(
-        chunkinfo: &'a dyn RafsChunkInfo,
-        blob_id: &'a dyn RafsDigest,
+        chunkinfo: Arc<dyn RafsChunkInfo>,
+        blob_id: Box<dyn RafsDigest>,
         offset: u32,
         size: usize,
         blksize: u32,
