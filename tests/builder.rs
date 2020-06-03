@@ -1,3 +1,7 @@
+// Copyright 2020 Ant Financial. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::fs::{self, File};

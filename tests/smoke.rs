@@ -1,3 +1,7 @@
+// Copyright 2020 Ant Financial. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use mktemp::Temp;
 use std::io::Result;
 

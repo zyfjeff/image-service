@@ -1,3 +1,7 @@
+// Copyright 2020 Ant Financial. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use std::fs::{self, File};
 use std::io::{Error, ErrorKind, Result, Write};
 use std::path::PathBuf;
