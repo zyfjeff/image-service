@@ -13,8 +13,10 @@ use std::sync::RwLock;
 use crate::storage::backend::request::ReqErr;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct LocalFs {
+    // the specified blob file
+    blob_file: String,
     // directory to blob files
     dir: String,
     // blobid-File map
@@ -22,30 +24,47 @@ pub struct LocalFs {
 }
 
 pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Result<LocalFs> {
-    let dir = config
-        .get("dir")
-        .ok_or_else(|| ReqErr::inv_input("dir required"))?;
+    match (config.get("blob_file"), config.get("dir")) {
+        (Some(blob_file), _) => Ok(LocalFs {
+            blob_file: String::from(blob_file),
+            file_table: RwLock::new(HashMap::new()),
+            ..Default::default()
+        }),
 
-    fs::create_dir_all(dir)?;
+        (_, Some(dir)) => Ok(LocalFs {
+            dir: String::from(dir),
+            file_table: RwLock::new(HashMap::new()),
+            ..Default::default()
+        }),
 
-    Ok(LocalFs {
-        dir: (*dir).to_owned(),
-        file_table: RwLock::new(HashMap::new()),
-    })
+        _ => Err(ReqErr::inv_input("blob file or dir is required")),
+    }
 }
 
 impl LocalFs {
     fn get_blob_fd(&self, blob_id: &str) -> Result<RawFd> {
-        if let Some(file) = self.file_table.read().unwrap().get(blob_id) {
+        let (id, blob_file_path) = if self.use_blob_file() {
+            (
+                self.blob_file.as_str(),
+                Path::new(&self.blob_file).to_path_buf(),
+            )
+        } else {
+            (blob_id, Path::new(&self.dir).join(blob_id))
+        };
+
+        if let Some(file) = self.file_table.read().unwrap().get(id) {
             return Ok(file.as_raw_fd());
         }
 
         let mut file_table = self.file_table.write().unwrap();
-        let blob_file_path = Path::new(&self.dir).join(blob_id);
         let file = OpenOptions::new().read(true).open(&blob_file_path)?;
         let fd = file.as_raw_fd();
-        file_table.insert(blob_id.to_string(), file);
+        file_table.insert(id.to_string(), file);
         Ok(fd)
+    }
+
+    fn use_blob_file(&self) -> bool {
+        self.blob_file != String::default()
     }
 }
 
@@ -78,7 +97,12 @@ impl BlobBackendUploader for LocalFs {
         _size: usize,
         _callback: fn((usize, usize)),
     ) -> Result<usize> {
-        let blob = Path::new(&self.dir).join(blobid);
+        let blob = if self.use_blob_file() {
+            Path::new(&self.blob_file).to_path_buf()
+        } else {
+            Path::new(&self.dir).join(blobid)
+        };
+
         if let Some(parent) = blob.parent() {
             fs::create_dir_all(parent)?;
         }
