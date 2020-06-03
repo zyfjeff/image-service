@@ -57,7 +57,7 @@ pub struct Rafs {
 impl Rafs {
     pub fn new(conf: RafsConfig, _id: &str) -> Result<Self> {
         let rafs = Rafs {
-            device: device::RafsDevice::new(conf.device.clone()),
+            device: device::RafsDevice::new(conf.device.clone())?,
             sb: RafsSuper::new(conf.mode.as_str())?,
             initialized: false,
         };

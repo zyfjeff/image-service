@@ -6,7 +6,7 @@ use nix::sys::uio;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io;
-use std::io::Error;
+use std::io::{Error, ErrorKind};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -222,10 +222,19 @@ pub fn new<S: std::hash::BuildHasher>(
     let work_dir = config
         .get("work_dir")
         .map_or(Ok("."), |p| -> io::Result<&str> {
-            if fs::metadata(p)?.is_dir() {
+            let path = fs::metadata(p).map_err(|e| {
+                Error::new(
+                    ErrorKind::Other,
+                    format!("fail to stat blobcache work_dir {}: {}", p, e),
+                )
+            })?;
+            if path.is_dir() {
                 Ok(p.as_str())
             } else {
-                Err(Error::from_raw_os_error(libc::ENOTDIR))
+                Err(Error::new(
+                    ErrorKind::NotFound,
+                    format!("blobcache work_dir {} is not a directory", p),
+                ))
             }
         })?;
     Ok(BlobCache {

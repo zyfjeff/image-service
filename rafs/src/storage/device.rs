@@ -24,10 +24,10 @@ pub struct RafsDevice {
 }
 
 impl RafsDevice {
-    pub fn new(config: factory::Config) -> Self {
-        RafsDevice {
-            rw_layer: factory::new_rw_layer(&config).unwrap(),
-        }
+    pub fn new(config: factory::Config) -> io::Result<RafsDevice> {
+        Ok(RafsDevice {
+            rw_layer: factory::new_rw_layer(&config)?,
+        })
     }
 
     pub fn init(&mut self, sb_meta: &RafsSuperMeta) -> io::Result<()> {
