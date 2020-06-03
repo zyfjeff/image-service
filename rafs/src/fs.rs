@@ -8,12 +8,15 @@
 
 use std::ffi::CStr;
 use std::io::{Error, ErrorKind, Result};
+use std::sync::Arc;
 use std::time::Duration;
 
 use fuse_rs::api::filesystem::*;
 use fuse_rs::api::BackendFileSystem;
 use serde::Deserialize;
 
+use crate::io_stats;
+use crate::io_stats::StatsFop;
 use crate::metadata::RafsSuper;
 use crate::storage::device;
 use crate::storage::*;
@@ -52,14 +55,16 @@ pub struct Rafs {
     device: device::RafsDevice,
     sb: RafsSuper,
     initialized: bool,
+    ios: Arc<io_stats::GlobalIOStats>,
 }
 
 impl Rafs {
-    pub fn new(conf: RafsConfig, _id: &str) -> Result<Self> {
+    pub fn new(conf: RafsConfig, id: &str) -> Result<Self> {
         let rafs = Rafs {
             device: device::RafsDevice::new(conf.device.clone())?,
             sb: RafsSuper::new(conf.mode.as_str())?,
             initialized: false,
+            ios: io_stats::ios_new(id),
         };
 
         Ok(rafs)
@@ -202,8 +207,9 @@ impl FileSystem for Rafs {
         _handle: Option<u64>,
     ) -> Result<(libc::stat64, Duration)> {
         let inode = self.sb.get_inode(ino)?;
-
-        Ok((inode.get_attr().into(), self.sb.meta.attr_timeout))
+        let r = Ok((inode.get_attr().into(), self.sb.meta.attr_timeout));
+        self.ios.ios_file_stats_update(ino, StatsFop::Stat, 0, &r);
+        r
     }
 
     fn readlink(&self, _ctx: Context, ino: u64) -> Result<Vec<u8>> {
@@ -229,7 +235,12 @@ impl FileSystem for Rafs {
             return Ok(0);
         }
         let desc = inode.alloc_bio_desc(offset, size as usize)?;
-        self.device.read_to(w, desc)
+        let start = self.ios.ios_latency_start();
+        let r = self.device.read_to(w, desc);
+        self.ios
+            .ios_file_stats_update(ino, StatsFop::Read, size as usize, &r);
+        self.ios.ios_latency_end(&start, io_stats::StatsFop::Read);
+        r
     }
 
     fn release(

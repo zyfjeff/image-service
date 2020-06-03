@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
 
+pub type Inode = u64;
+
 #[derive(PartialEq, Copy)]
 pub enum StatsFop {
     Stat,
@@ -83,7 +85,7 @@ pub struct GlobalIOStats {
 
     // Rwlock closes the race that more than one threads are creating counters concurrently.
     #[serde(skip_serializing, skip_deserializing)]
-    file_counters: RwLock<Vec<Arc<Option<InodeIOStats>>>>,
+    file_counters: RwLock<HashMap<Inode, Arc<InodeIOStats>>>,
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -178,12 +180,22 @@ impl GlobalIOStats {
         self.files_account_enabled.load(Ordering::Relaxed)
     }
 
-    pub fn ios_file_stats_new(&self, c: &mut Arc<Option<InodeIOStats>>) {
+    pub fn ios_file_stats_update<T>(
+        &self,
+        ino: Inode,
+        fop: StatsFop,
+        bsize: usize,
+        r: &Result<T, Error>,
+    ) {
+        self.ios_global_update(fop, bsize, &r);
+
         if self.ios_files_enabled() {
-            *Arc::get_mut(c).unwrap() = Some(InodeIOStats::default());
-            self.file_counters.write().unwrap().push(c.clone());
-        } else {
-            *Arc::get_mut(c).unwrap() = None;
+            let mut counters = self.file_counters.write().unwrap();
+            if counters.get(&ino).is_none() {
+                counters.insert(ino, Arc::new(InodeIOStats::default()));
+                counters.get_mut(&ino).unwrap().stats_fop_inc(fop.clone());
+                counters.get_mut(&ino).unwrap().stats_cumulative(fop, bsize);
+            }
         }
     }
 
@@ -259,21 +271,13 @@ impl GlobalIOStats {
 
     pub fn export_files_stats(&self) -> String {
         let mut rs = String::new();
-        for c in &(*self.file_counters.read().unwrap()) {
-            if c.is_some() {
-                // Files that are never opened have no metrics to be exported.
-                if c.as_ref()
-                    .as_ref()
-                    .unwrap()
-                    .total_fops
-                    .load(Ordering::Relaxed)
-                    == 0
-                {
-                    continue;
-                }
-                let m = serde_json::to_string(c).unwrap_or_else(|_| "Invalid item".to_string());
-                rs.push_str(&m);
+        for c in (*self.file_counters.read().unwrap()).values() {
+            // Files that are never opened have no metrics to be exported.
+            if c.total_fops.load(Ordering::Relaxed) == 0 {
+                continue;
             }
+            let m = serde_json::to_string(c).unwrap_or_else(|_| "Invalid item".to_string());
+            rs.push_str(&m);
         }
         if rs.is_empty() {
             rs.push_str("No files to be exported!");
