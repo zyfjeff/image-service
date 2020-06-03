@@ -715,7 +715,7 @@ impl FileSystem for Rafs {
             0 => {
                 let mut count = 0;
                 for (key, _) in inode.i_xattr.iter() {
-                    count += key.len();
+                    count += key.len() + 1;
                 }
                 Ok(ListxattrReply::Count(count as u32))
             }
