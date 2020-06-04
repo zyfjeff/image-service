@@ -59,6 +59,7 @@ localfs backend:
   "device": {
     "backend": {
       "type": "localfs",
+      "readahead": "true",
       "config": {
         "dir": "/path/to/blobs/"
       }

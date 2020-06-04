@@ -19,20 +19,29 @@ pub struct LocalFs {
     blob_file: String,
     // directory to blob files
     dir: String,
+    // readahead blob file
+    readahead: bool,
     // blobid-File map
     file_table: RwLock<HashMap<String, File>>,
 }
 
 pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Result<LocalFs> {
+    let readahead = config
+        .get("readahead")
+        .map(|r| r == "true")
+        .unwrap_or(false);
+
     match (config.get("blob_file"), config.get("dir")) {
         (Some(blob_file), _) => Ok(LocalFs {
             blob_file: String::from(blob_file),
+            readahead,
             file_table: RwLock::new(HashMap::new()),
             ..Default::default()
         }),
 
         (_, Some(dir)) => Ok(LocalFs {
             dir: String::from(dir),
+            readahead,
             file_table: RwLock::new(HashMap::new()),
             ..Default::default()
         }),
@@ -59,6 +68,9 @@ impl LocalFs {
         let mut file_table = self.file_table.write().unwrap();
         let file = OpenOptions::new().read(true).open(&blob_file_path)?;
         let fd = file.as_raw_fd();
+        if self.readahead {
+            unsafe { libc::readahead(fd, 0, file.metadata().unwrap().len() as usize) };
+        }
         file_table.insert(id.to_string(), file);
         Ok(fd)
     }
