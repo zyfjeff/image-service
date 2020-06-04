@@ -19,7 +19,11 @@ use rafs::RafsIoRead;
 const NYDUS_IMAGE: &str = "./target-fusedev/debug/nydus-image";
 
 pub fn exec(cmd: &str) -> Result<String> {
-    let child = Command::new("sh").arg("-c").arg(cmd).output()?;
+    let child = Command::new("sh")
+        .arg("-c")
+        .arg(cmd)
+        .env("RUST_BACKTRACE", "1")
+        .output()?;
     let status = child.status;
 
     let status = status
