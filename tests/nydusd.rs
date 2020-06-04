@@ -12,6 +12,8 @@ use std::time;
 const NYDUSD: &str = "./target-fusedev/debug/nydusd";
 
 pub fn exec(cmd: &str) -> Result<()> {
+    println!("exec `{}`", cmd);
+
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(cmd)
@@ -50,9 +52,6 @@ pub fn new(work_dir: &PathBuf) -> Result<Nydusd> {
                     "config": {{
                         "dir": {:?}
                     }}
-                }},
-                "rafs": {{
-                    "mode": "direct"
                 }}
             }},
             "mode": "direct"
