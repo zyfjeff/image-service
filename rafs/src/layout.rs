@@ -505,7 +505,7 @@ impl RafsLayoutLoadStore for RafsInodeXattrInfos {
         count += w.write(&buf)?;
         w.write_all(&vec![0; ondisk_size - count])?;
 
-        info!("written size {} xattr {:?}", ondisk_size, self);
+        trace!("written size {} xattr {:?}", ondisk_size, self);
         Ok(ondisk_size)
     }
 }
