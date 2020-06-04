@@ -71,8 +71,8 @@ pub fn new(work_dir: &PathBuf) -> Result<Nydusd> {
 
 impl Drop for Nydusd {
     fn drop(&mut self) {
-        exec(format!("sudo pkill nydusd").as_str()).unwrap();
-        exec(format!("sudo umount -l {:?}", self.mount_path).as_str()).unwrap();
+        exec(format!("pkill nydusd").as_str()).unwrap();
+        exec(format!("umount -l {:?}", self.mount_path).as_str()).unwrap();
     }
 }
 
@@ -84,7 +84,7 @@ impl Nydusd {
         spawn(move || {
             exec(
                 format!(
-                    "sudo {} --config {:?} --apisock {:?} --mountpoint {:?} --metadata {:?} --log-level error",
+                    "{} --config {:?} --apisock {:?} --mountpoint {:?} --metadata {:?} --log-level error",
                     NYDUSD,
                     work_dir.join("config.json"),
                     work_dir.join("api.sock"),
