@@ -227,7 +227,7 @@ pub struct RafsBio {
     /// Reference to the chunk.
     pub chunkinfo: Arc<dyn RafsChunkInfo>,
     /// blob id of chunk
-    pub blob_id: Box<dyn RafsDigest>,
+    pub blob_id: Arc<dyn RafsDigest>,
     /// offset within the block
     pub offset: u32,
     /// size of data to transfer
@@ -239,7 +239,7 @@ pub struct RafsBio {
 impl RafsBio {
     pub fn new(
         chunkinfo: Arc<dyn RafsChunkInfo>,
-        blob_id: Box<dyn RafsDigest>,
+        blob_id: Arc<dyn RafsDigest>,
         offset: u32,
         size: usize,
         blksize: u32,

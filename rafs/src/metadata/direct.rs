@@ -16,11 +16,11 @@ use crate::metadata::*;
 macro_rules! impl_getter_setter {
     ($G: ident, $S: ident, $F: ident, $U: ty) => {
         fn $G(&self) -> $U {
-            self.data.$F
+            self.inode.$F
         }
 
         fn $S(&mut self, $F: $U) {
-            self.data.$F = $F;
+            self.inode.$F = $F;
         }
     };
 }
@@ -29,7 +29,7 @@ macro_rules! impl_getter_setter {
 macro_rules! impl_getter {
     ($G: ident, $F: ident, $U: ty) => {
         fn $G(&self) -> $U {
-            self.data.$F
+            self.inode.$F
         }
     };
 }
@@ -132,16 +132,16 @@ impl RafsSuperInodes for DirectMapping {
     }
 
     /// Find inode offset by ino from inode table and mmap to OndiskInode.
-    fn get_inode(&self, ino: Inode, meta: RafsSuperMeta) -> Result<Box<dyn RafsInode>> {
+    fn get_inode(&self, ino: Inode, meta: RafsSuperMeta) -> Result<Arc<dyn RafsInode>> {
         let offset = self.inode_table.get(ino)?;
 
         let inode = self.cast_to_ref::<OndiskInode>(self.base, offset as usize)?;
 
-        Ok(Box::new(OndiskInodeMapping {
+        Ok(Arc::new(OndiskInodeMapping {
             mapping: self.clone(),
-            data: inode,
+            inode,
             meta,
-        }) as Box<dyn RafsInode>)
+        }) as Arc<dyn RafsInode>)
     }
 
     fn get_max_ino(&self) -> Inode {
@@ -151,7 +151,7 @@ impl RafsSuperInodes for DirectMapping {
 
 pub struct OndiskInodeMapping<'a> {
     pub mapping: DirectMapping,
-    pub data: &'a OndiskInode,
+    pub inode: &'a OndiskInode,
     pub meta: RafsSuperMeta,
 }
 
@@ -163,12 +163,12 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
     }
 
     fn name(&self) -> Result<&str> {
-        let start = self.data as *const OndiskInode as *const u8;
+        let start = self.inode as *const OndiskInode as *const u8;
 
         let name = unsafe {
             slice::from_raw_parts(
                 start.wrapping_add(size_of::<OndiskInode>()),
-                self.data.i_name_size as usize,
+                self.inode.i_name_size as usize,
             )
         };
 
@@ -176,29 +176,29 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
     }
 
     fn get_symlink(&self) -> Result<&str> {
-        let start = self.data as *const OndiskInode as *const u8;
-        let start = start.wrapping_add(size_of::<OndiskInode>() + self.data.i_name_size as usize);
+        let start = self.inode as *const OndiskInode as *const u8;
+        let start = start.wrapping_add(size_of::<OndiskInode>() + self.inode.i_name_size as usize);
 
-        let symlink = unsafe { slice::from_raw_parts(start, self.data.i_symlink_size as usize) };
+        let symlink = unsafe { slice::from_raw_parts(start, self.inode.i_symlink_size as usize) };
 
         parse_string(symlink)
     }
 
     #[allow(clippy::cast_ptr_alignment)]
-    fn get_chunk_info(&self, idx: u32) -> Result<Arc<OndiskChunkInfo>> {
+    fn get_chunk_info(&self, idx: u32) -> Result<Arc<dyn RafsChunkInfo>> {
         if !self.is_reg() {
             return Err(enoent());
         }
 
-        if self.data.i_child_count == 0 || idx > self.data.i_child_count - 1 {
+        if self.inode.i_child_count == 0 || idx > self.inode.i_child_count - 1 {
             return Err(enoent());
         }
 
-        let start = self.data as *const OndiskInode as *const u8;
+        let start = self.inode as *const OndiskInode as *const u8;
 
-        let mut offset = self.data.size();
-        if self.data.has_xattr() {
-            let xattrs = start.wrapping_add(self.data.size()) as *const OndiskXAttrs;
+        let mut offset = self.inode.size();
+        if self.inode.has_xattr() {
+            let xattrs = start.wrapping_add(self.inode.size()) as *const OndiskXAttrs;
             offset += size_of::<OndiskXAttrs>() + unsafe { (*xattrs).aligned_size() };
         }
         offset += size_of::<OndiskChunkInfo>() * idx as usize;
@@ -208,8 +208,8 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
         Ok(Arc::new(*chunk))
     }
 
-    fn get_child_by_name(&self, name: &str) -> Result<Box<dyn RafsInode>> {
-        let child_count = self.data.i_child_count;
+    fn get_child_by_name(&self, name: &str) -> Result<Arc<dyn RafsInode>> {
+        let child_count = self.inode.i_child_count;
 
         if !self.is_dir() {
             return Err(einval());
@@ -225,9 +225,9 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
         Err(enoent())
     }
 
-    fn get_child_by_index(&self, idx: Inode) -> Result<Box<dyn RafsInode>> {
-        let child_count = self.data.i_child_count as u64;
-        let child_index = self.data.i_child_index as u64;
+    fn get_child_by_index(&self, idx: Inode) -> Result<Arc<dyn RafsInode>> {
+        let child_count = self.inode.i_child_count as u64;
+        let child_index = self.inode.i_child_index as u64;
 
         if !self.is_dir() {
             return Err(einval());
@@ -244,18 +244,18 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
     }
 
     fn get_child_count(&self) -> Result<usize> {
-        Ok(self.data.i_child_count as usize)
+        Ok(self.inode.i_child_count as usize)
     }
 
-    fn get_chunk_blob_id(&self, idx: u32) -> Result<Box<dyn RafsDigest>> {
+    fn get_chunk_blob_id(&self, idx: u32) -> Result<Arc<dyn RafsDigest>> {
         let digest = self.mapping.blob_table.get(idx)?;
-        Ok(digest as Box<dyn RafsDigest>)
+        Ok(digest as Arc<dyn RafsDigest>)
     }
 
     fn get_entry(&self) -> Entry {
         Entry {
             attr: self.get_attr().into(),
-            inode: self.data.i_ino,
+            inode: self.inode.i_ino,
             generation: 0,
             attr_timeout: self.meta.attr_timeout,
             entry_timeout: self.meta.entry_timeout,
@@ -264,17 +264,17 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
 
     fn get_attr(&self) -> Attr {
         Attr {
-            ino: self.data.i_ino,
-            size: self.data.i_size,
-            blocks: self.data.i_blocks,
-            atime: self.data.i_atime,
-            ctime: self.data.i_ctime,
-            mtime: self.data.i_mtime,
-            mode: self.data.i_mode,
-            nlink: self.data.i_nlink as u32,
-            uid: self.data.i_uid,
-            gid: self.data.i_gid,
-            rdev: self.data.i_rdev as u32,
+            ino: self.inode.i_ino,
+            size: self.inode.i_size,
+            blocks: self.inode.i_blocks,
+            atime: self.inode.i_atime,
+            ctime: self.inode.i_ctime,
+            mtime: self.inode.i_mtime,
+            mode: self.inode.i_mode,
+            nlink: self.inode.i_nlink as u32,
+            uid: self.inode.i_uid,
+            gid: self.inode.i_gid,
+            rdev: self.inode.i_rdev as u32,
             blksize: RAFS_INODE_BLOCKSIZE,
             ..Default::default()
         }
@@ -282,12 +282,12 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
 
     #[allow(clippy::cast_ptr_alignment)]
     fn get_xattrs(&self) -> Result<HashMap<String, Vec<u8>>> {
-        if !self.data.has_xattr() {
+        if !self.inode.has_xattr() {
             return Ok(HashMap::new());
         }
 
-        let start = self.data as *const OndiskInode as *const u8;
-        let start = start.wrapping_add(self.data.size());
+        let start = self.inode as *const OndiskInode as *const u8;
+        let start = start.wrapping_add(self.inode.size());
         let xattrs = start as *const OndiskXAttrs;
         let xattrs_size = unsafe { (*xattrs).size() };
         let xattrs_aligned_size = unsafe { (*xattrs).aligned_size() };
@@ -307,21 +307,21 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
         let mut desc = RafsBioDesc::new();
         let end = offset + size as u64;
 
-        for idx in 0..self.data.i_child_count {
+        for idx in 0..self.inode.i_child_count {
             let blk = self.get_chunk_info(idx)?;
-            if (blk.file_offset + blksize as u64) <= offset {
+            if (blk.file_offset() + blksize as u64) <= offset {
                 continue;
-            } else if blk.file_offset >= end {
+            } else if blk.file_offset() >= end {
                 break;
             }
 
-            let blob_id = self.get_chunk_blob_id(blk.blob_index)?;
-            let file_start = cmp::max(blk.file_offset, offset);
-            let file_end = cmp::min(blk.file_offset + blksize as u64, end);
+            let blob_id = self.get_chunk_blob_id(blk.blob_index())?;
+            let file_start = cmp::max(blk.file_offset(), offset);
+            let file_end = cmp::min(blk.file_offset() + blksize as u64, end);
             let bio = RafsBio::new(
                 blk.clone(),
                 blob_id,
-                (file_start - blk.file_offset) as u32,
+                (file_start - blk.file_offset()) as u32,
                 (file_end - file_start) as usize,
                 blksize,
             );
@@ -334,27 +334,23 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
     }
 
     fn is_dir(&self) -> bool {
-        self.data.is_dir()
+        self.inode.is_dir()
     }
 
     fn is_symlink(&self) -> bool {
-        self.data.is_symlink()
+        self.inode.is_symlink()
     }
 
     fn is_reg(&self) -> bool {
-        self.data.is_reg()
+        self.inode.is_reg()
     }
 
     fn is_hardlink(&self) -> bool {
-        self.data.is_hardlink()
+        self.inode.is_hardlink()
     }
 
     fn has_xattr(&self) -> bool {
-        self.data.has_xattr()
-    }
-
-    fn digest(&self) -> &OndiskDigest {
-        &self.data.i_digest
+        self.inode.has_xattr()
     }
 
     impl_getter!(ino, i_ino, u64);

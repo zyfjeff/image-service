@@ -181,10 +181,13 @@ impl RafsSuper {
                         let mut inode_table =
                             OndiskInodeTable::new(sb.inode_table_entries() as usize);
                         inode_table.load(r)?;
+
                         let mut blob_table = OndiskBlobTable::new(sb.blob_table_entries() as usize);
                         blob_table.load(r)?;
+
                         let mut inodes = Box::new(DirectMapping::new(inode_table, blob_table));
                         inodes.load(r)?;
+
                         self.inodes = inodes;
                     }
                     RafsMode::Cached => {
@@ -226,12 +229,10 @@ impl RafsSuper {
 
         trace!("written superblock: {}", &sb);
 
-        // TODO: Write out other metadata
-
         Ok(std::mem::size_of::<OndiskSuperBlock>())
     }
 
-    pub fn get_inode(&self, ino: Inode) -> Result<Box<dyn RafsInode>> {
+    pub fn get_inode(&self, ino: Inode) -> Result<Arc<dyn RafsInode>> {
         self.inodes.get_inode(ino, self.meta)
     }
 
@@ -246,7 +247,7 @@ pub trait RafsSuperInodes {
 
     fn destroy(&mut self);
 
-    fn get_inode(&self, ino: Inode, s_meta: RafsSuperMeta) -> Result<Box<dyn RafsInode>>;
+    fn get_inode(&self, ino: Inode, s_meta: RafsSuperMeta) -> Result<Arc<dyn RafsInode>>;
 
     fn get_max_ino(&self) -> Inode;
 }
@@ -260,11 +261,11 @@ pub trait RafsInode {
 
     fn name(&self) -> Result<&str>;
     fn get_symlink(&self) -> Result<&str>;
-    fn get_child_by_name(&self, name: &str) -> Result<Box<dyn RafsInode>>;
-    fn get_child_by_index(&self, idx: Inode) -> Result<Box<dyn RafsInode>>;
+    fn get_child_by_name(&self, name: &str) -> Result<Arc<dyn RafsInode>>;
+    fn get_child_by_index(&self, idx: Inode) -> Result<Arc<dyn RafsInode>>;
     fn get_child_count(&self) -> Result<usize>;
-    fn get_chunk_info(&self, idx: u32) -> Result<Arc<OndiskChunkInfo>>;
-    fn get_chunk_blob_id(&self, idx: u32) -> Result<Box<dyn RafsDigest>>;
+    fn get_chunk_info(&self, idx: u32) -> Result<Arc<dyn RafsChunkInfo>>;
+    fn get_chunk_blob_id(&self, idx: u32) -> Result<Arc<dyn RafsDigest>>;
     fn get_entry(&self) -> Entry;
     fn get_attr(&self) -> Attr;
     fn get_xattrs(&self) -> Result<HashMap<String, Vec<u8>>>;
@@ -276,7 +277,6 @@ pub trait RafsInode {
     fn is_hardlink(&self) -> bool;
     fn has_xattr(&self) -> bool;
 
-    fn digest(&self) -> &OndiskDigest;
     fn ino(&self) -> u64;
     fn parent(&self) -> u64;
     fn size(&self) -> u64;
@@ -287,6 +287,7 @@ pub trait RafsChunkInfo: Sync + Send {
     fn validate(&self, sb: &RafsSuperMeta) -> Result<()>;
 
     fn block_id(&self) -> &dyn RafsDigest;
+    fn blob_index(&self) -> u32;
     fn blob_offset(&self) -> u64;
     fn file_offset(&self) -> u64;
     fn compress_size(&self) -> u32;

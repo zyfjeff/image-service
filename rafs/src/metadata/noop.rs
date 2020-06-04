@@ -5,6 +5,7 @@
 //! A noop meta data driver for place-holding.
 
 use std::io::Result;
+use std::sync::Arc;
 
 use super::*;
 use crate::metadata::RafsInode;
@@ -33,7 +34,7 @@ impl RafsSuperInodes for NoopInodes {
         unimplemented!()
     }
 
-    fn get_inode(&self, _ino: Inode, _s_meta: RafsSuperMeta) -> Result<Box<dyn RafsInode>> {
+    fn get_inode(&self, _ino: Inode, _s_meta: RafsSuperMeta) -> Result<Arc<dyn RafsInode>> {
         unimplemented!()
     }
 

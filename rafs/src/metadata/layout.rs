@@ -358,11 +358,11 @@ impl OndiskBlobTable {
         Ok(())
     }
 
-    pub fn get(&self, index: u32) -> Result<Box<OndiskDigest>> {
+    pub fn get(&self, index: u32) -> Result<Arc<OndiskDigest>> {
         if index > (self.data.len() - 1) as u32 {
             return Err(enoent());
         }
-        Ok(Box::new(self.data[index as usize]))
+        Ok(Arc::new(self.data[index as usize]))
     }
 
     pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
@@ -530,6 +530,7 @@ impl RafsChunkInfo for OndiskChunkInfo {
         &self.block_id
     }
 
+    impl_getter!(blob_index, blob_index, u32);
     impl_getter!(blob_offset, blob_offset, u64);
     impl_getter!(file_offset, file_offset, u64);
     impl_getter!(compress_size, compress_size, u32);
