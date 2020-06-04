@@ -8,6 +8,8 @@ use std::mem::size_of;
 use std::os::unix::io::FromRawFd;
 use std::slice;
 
+use madvise::{madvise, AccessPattern};
+
 use crate::metadata::layout::*;
 use crate::metadata::*;
 
@@ -111,6 +113,7 @@ impl RafsSuperInodes for DirectMapping {
                 0,
             )
         } as *const u8;
+        unsafe { madvise(base, size, AccessPattern::WillNeed) }?;
 
         // Safe because the mmap area should covered the range [start, end)
         let end = unsafe { base.add(size) };

@@ -653,6 +653,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "madvise"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e1e75c3c34c2b34cec9f127418cb35240c7ebee5de36a51437e6b382c161b86"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "matches"
 version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1060,6 +1069,7 @@ dependencies = [
  "lazy_static 1.4.0",
  "libc",
  "log 0.4.8",
+ "madvise",
  "nix",
  "reqwest",
  "rust-crypto",
