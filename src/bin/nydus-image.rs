@@ -9,11 +9,13 @@ extern crate stderrlog;
 #[macro_use]
 extern crate log;
 
+const BLOB_ID_MAXIMUM_LENGTH: usize = 1024;
+
 use clap::{App, Arg, SubCommand};
 use mktemp::Temp;
 
 use std::fs::{File, OpenOptions};
-use std::io::{self, Result, Write};
+use std::io::{self, Error, ErrorKind, Result, Write};
 use std::os::linux::fs::MetadataExt;
 
 use nydus_builder::builder;
@@ -142,6 +144,12 @@ fn main() -> Result<()> {
         let mut blob_id = String::new();
         if let Some(p_blob_id) = matches.value_of("blob_id") {
             blob_id = String::from(p_blob_id);
+            if blob_id.len() > BLOB_ID_MAXIMUM_LENGTH {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    format!("blob id is limited to length {}", BLOB_ID_MAXIMUM_LENGTH),
+                ));
+            }
         }
 
         let temp_blob_file = Temp::new_file().unwrap();
