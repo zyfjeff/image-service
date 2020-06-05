@@ -340,7 +340,7 @@ where
 }
 
 trait NydusDaemon {
-    fn start(&mut self) -> Result<()>;
+    fn start(&mut self, cnt: u32) -> Result<()>;
     fn wait(&mut self) -> Result<()>;
     fn stop(&mut self) -> Result<()>;
 }
@@ -474,7 +474,7 @@ impl VhostUserBackend for VhostUserFsBackend {
 
 #[cfg(feature = "virtiofsd")]
 impl<S: VhostUserBackend> NydusDaemon for VhostUserDaemon<S> {
-    fn start(&mut self) -> Result<()> {
+    fn start(&mut self, _: u32) -> Result<()> {
         self.start()
             .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))
     }
@@ -549,26 +549,37 @@ impl FuseServer {
 struct FusedevDaemon {
     server: Arc<Server<Arc<Vfs>>>,
     session: FuseSession,
-    main_thread: Option<thread::JoinHandle<Result<()>>>,
+    threads: Vec<Option<thread::JoinHandle<Result<()>>>>,
 }
 
 #[cfg(feature = "fusedev")]
-impl NydusDaemon for FusedevDaemon {
-    // TODO: multi-threading support
-    fn start(&mut self) -> Result<()> {
+impl FusedevDaemon {
+    fn kick_one_server(&mut self) -> Result<()> {
         let mut s = FuseServer::new(self.server.clone(), &self.session)?;
 
         let thread = thread::Builder::new()
             .name("fuse_server".to_string())
             .spawn(move || s.svc_loop())
             .map_err(Error::ThreadSpawn)?;
-        self.main_thread = Some(thread);
+        self.threads.push(Some(thread));
+        Ok(())
+    }
+}
+
+#[cfg(feature = "fusedev")]
+impl NydusDaemon for FusedevDaemon {
+    fn start(&mut self, cnt: u32) -> Result<()> {
+        for _ in 0..cnt {
+            self.kick_one_server()?;
+        }
         Ok(())
     }
 
     fn wait(&mut self) -> Result<()> {
-        if let Some(handle) = self.main_thread.take() {
-            return handle.join().map_err(|_| Error::WaitDaemon)?;
+        for t in &mut self.threads {
+            if let Some(handle) = t.take() {
+                handle.join().map_err(|_| Error::WaitDaemon)??;
+            }
         }
         Ok(())
     }
@@ -583,7 +594,7 @@ fn create_nydus_daemon(mountpoint: &str, fs: Arc<Vfs>) -> Result<Box<dyn NydusDa
     Ok(Box::new(FusedevDaemon {
         session: FuseSession::new(Path::new(mountpoint), "nydusfs", "")?,
         server: Arc::new(Server::new(fs)),
-        main_thread: None,
+        threads: Vec::new(),
     }))
 }
 
@@ -644,6 +655,15 @@ fn main() -> Result<()> {
                 .required(false)
                 .global(true),
         )
+        .arg(
+            Arg::with_name("threads")
+                .long("thread-num")
+                .default_value("1")
+                .help("Specify the number of fuse service threads")
+                .takes_value(true)
+                .required(false)
+                .global(true),
+        )
         .get_matches();
 
     let v = cmd_arguments
@@ -673,6 +693,11 @@ fn main() -> Result<()> {
     let metadata = cmd_arguments.value_of("metadata").unwrap_or_default();
     // apisock means admin api socket support
     let apisock = cmd_arguments.value_of("apisock").unwrap_or_default();
+    // threads means number of fuse service threads
+    let threads: u32 = cmd_arguments
+        .value_of("threads")
+        .map(|n| n.parse().unwrap_or(1))
+        .unwrap_or(1);
 
     // Some basic validation
     if !shared_dir.is_empty() && !metadata.is_empty() {
@@ -789,7 +814,7 @@ fn main() -> Result<()> {
         }
     }?;
     info!("starting fuse daemon");
-    if let Err(e) = daemon.start() {
+    if let Err(e) = daemon.start(threads) {
         error!("Failed to start daemon: {:?}", e);
         process::exit(1);
     }
