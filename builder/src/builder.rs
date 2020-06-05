@@ -176,9 +176,12 @@ impl Builder {
         let inode_table_size = inode_table.size();
 
         // blob table
-        let blob_table_entries: usize = 1;
-        let blob_table = OndiskBlobTable::new(blob_table_entries);
-        let blob_table_size = blob_table.size();
+        // sha256 string size as default
+        let mut blob_table_size = 64;
+        if self.blob_id != "" {
+            blob_table_size = OndiskBlobTable::aligned_size(self.blob_id.len())
+        }
+        let mut blob_table = OndiskBlobTable::new();
         let blob_table_offset = (super_block_size + inode_table_size) as u64;
 
         // super block
@@ -188,7 +191,7 @@ impl Builder {
         super_block.set_inode_table_offset(super_block_size as u64);
         super_block.set_inode_table_entries(inode_table_entries);
         super_block.set_blob_table_offset(blob_table_offset);
-        super_block.set_blob_table_entries(blob_table_entries as u32);
+        super_block.set_blob_table_size(blob_table_size as u32);
 
         // dump blob
         let mut blob_offset = 0u64;
@@ -222,13 +225,14 @@ impl Builder {
             // add chunks size
             inode_offset += (node.chunks.len() * size_of::<OndiskChunkInfo>()) as u32;
         }
-        let blob_id = OndiskDigest::from_digest(&mut blob_hash);
-        let mut blob_table = OndiskBlobTable::new(1);
-        blob_table.set(0, blob_id)?;
 
+        // set blob id
         if self.blob_id == "" {
-            self.blob_id = blob_id.to_string();
+            let blob_hash = OndiskDigest::from_digest(&mut blob_hash);
+            self.blob_id = blob_hash.to_string();
         }
+        blob_table.add(self.blob_id.clone());
+        super_block.set_blob_table_size(blob_table.size() as u32);
 
         // dump bootstrap
         super_block.store(&mut self.f_bootstrap)?;

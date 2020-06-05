@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// use std::ffi::{c_void, CString};
 use rafs::RafsIoWrite;
 use std::fmt;
 use std::fs::{self, File};

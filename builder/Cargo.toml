@@ -1,5 +1,5 @@
 [package]
-name = "image_builder"
+name = "nydus-builder"
 version = "0.1.0"
 authors = ["The Ant Financial Nydus Developers"]
 edition = "2018"

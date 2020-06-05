@@ -511,18 +511,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "image_builder"
-version = "0.1.0"
-dependencies = [
- "libc",
- "log 0.4.8",
- "rafs",
- "rust-crypto",
- "utils",
- "xattr",
-]
-
-[[package]]
 name = "indexmap"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -916,6 +904,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nydus-builder"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "log 0.4.8",
+ "rafs",
+ "rust-crypto",
+ "utils",
+ "xattr",
+]
+
+[[package]]
 name = "nydus-rs"
 version = "0.1.0"
 dependencies = [
@@ -923,11 +923,11 @@ dependencies = [
  "config",
  "epoll",
  "fuse-rs",
- "image_builder",
  "libc",
  "log 0.4.8",
  "mktemp",
  "nydus-api",
+ "nydus-builder",
  "rafs",
  "rust-crypto",
  "serde_json",

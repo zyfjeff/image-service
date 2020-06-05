@@ -11,8 +11,8 @@ use fuse_rs::api::filesystem::{ZeroCopyReader, ZeroCopyWriter};
 use fuse_rs::transport::FileReadWriteVolatile;
 use vm_memory::VolatileSlice;
 
+use crate::metadata::RafsChunkInfo;
 use crate::metadata::RafsSuperMeta;
-use crate::metadata::{RafsChunkInfo, RafsDigest};
 use crate::storage::cache::RafsCache;
 use crate::storage::factory;
 
@@ -227,7 +227,7 @@ pub struct RafsBio {
     /// Reference to the chunk.
     pub chunkinfo: Arc<dyn RafsChunkInfo>,
     /// blob id of chunk
-    pub blob_id: Arc<dyn RafsDigest>,
+    pub blob_id: String,
     /// offset within the block
     pub offset: u32,
     /// size of data to transfer
@@ -239,7 +239,7 @@ pub struct RafsBio {
 impl RafsBio {
     pub fn new(
         chunkinfo: Arc<dyn RafsChunkInfo>,
-        blob_id: Arc<dyn RafsDigest>,
+        blob_id: String,
         offset: u32,
         size: usize,
         blksize: u32,

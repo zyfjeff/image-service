@@ -24,7 +24,7 @@ xattr = "0.2.2"
 uuid = { version = "0.8", features = ["serde", "v4"] }
 rafs = { path = "rafs" }
 utils = { path = "utils" }
-image_builder = { path = "image_builder" }
+nydus-builder = { path = "builder" }
 nydus-api = { path = "api" }
 vm-memory = { version = ">=0.2.0", features = ["backend-mmap"], optional = true }
 fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git", optional = true }
@@ -39,6 +39,6 @@ virtiofsd = ["fuse-rs/vhost-user-fs", "vm-memory", "vhost-rs", "vhost-user-backe
 members = [
     "utils",
     "rafs",
-    "image_builder",
+    "builder",
     "api",
 ]

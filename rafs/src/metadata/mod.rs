@@ -73,7 +73,7 @@ pub struct RafsSuperMeta {
     pub flags: u64,
     pub inode_table_entries: u32,
     pub inode_table_offset: u64,
-    pub blob_table_entries: u32,
+    pub blob_table_size: u32,
     pub blob_table_offset: u64,
     pub attr_timeout: Duration,
     pub entry_timeout: Duration,
@@ -108,7 +108,7 @@ impl Default for RafsSuper {
                 flags: 0,
                 inode_table_entries: 0,
                 inode_table_offset: 0,
-                blob_table_entries: 0,
+                blob_table_size: 0,
                 blob_table_offset: 0,
                 attr_timeout: Duration::from_secs(RAFS_DEFAULT_ATTR_TIMEOUT),
                 entry_timeout: Duration::from_secs(RAFS_DEFAULT_ENTRY_TIMEOUT),
@@ -182,8 +182,8 @@ impl RafsSuper {
                             OndiskInodeTable::new(sb.inode_table_entries() as usize);
                         inode_table.load(r)?;
 
-                        let mut blob_table = OndiskBlobTable::new(sb.blob_table_entries() as usize);
-                        blob_table.load(r)?;
+                        let mut blob_table = OndiskBlobTable::new();
+                        blob_table.load(r, sb.blob_table_size() as usize)?;
 
                         let mut inodes = Box::new(DirectMapping::new(inode_table, blob_table));
                         inodes.load(r)?;
@@ -265,7 +265,7 @@ pub trait RafsInode {
     fn get_child_by_index(&self, idx: Inode) -> Result<Arc<dyn RafsInode>>;
     fn get_child_count(&self) -> Result<usize>;
     fn get_chunk_info(&self, idx: u32) -> Result<Arc<dyn RafsChunkInfo>>;
-    fn get_chunk_blob_id(&self, idx: u32) -> Result<Arc<dyn RafsDigest>>;
+    fn get_chunk_blob_id(&self, idx: u32) -> Result<String>;
     fn get_entry(&self) -> Entry;
     fn get_attr(&self) -> Attr;
     fn get_xattrs(&self) -> Result<HashMap<String, Vec<u8>>>;

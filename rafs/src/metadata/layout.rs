@@ -141,8 +141,8 @@ pub struct OndiskSuperBlock {
     s_blob_table_offset: u64,
     /// V5: Size of inode table.
     s_inode_table_entries: u32,
-    /// V5: Size of inode table.
-    s_blob_table_entries: u32,
+    /// V5: Entries of inode table.
+    s_blob_table_size: u32,
     /// Unused area.
     s_reserved: [u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
 }
@@ -160,7 +160,7 @@ impl Default for OndiskSuperBlock {
             s_inodes_count: u64::to_le(0),
             s_inode_table_entries: u32::to_le(0),
             s_inode_table_offset: u64::to_le(0),
-            s_blob_table_entries: u32::to_le(0),
+            s_blob_table_size: u32::to_le(0),
             s_blob_table_offset: u64::to_le(0),
             s_reserved: [0u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
         }
@@ -196,8 +196,6 @@ impl OndiskSuperBlock {
                 if self.inodes_count() == 0
                     || self.inode_table_offset() < RAFS_SUPERBLOCK_SIZE as u64
                     || self.inode_table_offset() & 0x7 != 0
-                    || self.inode_table_entries() >= (1 << 29)
-                    || self.inodes_count() > self.inode_table_entries() as u64
                 {
                     return Err(Error::new(ErrorKind::InvalidData, "Invalid superblock"));
                 }
@@ -235,12 +233,7 @@ impl OndiskSuperBlock {
         s_inode_table_offset,
         u64
     );
-    impl_pub_getter_setter!(
-        blob_table_entries,
-        set_blob_table_entries,
-        s_blob_table_entries,
-        u32
-    );
+    impl_pub_getter_setter!(blob_table_size, set_blob_table_size, s_blob_table_size, u32);
     impl_pub_getter_setter!(
         blob_table_offset,
         set_blob_table_offset,
@@ -334,52 +327,77 @@ impl OndiskInodeTable {
 #[repr(C)]
 #[derive(Clone, Debug, Default)]
 pub struct OndiskBlobTable {
-    data: Vec<OndiskDigest>,
+    data: Vec<String>,
 }
 
 impl OndiskBlobTable {
-    pub fn new(entries: usize) -> Self {
-        OndiskBlobTable {
-            data: vec![OndiskDigest::new(); entries],
-        }
+    pub fn new() -> Self {
+        OndiskBlobTable { data: Vec::new() }
     }
 
+    pub fn aligned_size(size: usize) -> usize {
+        align_to_rafs(size)
+    }
+
+    /// Get blob table size, aligned with RAFS_ALIGNMENT bytes
     pub fn size(&self) -> usize {
-        self.data.len() * RAFS_SHA256_LENGTH
+        // blob_ids string splited with '\0'
+        align_to_rafs(
+            self.data
+                .iter()
+                .fold(0usize, |size, id| size + id.len() + 1)
+                - 1,
+        )
     }
 
-    pub fn set(&mut self, index: u32, digest: OndiskDigest) -> Result<()> {
-        if index > (self.data.len() - 1) as u32 {
-            return Err(enoent());
-        }
-
-        self.data[index as usize] = digest;
-
-        Ok(())
+    pub fn add(&mut self, blob_id: String) -> u32 {
+        self.data.push(blob_id);
+        (self.data.len() - 1) as u32
     }
 
-    pub fn get(&self, index: u32) -> Result<Arc<OndiskDigest>> {
-        if index > (self.data.len() - 1) as u32 {
+    pub fn get(&self, blob_index: u32) -> Result<String> {
+        if blob_index > (self.data.len() - 1) as u32 {
             return Err(enoent());
         }
-        Ok(Arc::new(self.data[index as usize]))
+        Ok(self.data[blob_index as usize].clone())
     }
 
     pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
         let mut size = 0;
+
         self.data
             .iter()
-            .map(|d| {
-                size += d.data.len();
-                w.write_all(&d.data)
+            .enumerate()
+            .map(|(idx, id)| {
+                w.write_all(id.as_bytes())?;
+                if idx != self.data.len() - 1 {
+                    size += id.len() + 1;
+                    w.write_all(&[b'\0'])?;
+                } else {
+                    size += id.len();
+                }
+                Ok(())
             })
             .collect::<Result<()>>()?;
+        w.write_all(&[0].repeat(align_to_rafs(size) - size))?;
+
         Ok(size)
     }
 
-    pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
-        let (_, data, _) = unsafe { self.data.align_to_mut::<u8>() };
-        r.read_exact(data)?;
+    pub fn load(&mut self, r: &mut RafsIoReader, size: usize) -> Result<()> {
+        let mut input = vec![0u8; size];
+        r.read_exact(&mut input)?;
+
+        let mut input_rest = input.as_slice();
+        loop {
+            let (s, rest) = parse_string(input_rest)?;
+            self.data.push(s.to_string());
+            if rest.is_empty() || rest.as_bytes()[0] == b'\0' {
+                break;
+            }
+            input_rest = rest.as_bytes();
+        }
+
         Ok(())
     }
 }
@@ -711,13 +729,13 @@ pub fn align_to_rafs(size: usize) -> usize {
 }
 
 /// Parse a `buf` to utf-8 string.
-pub fn parse_string(buf: &[u8]) -> Result<&str> {
+pub fn parse_string(buf: &[u8]) -> Result<(&str, &str)> {
     std::str::from_utf8(buf)
-        .map(|s| {
-            if let Some(pos) = s.find('\0') {
-                s.split_at(pos).0
+        .map(|origin| {
+            if let Some(pos) = origin.find('\0') {
+                origin.split_at(pos)
             } else {
-                s
+                (origin, "")
             }
         })
         .map_err(|_| einval())

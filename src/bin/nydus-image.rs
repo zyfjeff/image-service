@@ -2,8 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use image_builder::builder;
-
 #[macro_use(crate_version, crate_authors)]
 extern crate clap;
 extern crate stderrlog;
@@ -18,6 +16,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Result, Write};
 use std::os::linux::fs::MetadataExt;
 
+use nydus_builder::builder;
 use rafs::storage::{backend, factory};
 
 fn upload_blob(
@@ -127,7 +126,7 @@ fn main() -> Result<()> {
 
     stderrlog::new()
         .quiet(false)
-        .modules(vec![module_path!(), "image_builder", "rafs"])
+        .modules(vec![module_path!(), "nydus_builder", "rafs"])
         .verbosity(utils::log_level_to_verbosity(v))
         .timestamp(stderrlog::Timestamp::Second)
         .init()

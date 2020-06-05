@@ -175,7 +175,7 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
             )
         };
 
-        parse_string(name)
+        Ok(parse_string(name)?.0)
     }
 
     fn get_symlink(&self) -> Result<&str> {
@@ -184,7 +184,7 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
 
         let symlink = unsafe { slice::from_raw_parts(start, self.inode.i_symlink_size as usize) };
 
-        parse_string(symlink)
+        Ok(parse_string(symlink)?.0)
     }
 
     #[allow(clippy::cast_ptr_alignment)]
@@ -250,9 +250,8 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
         Ok(self.inode.i_child_count as usize)
     }
 
-    fn get_chunk_blob_id(&self, idx: u32) -> Result<Arc<dyn RafsDigest>> {
-        let digest = self.mapping.blob_table.get(idx)?;
-        Ok(digest as Arc<dyn RafsDigest>)
+    fn get_chunk_blob_id(&self, idx: u32) -> Result<String> {
+        self.mapping.blob_table.get(idx)
     }
 
     fn get_entry(&self) -> Entry {
