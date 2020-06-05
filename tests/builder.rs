@@ -131,7 +131,7 @@ impl<'a> Builder<'a> {
         self.create_file(&dir.join("sub/test-1"), b"lower:sub/test-1")?;
         self.create_file(&dir.join("sub/test-2"), b"lower:sub/test-2")?;
 
-        let long_name = &"😉😑-name.".repeat(100)[..255];
+        let long_name = &"😉-name.".repeat(100)[..255];
         self.create_file(&dir.join(long_name), b"lower:sub/long-name")?;
 
         self.create_symlink(
