@@ -11,6 +11,7 @@ use std::io::{Error, ErrorKind, Result};
 use std::sync::Arc;
 use std::time::Duration;
 
+use fuse_rs::abi::linux_abi::Attr;
 use fuse_rs::api::filesystem::*;
 use fuse_rs::api::BackendFileSystem;
 use serde::Deserialize;
@@ -133,6 +134,19 @@ impl Rafs {
 
         Ok(())
     }
+
+    fn negative_entry(&self) -> Entry {
+        Entry {
+            attr: Attr {
+                ..Default::default()
+            }
+            .into(),
+            inode: 0,
+            generation: 0,
+            attr_timeout: self.sb.meta.attr_timeout,
+            entry_timeout: self.sb.meta.entry_timeout,
+        }
+    }
 }
 
 fn ebadf() -> Error {
@@ -186,9 +200,16 @@ impl FileSystem for Rafs {
             entry.inode = ino;
             Ok(entry)
         } else if target == DOTDOT {
-            self.sb.get_inode(parent.parent()).map(|i| i.get_entry())
+            Ok(self
+                .sb
+                .get_inode(parent.parent())
+                .map(|i| i.get_entry())
+                .unwrap_or_else(|_| self.negative_entry()))
         } else {
-            parent.get_child_by_name(target).map(|i| i.get_entry())
+            Ok(parent
+                .get_child_by_name(target)
+                .map(|i| i.get_entry())
+                .unwrap_or_else(|_| self.negative_entry()))
         }
     }
 
