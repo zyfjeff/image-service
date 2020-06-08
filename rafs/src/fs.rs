@@ -285,7 +285,6 @@ impl FileSystem for Rafs {
         // filesystem doesn't implement this method.
         st.f_namemax = 255;
         st.f_bsize = 512;
-        st.f_blocks = self.sb.meta.blocks_count;
         st.f_fsid = self.sb.meta.magic as u64;
         st.f_files = self.sb.meta.inodes_count;
 

@@ -64,12 +64,9 @@ pub struct RafsSuperMeta {
     pub magic: u32,
     pub version: u32,
     pub sb_size: u32,
-    pub inode_size: u32,
     pub root_inode: Inode,
     pub block_size: u32,
-    pub blocks_count: u64,
     pub inodes_count: u64,
-    pub chunk_info_size: u32,
     pub flags: u64,
     pub inode_table_entries: u32,
     pub inode_table_offset: u64,
@@ -99,12 +96,9 @@ impl Default for RafsSuper {
                 magic: 0,
                 version: 0,
                 sb_size: 0,
-                inode_size: 0,
                 inodes_count: 0,
                 root_inode: 0,
                 block_size: 0,
-                blocks_count: 0,
-                chunk_info_size: 0,
                 flags: 0,
                 inode_table_entries: 0,
                 inode_table_offset: 0,
@@ -152,11 +146,8 @@ impl RafsSuper {
         self.meta.magic = sb.magic();
         self.meta.version = sb.version();
         self.meta.sb_size = sb.sb_size();
-        self.meta.inode_size = sb.inode_size();
         self.meta.block_size = sb.block_size();
-        self.meta.chunk_info_size = sb.chunkinfo_size();
         self.meta.flags = sb.flags();
-        self.meta.blocks_count = 0;
 
         match self.meta.version {
             RAFS_SUPER_VERSION_V4 => {
@@ -209,9 +200,7 @@ impl RafsSuper {
         sb.set_magic(self.meta.magic);
         sb.set_version(self.meta.version);
         sb.set_sb_size(self.meta.sb_size);
-        sb.set_inode_size(self.meta.inode_size);
         sb.set_block_size(self.meta.block_size);
-        sb.set_chunkinfo_size(self.meta.chunk_info_size);
         sb.set_flags(self.meta.flags);
 
         match self.meta.version {

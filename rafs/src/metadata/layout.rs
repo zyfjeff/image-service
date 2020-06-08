@@ -46,7 +46,7 @@ pub const INO_FLAG_ALL: u64 = INO_FLAG_HARDLINK | INO_FLAG_SYMLINK | INO_FLAG_XA
 pub const CHUNK_FLAG_COMPRESSED: u32 = 0x1000;
 
 pub const RAFS_SUPERBLOCK_SIZE: usize = 8192;
-pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 64;
+pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 56;
 pub const RAFS_SUPER_MAGIC: u32 = 0x5241_4653;
 pub const RAFS_SUPER_VERSION_V4: u32 = 0x400;
 pub const RAFS_SUPER_VERSION_V5: u32 = 0x500;
@@ -125,12 +125,8 @@ pub struct OndiskSuperBlock {
     s_fs_version: u32,
     /// superblock on disk size
     s_sb_size: u32,
-    /// inode size
-    s_inode_size: u32,
     /// block size
     s_block_size: u32,
-    /// chunk info metadata size
-    s_chunkinfo_size: u32,
     /// superblock flags
     s_flags: u64,
     /// V5: Number of unique inodes(hard link counts as 1).
@@ -153,9 +149,7 @@ impl Default for OndiskSuperBlock {
             s_magic: u32::to_le(RAFS_SUPER_MAGIC as u32),
             s_fs_version: u32::to_le(RAFS_SUPER_VERSION_V5),
             s_sb_size: u32::to_le(RAFS_SUPERBLOCK_SIZE as u32),
-            s_inode_size: u32::to_le(RAFS_INODE_INFO_SIZE as u32),
             s_block_size: u32::to_le(RAFS_DEFAULT_BLOCK_SIZE as u32),
-            s_chunkinfo_size: u32::to_le(RAFS_CHUNK_INFO_SIZE as u32),
             s_flags: u64::to_le(0),
             s_inodes_count: u64::to_le(0),
             s_inode_table_entries: u32::to_le(0),
@@ -177,8 +171,6 @@ impl OndiskSuperBlock {
             || self.version() < RAFS_SUPER_MIN_VERSION as u32
             || self.version() > RAFS_SUPER_VERSION_V5 as u32
             || self.sb_size() != RAFS_SUPERBLOCK_SIZE as u32
-            || self.inode_size() != RAFS_INODE_INFO_SIZE as u32
-            || self.chunkinfo_size() != RAFS_CHUNK_INFO_SIZE as u32
         {
             return Err(Error::new(ErrorKind::InvalidData, "Invalid superblock"));
         }
@@ -216,9 +208,7 @@ impl OndiskSuperBlock {
     impl_pub_getter_setter!(magic, set_magic, s_magic, u32);
     impl_pub_getter_setter!(version, set_version, s_fs_version, u32);
     impl_pub_getter_setter!(sb_size, set_sb_size, s_sb_size, u32);
-    impl_pub_getter_setter!(inode_size, set_inode_size, s_inode_size, u32);
     impl_pub_getter_setter!(block_size, set_block_size, s_block_size, u32);
-    impl_pub_getter_setter!(chunkinfo_size, set_chunkinfo_size, s_chunkinfo_size, u32);
     impl_pub_getter_setter!(flags, set_flags, s_flags, u64);
     impl_pub_getter_setter!(inodes_count, set_inodes_count, s_inodes_count, u64);
     impl_pub_getter_setter!(
@@ -255,9 +245,9 @@ impl_metadata_converter!(OndiskSuperBlock);
 
 impl fmt::Display for OndiskSuperBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "superblock: magic {:x}, version {:x}, sb_size {:x}, inode_size {:x}, block_size {:x}, chunkinfo_size {:x}, flags {:x}, inode_count {}",
-               self.magic(), self.version(), self.sb_size(), self.inode_size(), self.block_size(),
-               self.chunkinfo_size(), self.flags(), self.s_inodes_count)
+        write!(f, "superblock: magic {:x}, version {:x}, sb_size {:x}, block_size {:x}, flags {:x}, inode_count {}",
+               self.magic(), self.version(), self.sb_size(), self.block_size(),
+               self.flags(), self.s_inodes_count)
     }
 }
 
