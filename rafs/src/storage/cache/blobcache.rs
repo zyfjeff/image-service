@@ -99,16 +99,17 @@ impl BlobCache {
         blob_id: &str,
         blk: Arc<dyn RafsChunkInfo>,
     ) -> Option<Arc<Mutex<BlobCacheEntry>>> {
+        let block_id = blk.block_id().to_string();
         let mut cache_map = self.cache.write().unwrap();
-        if let Some(entry) = cache_map.get(&blob_id.to_string()) {
+        if let Some(entry) = cache_map.get(&block_id) {
             return Some(entry.clone());
         }
         let fd = self.get_blob_fd(blob_id).unwrap();
         cache_map.insert(
-            blob_id.to_string(),
+            block_id.clone(),
             Arc::new(Mutex::new(BlobCacheEntry::new(blk, fd))),
         );
-        match cache_map.get(&blob_id.to_string()) {
+        match cache_map.get(&block_id) {
             Some(entry) => Some(entry.clone()),
             None => None,
         }
@@ -143,25 +144,26 @@ impl BlobCache {
             let mut cache_entry = entry.lock().unwrap();
             if let CacheStatus::NotReady = cache_entry.status {
                 // check on local disk
-                if let Some(buf) = cache_entry
-                    .read()
-                    .map_or(None, |b| utils::decompress(b.as_slice(), self.blksize).ok())
-                {
+                let is_compressed = cache_entry.chunk.is_compressed();
+                if let Ok(buf) = cache_entry.read() {
                     let block_id = cache_entry.chunk.block_id().to_string();
                     if block_id == OndiskDigest::from_buf(buf.as_slice()).to_string() {
                         cache_entry.status = CacheStatus::Ready;
-                        return Ok(RafsBuffer::new_decompressed(buf));
+                        return Ok(RafsBuffer::new(buf, is_compressed));
                     }
                 }
                 // do downloading
                 let buf = self.read_from_backend(blob_id, &cache_entry.chunk)?;
                 cache_entry.write(buf.as_slice())?;
                 cache_entry.status = CacheStatus::Ready;
-                return Ok(RafsBuffer::new_compressed(buf));
+                return Ok(RafsBuffer::new(buf, is_compressed));
             }
             cache_entry
         };
-        Ok(RafsBuffer::new_compressed(b_entry.read()?))
+        Ok(RafsBuffer::new(
+            b_entry.read()?,
+            b_entry.chunk.is_compressed(),
+        ))
     }
 }
 
@@ -204,10 +206,6 @@ impl RafsCache for BlobCache {
         _buf: &[u8],
     ) -> io::Result<usize> {
         Err(Error::from_raw_os_error(libc::ENOSYS))
-    }
-
-    fn compressed(&self) -> bool {
-        true
     }
 
     fn release(&mut self) {

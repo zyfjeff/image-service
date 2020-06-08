@@ -49,15 +49,11 @@ impl RafsCache for DummyCache {
         if len != blk.compress_size() as usize {
             return Err(Error::from_raw_os_error(libc::EIO));
         }
-        Ok(RafsBuffer::new_compressed(buf))
+        Ok(RafsBuffer::new(buf, blk.is_compressed()))
     }
 
     fn write(&self, blob_id: &str, blk: Arc<dyn RafsChunkInfo>, buf: &[u8]) -> Result<usize> {
         self.backend.write(blob_id, buf, blk.blob_offset())
-    }
-
-    fn compressed(&self) -> bool {
-        true
     }
 
     fn release(&mut self) {

@@ -62,23 +62,13 @@ impl RafsDevice {
 }
 
 pub struct RafsBuffer {
-    buf: Vec<u8>,
+    pub buf: Vec<u8>,
     compressed: bool,
 }
 
 impl RafsBuffer {
-    pub fn new_compressed(buf: Vec<u8>) -> RafsBuffer {
-        RafsBuffer {
-            buf,
-            compressed: true,
-        }
-    }
-
-    pub fn new_decompressed(buf: Vec<u8>) -> RafsBuffer {
-        RafsBuffer {
-            buf,
-            compressed: false,
-        }
+    pub fn new(buf: Vec<u8>, compressed: bool) -> RafsBuffer {
+        RafsBuffer { buf, compressed }
     }
 
     pub fn decompressed(self, f: &dyn Fn(&[u8]) -> io::Result<Vec<u8>>) -> io::Result<Vec<u8>> {
@@ -170,7 +160,7 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
     fn write_at_volatile(&mut self, slice: VolatileSlice, _offset: u64) -> Result<usize, Error> {
         let mut buf = vec![0u8; slice.len()];
         slice.copy_to(&mut buf);
-        let wbuf = if self.dev.rw_layer.compressed() {
+        let wbuf = if self.bio.chunkinfo.is_compressed() {
             utils::compress(&buf)?
         } else {
             buf

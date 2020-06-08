@@ -32,9 +32,6 @@ pub trait RafsCache {
     // write a chunk data through cache
     fn write(&self, blob_id: &str, blk: Arc<dyn RafsChunkInfo>, buf: &[u8]) -> io::Result<usize>;
 
-    // whether cache store compressed data or not
-    fn compressed(&self) -> bool;
-
     // release cache
     fn release(&mut self);
 }

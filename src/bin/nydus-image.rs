@@ -90,6 +90,14 @@ fn main() -> Result<()> {
                         .takes_value(true),
                 )
                 .arg(
+                    Arg::with_name("blob_compress")
+                        .long("blob_compress")
+                        .help("compress blob chunk")
+                        .takes_value(true)
+                        .required(false)
+                        .default_value("true"),
+                )
+                .arg(
                     Arg::with_name("parent_bootstrap")
                         .long("parent_bootstrap")
                         .help("bootstrap file path of parent (optional)")
@@ -152,6 +160,12 @@ fn main() -> Result<()> {
             }
         }
 
+        let blob_compress = matches
+            .value_of("blob_compress")
+            .unwrap_or_default()
+            .parse()
+            .unwrap_or(true);
+
         let temp_blob_file = Temp::new_file().unwrap();
 
         let real_blob_path = if let Some(blob_path) = blob_path {
@@ -171,6 +185,7 @@ fn main() -> Result<()> {
             bootstrap_path.to_owned(),
             parent_bootstrap,
             blob_id.clone(),
+            blob_compress,
         )?;
         blob_id = ib.build()?;
 

@@ -280,6 +280,7 @@ pub trait RafsChunkInfo: Sync + Send {
     fn blob_offset(&self) -> u64;
     fn file_offset(&self) -> u64;
     fn compress_size(&self) -> u32;
+    fn is_compressed(&self) -> bool;
 }
 
 /// Trait to access Rafs SHA256 message digest data.

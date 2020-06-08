@@ -38,6 +38,8 @@ use std::mem::size_of;
 use super::*;
 use crate::{einval, enoent};
 
+pub const SB_FLAG_BLOB_COMPRESSED: u64 = 0x1000;
+
 pub const INO_FLAG_HARDLINK: u64 = 0x1000;
 pub const INO_FLAG_SYMLINK: u64 = 0x2000;
 pub const INO_FLAG_XATTR: u64 = 0x4000;
@@ -536,6 +538,10 @@ impl RafsChunkInfo for OndiskChunkInfo {
 
     fn block_id(&self) -> &dyn RafsDigest {
         &self.block_id
+    }
+
+    fn is_compressed(&self) -> bool {
+        self.flags & CHUNK_FLAG_COMPRESSED == CHUNK_FLAG_COMPRESSED
     }
 
     impl_getter!(blob_index, blob_index, u32);
