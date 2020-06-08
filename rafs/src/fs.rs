@@ -165,6 +165,36 @@ impl BackendFileSystem for Rafs {
     }
 }
 
+impl Rafs {
+    fn lookup_wrapped(&self, ino: u64, name: &CStr) -> Result<Entry> {
+        let target = name.to_str().or_else(|_| Err(ebadf()))?;
+        let parent = self.sb.get_inode(ino)?;
+        if !parent.is_dir() {
+            return Err(ebadf());
+        }
+
+        if target == DOT || (ino == ROOT_ID && target == DOTDOT) {
+            let mut entry = parent.get_entry();
+            entry.inode = ino;
+            Ok(entry)
+        } else if target == DOTDOT {
+            Ok(self
+                .sb
+                .get_inode(parent.parent())
+                .map(|i| i.get_entry())
+                .unwrap_or_else(|_| self.negative_entry()))
+        } else {
+            Ok(parent
+                .get_child_by_name(target)
+                .map(|i| {
+                    self.ios.new_file_counter(i.ino());
+                    i.get_entry()
+                })
+                .unwrap_or_else(|_| self.negative_entry()))
+        }
+    }
+}
+
 impl FileSystem for Rafs {
     type Inode = Inode;
     type Handle = Handle;
@@ -189,30 +219,12 @@ impl FileSystem for Rafs {
     fn destroy(&self) {}
 
     fn lookup(&self, _ctx: Context, ino: u64, name: &CStr) -> Result<Entry> {
-        let target = name.to_str().or_else(|_| Err(ebadf()))?;
-        let parent = self.sb.get_inode(ino)?;
-        if !parent.is_dir() {
-            return Err(ebadf());
-        }
-
         self.ios.new_file_counter(ino);
-
-        if target == DOT || (ino == ROOT_ID && target == DOTDOT) {
-            let mut entry = parent.get_entry();
-            entry.inode = ino;
-            Ok(entry)
-        } else if target == DOTDOT {
-            Ok(self
-                .sb
-                .get_inode(parent.parent())
-                .map(|i| i.get_entry())
-                .unwrap_or_else(|_| self.negative_entry()))
-        } else {
-            Ok(parent
-                .get_child_by_name(target)
-                .map(|i| i.get_entry())
-                .unwrap_or_else(|_| self.negative_entry()))
-        }
+        let start = self.ios.ios_latency_start();
+        let r = self.lookup_wrapped(ino, name);
+        self.ios.ios_file_stats_update(ino, StatsFop::Lookup, 0, &r);
+        self.ios.ios_latency_end(&start, StatsFop::Lookup);
+        r
     }
 
     fn forget(&self, _ctx: Context, _inode: u64, _count: u64) {}
