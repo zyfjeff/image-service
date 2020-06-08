@@ -12,6 +12,7 @@ use std::sync::RwLock;
 
 use crate::storage::backend::request::ReqErr;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
+use utils::readahead;
 
 #[derive(Debug, Default)]
 pub struct LocalFs {
@@ -69,7 +70,7 @@ impl LocalFs {
         let file = OpenOptions::new().read(true).open(&blob_file_path)?;
         let fd = file.as_raw_fd();
         if self.readahead {
-            unsafe { libc::readahead(fd, 0, file.metadata().unwrap().len() as usize) };
+            readahead(fd, 0, file.metadata().unwrap().len());
         }
         file_table.insert(id.to_string(), file);
         Ok(fd)
