@@ -195,6 +195,8 @@ impl FileSystem for Rafs {
             return Err(ebadf());
         }
 
+        self.ios.new_file_counter(ino);
+
         if target == DOT || (ino == ROOT_ID && target == DOTDOT) {
             let mut entry = parent.get_entry();
             entry.inode = ino;

@@ -153,6 +153,7 @@ pub fn ios_new(id: &str) -> Arc<GlobalIOStats> {
         ..Default::default()
     });
     IOS_SET.write().unwrap().insert(id.to_string(), c.clone());
+    c.ios_init();
     c
 }
 
@@ -184,6 +185,15 @@ impl GlobalIOStats {
         self.files_account_enabled.store(switch, Ordering::Relaxed)
     }
 
+    /// For now, each inode has its iostats counter regardless whether it is
+    /// enabled per rafs.
+    pub fn new_file_counter(&self, ino: Inode) {
+        let mut counters = self.file_counters.write().unwrap();
+        if counters.get(&ino).is_none() {
+            counters.insert(ino, Arc::new(InodeIOStats::default()));
+        }
+    }
+
     pub fn ios_file_stats_update<T>(
         &self,
         ino: Inode,
@@ -194,16 +204,17 @@ impl GlobalIOStats {
         self.ios_global_update(fop, bsize, &r);
 
         if self.ios_files_enabled() {
-            let mut counters = self.file_counters.write().unwrap();
-            if counters.get(&ino).is_none() {
-                counters.insert(ino, Arc::new(InodeIOStats::default()));
-                counters.get_mut(&ino).unwrap().stats_fop_inc(fop.clone());
-                counters.get_mut(&ino).unwrap().stats_cumulative(fop, bsize);
+            let counters = self.file_counters.read().unwrap();
+            if counters.get(&ino).is_some() {
+                counters.get(&ino).unwrap().stats_fop_inc(fop.clone());
+                counters.get(&ino).unwrap().stats_cumulative(fop, bsize);
+            } else {
+                warn!("No iostats counter for file {}", ino);
             }
         }
     }
 
-    pub fn ios_global_update<T>(&self, fop: StatsFop, value: usize, r: &Result<T, Error>) {
+    fn ios_global_update<T>(&self, fop: StatsFop, value: usize, r: &Result<T, Error>) {
         self.last_fop_tp.store(
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
