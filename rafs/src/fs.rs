@@ -126,8 +126,14 @@ impl Rafs {
                 type_: 0,
                 name: child.name()?.as_bytes(),
             }) {
-                Ok(0) => break,
-                Ok(_) => idx += 1, // TODO: should we check `size` here?
+                Ok(0) => {
+                    self.ios.new_file_counter(child.ino());
+                    break;
+                }
+                Ok(_) => {
+                    idx += 1;
+                    self.ios.new_file_counter(child.ino())
+                } // TODO: should we check `size` here?
                 Err(r) => return Err(r),
             }
         }
