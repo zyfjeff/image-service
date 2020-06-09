@@ -79,8 +79,7 @@ pub struct RafsSuperMeta {
 
 impl RafsSuperMeta {
     pub fn get_compression_algorithm(&self) -> compress::Algorithm {
-        let compress_flag = self.flags.to_le_bytes()[7];
-        compress_flag.into()
+        self.flags.to_le_bytes().last().unwrap().into()
     }
 }
 

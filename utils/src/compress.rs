@@ -12,7 +12,7 @@ use std::str::FromStr;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Algorithm {
     None = 0,
-    LZ4RatioDefault = 1,
+    LZ4Default = 1,
 }
 
 impl fmt::Display for Algorithm {
@@ -27,31 +27,31 @@ impl FromStr for Algorithm {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
             "None" => Ok(Self::None),
-            "LZ4RatioDefault" => Ok(Self::LZ4RatioDefault),
+            "LZ4Default" => Ok(Self::LZ4Default),
             _ => Err(Error::new(
                 ErrorKind::InvalidInput,
-                "compression algorithm should be None or LZ4RatioDefault",
+                "compression algorithm should be None or LZ4Default",
             )),
         }
     }
 }
 
-impl From<u8> for Algorithm {
-    fn from(src: u8) -> Self {
-        match src {
-            1 => Self::LZ4RatioDefault,
+impl From<&u8> for Algorithm {
+    fn from(src: &u8) -> Self {
+        match *src {
+            1 => Self::LZ4Default,
             _ => Self::None,
         }
     }
 }
 
 impl Algorithm {
-    pub fn is_none(&self) -> bool {
-        self == &Self::None
+    pub fn is_none(self) -> bool {
+        self == Self::None
     }
 }
 
-// compression format:
+// Algorithm::LZ4Default:
 // 1. Default ratio
 // 2. No prepend size
 
@@ -61,9 +61,7 @@ impl Algorithm {
 pub fn compress(src: &[u8], algorithm: Algorithm) -> Result<Cow<[u8]>> {
     match algorithm {
         Algorithm::None => Ok(Cow::Borrowed(src)),
-        Algorithm::LZ4RatioDefault => {
-            liblz4::block::compress(src, None, false).map(|r| Cow::Owned(r))
-        }
+        Algorithm::LZ4Default => liblz4::block::compress(src, None, false).map(Cow::Owned),
     }
 }
 
