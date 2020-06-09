@@ -38,14 +38,12 @@ use std::mem::size_of;
 use super::*;
 use crate::{einval, enoent};
 
-pub const SB_FLAG_BLOB_COMPRESSED: u64 = 0x1000;
-
-pub const INO_FLAG_HARDLINK: u64 = 0x1000;
-pub const INO_FLAG_SYMLINK: u64 = 0x2000;
-pub const INO_FLAG_XATTR: u64 = 0x4000;
+pub const INO_FLAG_SYMLINK: u64 = 0b0000_0001;
+pub const INO_FLAG_HARDLINK: u64 = 0b0000_0010;
+pub const INO_FLAG_XATTR: u64 = 0b0000_0100;
 pub const INO_FLAG_ALL: u64 = INO_FLAG_HARDLINK | INO_FLAG_SYMLINK | INO_FLAG_XATTR;
 
-pub const CHUNK_FLAG_COMPRESSED: u32 = 0x1000;
+pub const CHUNK_FLAG_COMPRESSED: u32 = 0b0000_0001;
 
 pub const RAFS_SUPERBLOCK_SIZE: usize = 8192;
 pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 56;
@@ -53,8 +51,6 @@ pub const RAFS_SUPER_MAGIC: u32 = 0x5241_4653;
 pub const RAFS_SUPER_VERSION_V4: u32 = 0x400;
 pub const RAFS_SUPER_VERSION_V5: u32 = 0x500;
 pub const RAFS_SUPER_MIN_VERSION: u32 = RAFS_SUPER_VERSION_V4;
-pub const RAFS_INODE_INFO_SIZE: usize = 512;
-pub const RAFS_CHUNK_INFO_SIZE: usize = 64;
 pub const RAFS_ALIGNMENT: usize = 8;
 
 macro_rules! impl_metadata_converter {
@@ -510,7 +506,7 @@ pub struct OndiskChunkInfo {
     pub file_offset: u64,
     /// blob offset
     pub blob_offset: u64,
-    /// CHUNK_FLAG_COMPRESSED
+    /// CompressAlgorithm and more
     pub flags: u32,
     /// reserved
     pub reserved: u32,

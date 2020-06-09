@@ -15,6 +15,7 @@ use crypto::sha2::Sha256;
 
 use rafs::metadata::layout::*;
 use rafs::{RafsIoRead, RafsIoWrite};
+use utils::compress;
 
 use crate::node::*;
 
@@ -33,7 +34,7 @@ pub struct Builder {
     /// blob id (user specified or sha256(blob))
     blob_id: String,
     /// blob chunk compress flag
-    blob_compress: bool,
+    blob_compression_algorithm: compress::Algorithm,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
     inode_map: HashMap<u64, Node>,
     /// mutilple layers build: upper source nodes
@@ -49,7 +50,7 @@ impl Builder {
         bootstrap_path: String,
         parent_bootstrap_path: String,
         blob_id: String,
-        blob_compress: bool,
+        blob_compression_algorithm: compress::Algorithm,
     ) -> Result<Builder> {
         let f_blob = Box::new(
             OpenOptions::new()
@@ -83,7 +84,7 @@ impl Builder {
             f_bootstrap,
             f_parent_bootstrap,
             blob_id,
-            blob_compress,
+            blob_compression_algorithm,
             inode_map: HashMap::new(),
             additions: Vec::new(),
             removals: HashMap::new(),
@@ -196,9 +197,7 @@ impl Builder {
         super_block.set_inode_table_entries(inode_table_entries);
         super_block.set_blob_table_offset(blob_table_offset);
         super_block.set_blob_table_size(blob_table_size as u32);
-        if self.blob_compress {
-            super_block.set_flags(super_block.flags() | SB_FLAG_BLOB_COMPRESSED);
-        }
+        super_block.set_flags(super_block.flags() | self.blob_compression_algorithm as u64);
 
         // dump blob
         let mut blob_offset = 0u64;
@@ -232,7 +231,7 @@ impl Builder {
                 &mut self.f_blob,
                 &mut blob_hash,
                 &mut blob_offset,
-                self.blob_compress,
+                self.blob_compression_algorithm,
             )?;
             // add chunks size
             inode_offset += (node.chunks.len() * size_of::<OndiskChunkInfo>()) as u32;

@@ -24,6 +24,7 @@ use self::noop::NoopInodes;
 use crate::fs::{Inode, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
 use crate::storage::device::{RafsBio, RafsBioDesc};
 use crate::*;
+use utils::compress;
 
 pub mod direct;
 pub mod layout;
@@ -74,6 +75,13 @@ pub struct RafsSuperMeta {
     pub blob_table_offset: u64,
     pub attr_timeout: Duration,
     pub entry_timeout: Duration,
+}
+
+impl RafsSuperMeta {
+    pub fn get_compression_algorithm(&self) -> compress::Algorithm {
+        let compress_flag = self.flags.to_le_bytes()[7];
+        compress_flag.into()
+    }
 }
 
 pub enum RafsMode {

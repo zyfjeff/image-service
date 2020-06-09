@@ -30,9 +30,7 @@ impl RafsSuperInodes for NoopInodes {
         unimplemented!()
     }
 
-    fn destroy(&mut self) {
-        unimplemented!()
-    }
+    fn destroy(&mut self) {}
 
     fn get_inode(&self, _ino: Inode, _s_meta: RafsSuperMeta) -> Result<Arc<dyn RafsInode>> {
         unimplemented!()

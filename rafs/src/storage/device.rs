@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::borrow::Cow;
 use std::cmp;
 use std::io;
 use std::io::Error;
@@ -15,6 +16,7 @@ use crate::metadata::RafsChunkInfo;
 use crate::metadata::RafsSuperMeta;
 use crate::storage::cache::RafsCache;
 use crate::storage::factory;
+use utils::compress;
 
 static ZEROS: &[u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
 
@@ -118,7 +120,7 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
                 .dev
                 .rw_layer
                 .read(&self.bio.blob_id.to_string(), self.bio.chunkinfo.clone())?
-                .decompressed(&|b| utils::decompress(b, self.bio.blksize))?;
+                .decompressed(&|b| compress::decompress(b, self.bio.blksize))?;
         }
 
         let count = cmp::min(
@@ -161,9 +163,9 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
         let mut buf = vec![0u8; slice.len()];
         slice.copy_to(&mut buf);
         let wbuf = if self.bio.chunkinfo.is_compressed() {
-            utils::compress(&buf)?
+            utils::compress::compress(&buf, self.bio.compression_algorithm)?
         } else {
-            buf
+            Cow::Owned(buf)
         };
         self.dev.rw_layer.write(
             &self.bio.blob_id.to_string(),
@@ -218,6 +220,8 @@ pub struct RafsBio {
     pub chunkinfo: Arc<dyn RafsChunkInfo>,
     /// blob id of chunk
     pub blob_id: String,
+    /// compression algorithm of chunk
+    pub compression_algorithm: compress::Algorithm,
     /// offset within the block
     pub offset: u32,
     /// size of data to transfer
@@ -230,6 +234,7 @@ impl RafsBio {
     pub fn new(
         chunkinfo: Arc<dyn RafsChunkInfo>,
         blob_id: String,
+        compression_algorithm: compress::Algorithm,
         offset: u32,
         size: usize,
         blksize: u32,
@@ -237,6 +242,7 @@ impl RafsBio {
         RafsBio {
             chunkinfo,
             blob_id,
+            compression_algorithm,
             offset,
             size,
             blksize,

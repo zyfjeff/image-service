@@ -90,12 +90,12 @@ fn main() -> Result<()> {
                         .takes_value(true),
                 )
                 .arg(
-                    Arg::with_name("blob_compress")
-                        .long("blob_compress")
-                        .help("compress blob chunk")
+                    Arg::with_name("blob_compression_algorithm")
+                        .long("blob_compression_algorithm")
+                        .help("blob compression algorithm")
                         .takes_value(true)
                         .required(false)
-                        .default_value("true"),
+                        .default_value("None"),
                 )
                 .arg(
                     Arg::with_name("parent_bootstrap")
@@ -160,11 +160,10 @@ fn main() -> Result<()> {
             }
         }
 
-        let blob_compress = matches
-            .value_of("blob_compress")
+        let blob_compression_algorithm = matches
+            .value_of("blob_compression_algorithm")
             .unwrap_or_default()
-            .parse()
-            .unwrap_or(true);
+            .parse()?;
 
         let temp_blob_file = Temp::new_file().unwrap();
 
@@ -185,7 +184,7 @@ fn main() -> Result<()> {
             bootstrap_path.to_owned(),
             parent_bootstrap,
             blob_id.clone(),
-            blob_compress,
+            blob_compression_algorithm,
         )?;
         blob_id = ib.build()?;
 

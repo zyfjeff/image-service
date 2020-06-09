@@ -320,9 +320,11 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
             let blob_id = self.get_chunk_blob_id(blk.blob_index())?;
             let file_start = cmp::max(blk.file_offset(), offset);
             let file_end = cmp::min(blk.file_offset() + blksize as u64, end);
+            let compression_algorithm = self.meta.get_compression_algorithm();
             let bio = RafsBio::new(
                 blk.clone(),
                 blob_id,
+                compression_algorithm,
                 (file_start - blk.file_offset()) as u32,
                 (file_end - file_start) as usize,
                 blksize,

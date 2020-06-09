@@ -16,6 +16,7 @@ use crypto::sha2::Sha256;
 
 use rafs::metadata::layout::*;
 use rafs::metadata::*;
+use utils::compress;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Overlay {
@@ -118,7 +119,7 @@ impl Node {
         f_blob: &mut Box<dyn RafsIoWrite>,
         blob_hash: &mut Sha256,
         blob_offset: &mut u64,
-        blob_compress: bool,
+        blob_compression_algorithm: compress::Algorithm,
     ) -> Result<OndiskDigest> {
         let mut inode_digest = OndiskDigest::new();
 
@@ -155,26 +156,24 @@ impl Node {
             chunk.block_id = digest;
 
             // compress chunk data
-            let compressed = if blob_compress {
-                chunk.flags |= CHUNK_FLAG_COMPRESSED;
-                utils::compress(&chunk_data)?
-            } else {
-                chunk_data
-            };
+            let compressed = utils::compress::compress(&chunk_data, blob_compression_algorithm)?;
             let compressed_size = compressed.len();
             chunk.blob_offset = *blob_offset;
             chunk.compress_size = compressed_size as u32;
+            if !blob_compression_algorithm.is_none() {
+                chunk.flags |= CHUNK_FLAG_COMPRESSED;
+            }
 
             // move cursor to offset of next chunk
             *blob_offset += compressed_size as u64;
 
             trace!(
-                "\tbuilding chunk: file_offset {}, blob_offset {}, compress_size {}, chunk_size {}, is_compressed {}, block_id {}",
+                "\tbuilding chunk: file_offset {}, blob_offset {}, compress_size {}, chunk_size {}, compression_algorithm {}, block_id {}",
                 chunk.file_offset,
                 chunk.blob_offset,
                 chunk.compress_size,
                 chunk_size,
-                blob_compress,
+                blob_compression_algorithm,
                 chunk.block_id.to_string(),
             );
 
