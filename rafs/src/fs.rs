@@ -166,6 +166,7 @@ fn einval() -> Error {
 impl BackendFileSystem for Rafs {
     fn mount(&self) -> Result<(Entry, u64)> {
         let root_inode = self.sb.get_inode(ROOT_ID)?;
+        self.ios.new_file_counter(root_inode.ino());
         let entry = root_inode.get_entry();
         Ok((entry, self.sb.get_max_ino()))
     }
@@ -225,7 +226,6 @@ impl FileSystem for Rafs {
     fn destroy(&self) {}
 
     fn lookup(&self, _ctx: Context, ino: u64, name: &CStr) -> Result<Entry> {
-        self.ios.new_file_counter(ino);
         let start = self.ios.ios_latency_start();
         let r = self.lookup_wrapped(ino, name);
         self.ios.ios_file_stats_update(ino, StatsFop::Lookup, 0, &r);
