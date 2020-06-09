@@ -38,12 +38,12 @@ use std::mem::size_of;
 use super::*;
 use crate::{einval, enoent};
 
-pub const INO_FLAG_SYMLINK: u64 = 0b0000_0001;
-pub const INO_FLAG_HARDLINK: u64 = 0b0000_0010;
-pub const INO_FLAG_XATTR: u64 = 0b0000_0100;
+pub const INO_FLAG_SYMLINK: u64 = 0x1;
+pub const INO_FLAG_HARDLINK: u64 = 0x2;
+pub const INO_FLAG_XATTR: u64 = 0x4;
 pub const INO_FLAG_ALL: u64 = INO_FLAG_HARDLINK | INO_FLAG_SYMLINK | INO_FLAG_XATTR;
 
-pub const CHUNK_FLAG_COMPRESSED: u32 = 0b0000_0001;
+pub const CHUNK_FLAG_COMPRESSED: u32 = 0x1;
 
 pub const RAFS_SUPERBLOCK_SIZE: usize = 8192;
 pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 56;
