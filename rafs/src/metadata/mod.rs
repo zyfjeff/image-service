@@ -22,7 +22,8 @@ use self::direct::DirectMapping;
 use self::layout::*;
 use self::noop::NoopInodes;
 use crate::fs::{Inode, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
-use crate::storage::device::{RafsBio, RafsBioDesc};
+use crate::storage::cache::RafsBio;
+use crate::storage::device::RafsBioDesc;
 use crate::*;
 use nydus_utils::compress;
 
@@ -284,9 +285,13 @@ pub trait RafsChunkInfo: Sync + Send {
 
     fn block_id(&self) -> &dyn RafsDigest;
     fn blob_index(&self) -> u32;
-    fn blob_offset(&self) -> u64;
-    fn file_offset(&self) -> u64;
+
+    fn blob_compress_offset(&self) -> u64;
     fn compress_size(&self) -> u32;
+    fn blob_decompress_offset(&self) -> u64;
+    fn decompress_size(&self) -> u32;
+
+    fn file_offset(&self) -> u64;
     fn is_compressed(&self) -> bool;
 }
 

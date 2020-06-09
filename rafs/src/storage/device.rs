@@ -6,14 +6,13 @@ use std::borrow::Cow;
 use std::cmp;
 use std::io;
 use std::io::Error;
-use std::sync::Arc;
 
 use fuse_rs::api::filesystem::{ZeroCopyReader, ZeroCopyWriter};
 use fuse_rs::transport::FileReadWriteVolatile;
 use vm_memory::VolatileSlice;
 
-use crate::metadata::RafsChunkInfo;
 use crate::metadata::RafsSuperMeta;
+use crate::storage::cache::RafsBio;
 use crate::storage::cache::RafsCache;
 use crate::storage::factory;
 use nydus_utils::compress;
@@ -56,29 +55,10 @@ impl RafsDevice {
         let mut count: usize = 0;
         for bio in desc.bi_vec.iter() {
             let mut f = RafsBioDevice::new(bio, &self)?;
-            let offset = bio.chunkinfo.blob_offset() + bio.offset as u64;
+            let offset = bio.chunkinfo.blob_compress_offset() + bio.offset as u64;
             count += r.read_to(&mut f, bio.size, offset)?;
         }
         Ok(count)
-    }
-}
-
-pub struct RafsBuffer {
-    pub buf: Vec<u8>,
-    compressed: bool,
-}
-
-impl RafsBuffer {
-    pub fn new(buf: Vec<u8>, compressed: bool) -> RafsBuffer {
-        RafsBuffer { buf, compressed }
-    }
-
-    pub fn decompressed(self, f: &dyn Fn(&[u8]) -> io::Result<Vec<u8>>) -> io::Result<Vec<u8>> {
-        if self.compressed {
-            f(self.buf.as_slice())
-        } else {
-            Ok(self.buf)
-        }
     }
 }
 
@@ -99,7 +79,7 @@ impl<'a> RafsBioDevice<'a> {
     }
 
     fn blob_offset(&self) -> u64 {
-        self.bio.chunkinfo.blob_offset() + self.bio.offset as u64
+        self.bio.chunkinfo.blob_compress_offset() + self.bio.offset as u64
     }
 }
 
@@ -115,14 +95,6 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
     }
 
     fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
-        if self.buf.is_empty() {
-            self.buf = self
-                .dev
-                .rw_layer
-                .read(&self.bio.blob_id.to_string(), self.bio.chunkinfo.clone())?
-                .decompressed(&|b| compress::decompress(b, self.bio.blksize))?;
-        }
-
         let count = cmp::min(
             cmp::min(
                 self.bio.offset as usize + self.bio.size - offset as usize,
@@ -140,10 +112,29 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
         bufs: &[VolatileSlice],
         offset: u64,
     ) -> Result<usize, Error> {
-        let mut f_offset: u64 = offset;
-        let mut count: usize = 0;
         if self.bio.chunkinfo.compress_size() == 0 {
             return self.fill_hole(bufs);
+        }
+
+        if !self.bio.chunkinfo.is_compressed() {
+            return self.dev.rw_layer.readv(
+                &self.bio.blob_id.to_string(),
+                bufs,
+                offset + self.bio.chunkinfo.blob_compress_offset(),
+            );
+        }
+
+        let mut f_offset: u64 = offset;
+        let mut count: usize = 0;
+        if self.buf.is_empty() {
+            self.buf
+                .resize(self.bio.chunkinfo.decompress_size() as usize, 0u8);
+            self.dev.rw_layer.read(
+                &self.bio.blob_id.to_string(),
+                self.bio.chunkinfo.clone(),
+                self.bio.blksize,
+                &mut self.buf,
+            )?;
         }
         for buf in bufs.iter() {
             let res = self.read_at_volatile(*buf, f_offset)?;
@@ -156,6 +147,7 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
                 break;
             }
         }
+
         Ok(count)
     }
 
@@ -210,42 +202,6 @@ impl RafsBioDesc {
     pub fn new() -> Self {
         RafsBioDesc {
             ..Default::default()
-        }
-    }
-}
-
-// Rafs blob IO info
-pub struct RafsBio {
-    /// Reference to the chunk.
-    pub chunkinfo: Arc<dyn RafsChunkInfo>,
-    /// blob id of chunk
-    pub blob_id: String,
-    /// compression algorithm of chunk
-    pub compression_algorithm: compress::Algorithm,
-    /// offset within the block
-    pub offset: u32,
-    /// size of data to transfer
-    pub size: usize,
-    /// block size to read in one shot
-    pub blksize: u32,
-}
-
-impl RafsBio {
-    pub fn new(
-        chunkinfo: Arc<dyn RafsChunkInfo>,
-        blob_id: String,
-        compression_algorithm: compress::Algorithm,
-        offset: u32,
-        size: usize,
-        blksize: u32,
-    ) -> Self {
-        RafsBio {
-            chunkinfo,
-            blob_id,
-            compression_algorithm,
-            offset,
-            size,
-            blksize,
         }
     }
 }

@@ -500,16 +500,22 @@ pub struct OndiskChunkInfo {
     pub block_id: OndiskDigest,
     /// blob index (blob_id = blob_table[blob_index])
     pub blob_index: u32,
-    /// compressed size
-    pub compress_size: u32,
-    /// file position of block, with fixed block length
-    pub file_offset: u64,
-    /// blob offset
-    pub blob_offset: u64,
     /// CHUNK_FLAG_COMPRESSED
     pub flags: u32,
+
+    /// compressed size
+    pub compress_size: u32,
+    /// decompressed size
+    pub decompress_size: u32,
+    /// blob compressed offset
+    pub blob_compress_offset: u64,
+    /// blob decompressed offset
+    pub blob_decompress_offset: u64,
+
+    /// file position of block, with fixed block length
+    pub file_offset: u64,
     /// reserved
-    pub reserved: u32,
+    pub reserved: u64,
 }
 
 impl OndiskChunkInfo {
@@ -541,9 +547,13 @@ impl RafsChunkInfo for OndiskChunkInfo {
     }
 
     impl_getter!(blob_index, blob_index, u32);
-    impl_getter!(blob_offset, blob_offset, u64);
-    impl_getter!(file_offset, file_offset, u64);
+
+    impl_getter!(blob_compress_offset, blob_compress_offset, u64);
     impl_getter!(compress_size, compress_size, u32);
+    impl_getter!(blob_decompress_offset, blob_decompress_offset, u64);
+    impl_getter!(decompress_size, decompress_size, u32);
+
+    impl_getter!(file_offset, file_offset, u64);
 }
 
 impl_metadata_converter!(OndiskChunkInfo);
@@ -554,8 +564,10 @@ impl Default for OndiskChunkInfo {
             block_id: OndiskDigest::default(),
             blob_index: 0,
             file_offset: 0,
-            blob_offset: 0,
             compress_size: 0,
+            decompress_size: 0,
+            blob_compress_offset: 0,
+            blob_decompress_offset: 0,
             flags: 0,
             reserved: 0,
         }
@@ -566,8 +578,8 @@ impl fmt::Display for OndiskChunkInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "chunk_info block_id: {:?}, blob_index: {} file offset: {}, blob offset: {}, compressed size: {}",
-            self.block_id, self.blob_index, self.file_offset, self.blob_offset,
+            "chunk_info block_id: {:?}, blob_index: {} file offset: {}, blob compress offset: {}, compressed size: {}",
+            self.block_id, self.blob_index, self.file_offset, self.blob_compress_offset,
             self.compress_size
         )
     }

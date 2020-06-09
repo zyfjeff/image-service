@@ -200,7 +200,8 @@ impl Builder {
         super_block.set_flags(super_block.flags() | self.blob_compression_algorithm as u64);
 
         // dump blob
-        let mut blob_offset = 0u64;
+        let mut blob_compress_offset = 0u64;
+        let mut blob_decompress_offset = 0u64;
         let mut blob_hash = Sha256::new();
         let mut inode_offset = (super_block_size + inode_table_size + blob_table_size) as u32;
         for node in &mut self.additions {
@@ -230,7 +231,8 @@ impl Builder {
             node.dump_blob(
                 &mut self.f_blob,
                 &mut blob_hash,
-                &mut blob_offset,
+                &mut blob_compress_offset,
+                &mut blob_decompress_offset,
                 self.blob_compression_algorithm,
             )?;
             // add chunks size

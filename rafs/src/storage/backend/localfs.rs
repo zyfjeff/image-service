@@ -10,6 +10,9 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
 use std::sync::RwLock;
 
+use libc::{c_int, c_void, off64_t, preadv64, size_t};
+use vm_memory::VolatileSlice;
+
 use crate::storage::backend::request::ReqErr;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 use nydus_utils::readahead;
@@ -82,15 +85,41 @@ impl LocalFs {
 }
 
 impl BlobBackend for LocalFs {
-    fn read(&self, blobid: &str, buf: &mut Vec<u8>, offset: u64, count: usize) -> Result<usize> {
+    fn read(&self, blobid: &str, buf: &mut [u8], offset: u64) -> Result<usize> {
         let fd = self.get_blob_fd(blobid)?;
 
-        debug!("local blob file reading: offset={}, size={}", offset, count);
-        buf.resize(count, 0u8);
+        debug!(
+            "local blob file reading: offset={}, size={}",
+            offset,
+            buf.len()
+        );
         let len = uio::pread(fd, buf, offset as i64).map_err(|_| Error::last_os_error())?;
         debug!("local blob file read {} bytes", len);
 
         Ok(len)
+    }
+
+    fn readv(&self, blobid: &str, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
+        let fd = self.get_blob_fd(blobid)?;
+
+        let iovecs: Vec<libc::iovec> = bufs
+            .iter()
+            .map(|s| libc::iovec {
+                iov_base: s.as_ptr() as *mut c_void,
+                iov_len: s.len() as size_t,
+            })
+            .collect();
+
+        if iovecs.is_empty() {
+            return Ok(0);
+        }
+
+        let ret = unsafe { preadv64(fd, &iovecs[0], iovecs.len() as c_int, offset as off64_t) };
+        if ret >= 0 {
+            Ok(ret as usize)
+        } else {
+            Err(Error::last_os_error())
+        }
     }
 
     fn write(&self, _blobid: &str, _buf: &[u8], _offset: u64) -> Result<usize> {

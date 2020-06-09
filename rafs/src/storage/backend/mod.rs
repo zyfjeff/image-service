@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use vm_memory::VolatileSlice;
+
 #[allow(dead_code)]
 pub mod request;
 
@@ -21,7 +23,10 @@ pub mod localfs;
 // Rafs blob backend API
 pub trait BlobBackend {
     // Read a range of data from blob into the provided slice
-    fn read(&self, blobid: &str, buf: &mut Vec<u8>, offset: u64, count: usize) -> Result<usize>;
+    fn read(&self, blobid: &str, buf: &mut [u8], offset: u64) -> Result<usize>;
+
+    // Read mutilple range of data from blob into the provided slices
+    fn readv(&self, blobid: &str, bufs: &[VolatileSlice], offset: u64) -> Result<usize>;
 
     // Write a range of data to blob from the provided slice
     fn write(&self, blobid: &str, buf: &[u8], offset: u64) -> Result<usize>;

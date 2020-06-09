@@ -10,11 +10,12 @@ use std::io::{Error, ErrorKind};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex, RwLock};
 
+use vm_memory::VolatileSlice;
+
 use crate::metadata::layout::OndiskDigest;
 use crate::metadata::{RafsChunkInfo, RafsDigest, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::RafsCache;
-use crate::storage::device::RafsBuffer;
 
 #[derive(Clone)]
 enum CacheStatus {
@@ -37,25 +38,24 @@ impl BlobCacheEntry {
         }
     }
 
-    fn read(&self) -> io::Result<Vec<u8>> {
-        let mut buf = vec![0u8; self.chunk.compress_size() as usize];
-        let nr_read = uio::pread(self.fd, buf.as_mut_slice(), self.chunk.blob_offset() as i64)
+    fn read(&self, buf: &mut [u8]) -> io::Result<()> {
+        let nr_read = uio::pread(self.fd, buf, self.chunk.blob_decompress_offset() as i64)
             .map_err(|_| Error::last_os_error())?;
-        debug!(
+        trace!(
             "read {}(off={}) bytes from blob file",
             nr_read,
-            self.chunk.blob_offset()
+            self.chunk.blob_decompress_offset()
         );
-        Ok(buf)
+        Ok(())
     }
 
     fn write(&self, src: &[u8]) -> io::Result<usize> {
-        let nr_write = uio::pwrite(self.fd, src, self.chunk.blob_offset() as i64)
+        let nr_write = uio::pwrite(self.fd, src, self.chunk.blob_decompress_offset() as i64)
             .map_err(|_| Error::last_os_error())?;
-        debug!(
+        trace!(
             "write {}(off={}) bytes to blob file",
             nr_write,
-            self.chunk.blob_offset()
+            self.chunk.blob_decompress_offset()
         );
         Ok(nr_write)
     }
@@ -115,55 +115,58 @@ impl BlobCache {
         }
     }
 
-    fn read_from_backend(
-        &self,
-        blob_id: &str,
-        blk: &Arc<dyn RafsChunkInfo>,
-    ) -> io::Result<Vec<u8>> {
-        let mut buf = Vec::new();
-        let res = self.backend.read(
-            blob_id,
-            &mut buf,
-            blk.blob_offset(),
-            blk.compress_size() as usize,
-        )?;
-        if res != blk.compress_size() as usize {
-            error!("read from backend err!");
-            return Err(Error::from_raw_os_error(libc::EIO));
-        }
-        Ok(buf)
-    }
-
     fn entry_read(
         &self,
         blob_id: &str,
         entry: &Arc<Mutex<BlobCacheEntry>>,
-    ) -> io::Result<RafsBuffer> {
-        let b_entry = {
-            // need mutex lock protection
-            let mut cache_entry = entry.lock().unwrap();
-            if let CacheStatus::NotReady = cache_entry.status {
-                // check on local disk
-                let is_compressed = cache_entry.chunk.is_compressed();
-                if let Ok(buf) = cache_entry.read() {
-                    let block_id = cache_entry.chunk.block_id().to_string();
-                    if block_id == OndiskDigest::from_buf(buf.as_slice()).to_string() {
-                        cache_entry.status = CacheStatus::Ready;
-                        return Ok(RafsBuffer::new(buf, is_compressed));
-                    }
-                }
-                // do downloading
-                let buf = self.read_from_backend(blob_id, &cache_entry.chunk)?;
-                cache_entry.write(buf.as_slice())?;
+        blksize: u32,
+        mut decompressed: &mut Vec<u8>,
+    ) -> io::Result<()> {
+        // need mutex lock protection
+        let mut cache_entry = entry.lock().unwrap();
+        let chunk = &cache_entry.chunk;
+        if let CacheStatus::Ready = cache_entry.status {
+            trace!(
+                "hit blob cache {} {}",
+                chunk.block_id().to_string(),
+                chunk.compress_size()
+            );
+            return cache_entry.read(&mut decompressed);
+        }
+
+        // check on local disk
+        if cache_entry.read(decompressed).is_ok() {
+            let block_id = chunk.block_id().to_string();
+            if block_id == OndiskDigest::from_buf(decompressed).to_string() {
+                trace!(
+                    "recovery blob cache {} {}",
+                    chunk.block_id().to_string(),
+                    chunk.compress_size()
+                );
                 cache_entry.status = CacheStatus::Ready;
-                return Ok(RafsBuffer::new(buf, is_compressed));
+                return Ok(());
             }
-            cache_entry
-        };
-        Ok(RafsBuffer::new(
-            b_entry.read()?,
-            b_entry.chunk.is_compressed(),
-        ))
+        }
+
+        // do downloading
+        let is_compressed = chunk.is_compressed();
+        decompressed.resize(chunk.compress_size() as usize, 0u8);
+        trace!(
+            "write blob cache {} {}",
+            chunk.block_id().to_string(),
+            chunk.compress_size()
+        );
+        self.backend
+            .read(blob_id, &mut decompressed, chunk.blob_compress_offset())?;
+        if is_compressed {
+            let _decompressed = &utils::compress::decompress(decompressed.as_slice(), blksize)?;
+            decompressed.resize(_decompressed.len() as usize, 0u8);
+            decompressed.copy_from_slice(_decompressed);
+        }
+        cache_entry.write(decompressed)?;
+        cache_entry.status = CacheStatus::Ready;
+
+        Ok(())
     }
 }
 
@@ -191,12 +194,22 @@ impl RafsCache for BlobCache {
         Err(Error::from_raw_os_error(libc::ENOSYS))
     }
 
-    fn read(&self, blob_id: &str, blk: Arc<dyn RafsChunkInfo>) -> io::Result<RafsBuffer> {
+    fn read(
+        &self,
+        blob_id: &str,
+        blk: Arc<dyn RafsChunkInfo>,
+        blksize: u32,
+        decompressed: &mut Vec<u8>,
+    ) -> io::Result<()> {
         if let Some(entry) = self.get(blk.clone()).or_else(|| self.set(blob_id, blk)) {
-            return self.entry_read(blob_id, &entry);
+            return self.entry_read(blob_id, &entry, blksize, decompressed);
         }
         error!("blob cache set err");
         Err(Error::from_raw_os_error(libc::EIO))
+    }
+
+    fn readv(&self, _blob_id: &str, _bufs: &[VolatileSlice], _offset: u64) -> io::Result<usize> {
+        unimplemented!();
     }
 
     fn write(
@@ -259,15 +272,9 @@ mod blob_cache_tests {
 
     impl BlobBackend for MockBackend {
         // Read a range of data from blob into the provided slice
-        fn read(
-            &self,
-            _blobid: &str,
-            buf: &mut Vec<u8>,
-            _offset: u64,
-            count: usize,
-        ) -> Result<usize> {
+        fn read(&self, _blobid: &str, buf: &mut [u8], _offset: u64) -> Result<usize> {
             let mut i = 0;
-            while i < count {
+            while i < buf.len() {
                 buf.push(i as u8);
                 i += 1;
             }
@@ -305,7 +312,7 @@ mod blob_cache_tests {
         let mut chunk = OndiskChunkInfo::new();
         chunk.block_id = OndiskDigest::from_raw(&block_id);
         chunk.file_offset = 0;
-        chunk.blob_offset = 0;
+        chunk.blob_compress_offset = 0;
         chunk.compress_size = 100;
 
         let r1 = blob_cache

@@ -7,6 +7,8 @@ use std::fs::File;
 use std::io::Result;
 use url::Url;
 
+use vm_memory::VolatileSlice;
+
 use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, ReqErr, Request};
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 
@@ -98,14 +100,14 @@ pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Re
 }
 
 impl BlobBackend for Registry {
-    fn read(&self, blob_id: &str, buf: &mut Vec<u8>, offset: u64, count: usize) -> Result<usize> {
+    fn read(&self, blob_id: &str, mut buf: &mut [u8], offset: u64) -> Result<usize> {
         let method = "GET";
 
         let url = format!("/blobs/{}", blob_id);
         let url = self.url(url.as_str(), &[])?;
 
         let mut headers = HeaderMap::new();
-        let end_at = offset + count as u64 - 1;
+        let end_at = offset + buf.len() as u64 - 1;
         let range = format!("bytes={}-{}", offset, end_at);
         headers.insert("Range", range.as_str().parse().map_err(ReqErr::inv_data)?);
 
@@ -117,12 +119,16 @@ impl BlobBackend for Registry {
                 Err(e)
             })?;
 
-        resp.copy_to(buf)
+        resp.copy_to(&mut buf)
             .or_else(|err| {
                 error!("registry read failed {:?}", err);
                 Err(ReqErr::broken_pipe(err))
             })
             .map(|size| size as usize)
+    }
+
+    fn readv(&self, _blobid: &str, _bufs: &[VolatileSlice], _offset: u64) -> Result<usize> {
+        unimplemented!();
     }
 
     fn write(&self, _blob_id: &str, _buf: &[u8], _offset: u64) -> Result<usize> {

@@ -9,6 +9,8 @@ use std::io::Result;
 use std::time::SystemTime;
 use url::Url;
 
+use vm_memory::VolatileSlice;
+
 use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, ReqErr, Request};
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 
@@ -165,13 +167,13 @@ pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Re
 
 impl BlobBackend for OSS {
     /// read ranged data from oss object
-    fn read(&self, blob_id: &str, buf: &mut Vec<u8>, offset: u64, count: usize) -> Result<usize> {
+    fn read(&self, blob_id: &str, mut buf: &mut [u8], offset: u64) -> Result<usize> {
         let method = "GET";
         let query = &[];
         let (resource, url) = self.url(blob_id, query)?;
 
         let mut headers = HeaderMap::new();
-        let end_at = offset + count as u64 - 1;
+        let end_at = offset + buf.len() as u64 - 1;
         let range = format!("bytes={}-{}", offset, end_at);
         headers.insert("Range", range.as_str().parse().map_err(ReqErr::inv_data)?);
         let headers = self.sign(method, headers, resource.as_str())?;
@@ -184,12 +186,16 @@ impl BlobBackend for OSS {
                 Err(e)
             })?;
 
-        resp.copy_to(buf)
+        resp.copy_to(&mut buf)
             .or_else(|err| {
                 error!("oss read failed {:?}", err);
                 Err(ReqErr::broken_pipe(err))
             })
             .map(|size| size as usize)
+    }
+
+    fn readv(&self, _blobid: &str, _bufs: &[VolatileSlice], _offset: u64) -> Result<usize> {
+        unimplemented!();
     }
 
     /// append data to oss object

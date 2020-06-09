@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::io::Result;
 use std::sync::{Arc, Mutex, RwLock};
+use vm_memory::VolatileSlice;
 
 use crate::storage::backend::BlobBackend;
 
@@ -33,8 +34,12 @@ pub fn new() -> Dummy {
 
 impl BlobBackend for Dummy {
     // Read a range of data from blob into the provided destination
-    fn read(&self, _blobid: &str, buf: &mut Vec<u8>, _offset: u64, _count: usize) -> Result<usize> {
+    fn read(&self, _blobid: &str, buf: &mut [u8], _offset: u64) -> Result<usize> {
         Ok(buf.len())
+    }
+
+    fn readv(&self, _blobid: &str, _bufs: &[VolatileSlice], _offset: u64) -> Result<usize> {
+        Ok(0)
     }
 
     // Write a range of data to blob from the provided source

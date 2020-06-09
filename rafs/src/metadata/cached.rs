@@ -532,7 +532,7 @@ impl CachedChunkInfo {
     fn copy_from_ondisk(&mut self, chunk: &OndiskChunkInfo) {
         self.c_block_id = chunk.block_id().clone();
         self.c_blob_index = chunk.blob_index();
-        self.c_blob_offset = chunk.blob_offset();
+        self.c_blob_offset = chunk.blob_compress_offset();
         self.c_file_offset = chunk.file_offset();
         self.c_compr_size = chunk.compress_size();
     }
@@ -568,7 +568,7 @@ impl From<&OndiskChunkInfo> for CachedChunkInfo {
             c_block_id: info.block_id().clone(),
             c_blob_index: info.blob_index(),
             c_file_offset: info.file_offset(),
-            c_blob_offset: info.blob_offset(),
+            c_blob_offset: info.blob_compress_offset(),
             c_compr_size: info.compress_size(),
         }
     }
@@ -732,7 +732,7 @@ mod tests {
         let mut chunk = CachedChunkInfo::new();
         chunk.load(&sb.s_meta, &mut buf).unwrap();
 
-        assert_eq!(chunk.blob_offset(), 10);
+        assert_eq!(chunk.blob_compress_offset(), 10);
         assert_eq!(chunk.compress_size(), 5);
     }
 
