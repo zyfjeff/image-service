@@ -92,10 +92,10 @@ fn main() -> Result<()> {
                 .arg(
                     Arg::with_name("blob_compression_algorithm")
                         .long("blob_compression_algorithm")
-                        .help("blob compression algorithm")
+                        .help("blob compression algorithm (lz4_default as default)")
                         .takes_value(true)
                         .required(false)
-                        .default_value("None"),
+                        .default_value("lz4_default"),
                 )
                 .arg(
                     Arg::with_name("parent_bootstrap")

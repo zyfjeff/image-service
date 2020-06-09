@@ -506,7 +506,7 @@ pub struct OndiskChunkInfo {
     pub file_offset: u64,
     /// blob offset
     pub blob_offset: u64,
-    /// CompressAlgorithm and more
+    /// CHUNK_FLAG_COMPRESSED
     pub flags: u32,
     /// reserved
     pub reserved: u32,

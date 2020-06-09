@@ -26,11 +26,11 @@ impl FromStr for Algorithm {
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
-            "None" => Ok(Self::None),
-            "LZ4Default" => Ok(Self::LZ4Default),
+            "none" => Ok(Self::None),
+            "lz4_default" => Ok(Self::LZ4Default),
             _ => Err(Error::new(
                 ErrorKind::InvalidInput,
-                "compression algorithm should be None or LZ4Default",
+                "compression algorithm should be none or lz4_default",
             )),
         }
     }
