@@ -284,26 +284,8 @@ impl GlobalIOStats {
         }
     }
 
-    /// Have to construct json object list here.
     pub fn export_files_stats(&self) -> String {
-        let mut rs = String::new();
-        rs.push_str(&"[");
-        let mut first_counter = true;
-        for c in (*self.file_counters.read().unwrap()).values() {
-            // Files that are never opened have no metrics to be exported.
-            if c.total_fops.load(Ordering::Relaxed) == 0 {
-                continue;
-            }
-            if !first_counter {
-                rs.push_str(&",");
-            } else {
-                first_counter = false;
-            }
-            let m = serde_json::to_string(c).unwrap_or_else(|_| "Invalid item".to_string());
-            rs.push_str(&m);
-        }
-        rs.push_str(&"]");
-        rs
+        serde_json::to_string(&*self.file_counters.read().unwrap()).unwrap()
     }
 
     pub fn export_global_stats(&self) -> String {
