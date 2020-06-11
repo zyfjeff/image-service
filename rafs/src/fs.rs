@@ -41,6 +41,7 @@ const DOTDOT: &str = "..";
 pub struct RafsConfig {
     pub device: factory::Config,
     pub mode: String,
+    pub iostats_files: bool,
 }
 
 impl RafsConfig {
@@ -67,6 +68,8 @@ impl Rafs {
             initialized: false,
             ios: io_stats::ios_new(id),
         };
+
+        rafs.ios.toggle_files_recording(conf.iostats_files);
 
         Ok(rafs)
     }
