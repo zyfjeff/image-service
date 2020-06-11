@@ -180,6 +180,10 @@ impl GlobalIOStats {
         self.files_account_enabled.load(Ordering::Relaxed)
     }
 
+    pub fn toggle_files_recording(&self, switch: bool) {
+        self.files_account_enabled.store(switch, Ordering::Relaxed)
+    }
+
     pub fn ios_file_stats_update<T>(
         &self,
         ino: Inode,
@@ -309,6 +313,17 @@ pub fn export_files_stats(name: &Option<String>) -> Result<String, String> {
             }
             Err("No metrics counter was specified.".to_string())
         }
+    }
+}
+
+pub fn toggle_files_recording(name: &Option<String>, switch: bool) -> Result<(), String> {
+    if let Some(name) = name {
+        let ios_set = IOS_SET.read().unwrap();
+        let v = ios_set.get(name).ok_or_else(|| "No such id".to_string())?;
+        v.toggle_files_recording(switch);
+        Ok(())
+    } else {
+        Err("Invalid id passed!".to_string())
     }
 }
 
