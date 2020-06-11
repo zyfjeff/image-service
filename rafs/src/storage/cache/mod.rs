@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::io;
+use std::io::Result;
 use std::sync::Arc;
 
 use crate::metadata::RafsChunkInfo;
@@ -16,15 +16,15 @@ pub mod dummycache;
 
 // Rafs blob IO info
 pub struct RafsBio {
-    /// Reference to the chunk.
+    /// reference to the chunk
     pub chunkinfo: Arc<dyn RafsChunkInfo>,
     /// blob id of chunk
     pub blob_id: String,
     /// compression algorithm of chunk
-    pub compression_algorithm: compress::Algorithm,
-    /// offset within the block
+    pub compressor: compress::Algorithm,
+    /// offset within the chunk
     pub offset: u32,
-    /// size of data to transfer
+    /// size within the chunk
     pub size: usize,
     /// block size to read in one shot
     pub blksize: u32,
@@ -34,7 +34,7 @@ impl RafsBio {
     pub fn new(
         chunkinfo: Arc<dyn RafsChunkInfo>,
         blob_id: String,
-        compression_algorithm: compress::Algorithm,
+        compressor: compress::Algorithm,
         offset: u32,
         size: usize,
         blksize: u32,
@@ -42,7 +42,7 @@ impl RafsBio {
         RafsBio {
             chunkinfo,
             blob_id,
-            compression_algorithm,
+            compressor,
             offset,
             size,
             blksize,
@@ -55,27 +55,19 @@ pub trait RafsCache {
     fn has(&self, blk: Arc<dyn RafsChunkInfo>) -> bool;
 
     // do init after super block loaded
-    fn init(&mut self, sb_info: &RafsSuperMeta) -> io::Result<()>;
+    fn init(&mut self, sb_info: &RafsSuperMeta) -> Result<()>;
 
     // evict block data
-    fn evict(&self, blk: Arc<dyn RafsChunkInfo>) -> io::Result<()>;
+    fn evict(&self, blk: Arc<dyn RafsChunkInfo>) -> Result<()>;
 
     // flush cache
-    fn flush(&self) -> io::Result<()>;
+    fn flush(&self) -> Result<()>;
 
     // read a chunk data through cache, always used in decompressed cache
-    fn read(
-        &self,
-        blob_id: &str,
-        blk: Arc<dyn RafsChunkInfo>,
-        blksize: u32,
-        decompressed: &mut Vec<u8>,
-    ) -> io::Result<()>;
-
-    fn readv(&self, blob_id: &str, bufs: &[VolatileSlice], offset: u64) -> io::Result<usize>;
+    fn read(&self, bio: &RafsBio, bufs: &[VolatileSlice], offset: u64) -> Result<usize>;
 
     // write a chunk data through cache
-    fn write(&self, blob_id: &str, blk: Arc<dyn RafsChunkInfo>, buf: &[u8]) -> io::Result<usize>;
+    fn write(&self, blob_id: &str, blk: Arc<dyn RafsChunkInfo>, buf: &[u8]) -> Result<usize>;
 
     // release cache
     fn release(&mut self);

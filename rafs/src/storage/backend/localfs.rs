@@ -10,11 +10,11 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
 use std::sync::RwLock;
 
-use libc::{c_int, c_void, off64_t, preadv64, size_t};
 use vm_memory::VolatileSlice;
 
 use crate::storage::backend::request::ReqErr;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
+use crate::storage::utils::readv;
 use nydus_utils::readahead;
 
 #[derive(Debug, Default)]
@@ -85,8 +85,8 @@ impl LocalFs {
 }
 
 impl BlobBackend for LocalFs {
-    fn read(&self, blobid: &str, buf: &mut [u8], offset: u64) -> Result<usize> {
-        let fd = self.get_blob_fd(blobid)?;
+    fn read(&self, blob_id: &str, buf: &mut [u8], offset: u64) -> Result<usize> {
+        let fd = self.get_blob_fd(blob_id)?;
 
         debug!(
             "local blob file reading: offset={}, size={}",
@@ -99,30 +99,12 @@ impl BlobBackend for LocalFs {
         Ok(len)
     }
 
-    fn readv(&self, blobid: &str, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
-        let fd = self.get_blob_fd(blobid)?;
-
-        let iovecs: Vec<libc::iovec> = bufs
-            .iter()
-            .map(|s| libc::iovec {
-                iov_base: s.as_ptr() as *mut c_void,
-                iov_len: s.len() as size_t,
-            })
-            .collect();
-
-        if iovecs.is_empty() {
-            return Ok(0);
-        }
-
-        let ret = unsafe { preadv64(fd, &iovecs[0], iovecs.len() as c_int, offset as off64_t) };
-        if ret >= 0 {
-            Ok(ret as usize)
-        } else {
-            Err(Error::last_os_error())
-        }
+    fn readv(&self, blob_id: &str, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
+        let fd = self.get_blob_fd(blob_id)?;
+        readv(fd, bufs, offset)
     }
 
-    fn write(&self, _blobid: &str, _buf: &[u8], _offset: u64) -> Result<usize> {
+    fn write(&self, _blob_id: &str, _buf: &[u8], _offset: u64) -> Result<usize> {
         unimplemented!("write operation not supported with localfs");
     }
 
@@ -134,7 +116,7 @@ impl BlobBackendUploader for LocalFs {
 
     fn upload(
         &self,
-        blobid: &str,
+        blob_id: &str,
         mut reader: std::fs::File,
         _size: usize,
         _callback: fn((usize, usize)),
@@ -142,7 +124,7 @@ impl BlobBackendUploader for LocalFs {
         let blob = if self.use_blob_file() {
             Path::new(&self.blob_file).to_path_buf()
         } else {
-            Path::new(&self.dir).join(blobid)
+            Path::new(&self.dir).join(blob_id)
         };
 
         if let Some(parent) = blob.parent() {

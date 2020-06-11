@@ -10,7 +10,8 @@ use vm_memory::VolatileSlice;
 use crate::metadata::RafsChunkInfo;
 use crate::metadata::RafsSuperMeta;
 use crate::storage::backend::BlobBackend;
-use crate::storage::cache::RafsCache;
+use crate::storage::cache::{RafsBio, RafsCache};
+use crate::storage::utils::copyv;
 
 pub struct DummyCache {
     pub backend: Box<dyn BlobBackend + Sync + Send>,
@@ -39,27 +40,21 @@ impl RafsCache for DummyCache {
         Ok(())
     }
 
-    fn read(
-        &self,
-        blob_id: &str,
-        blk: Arc<dyn RafsChunkInfo>,
-        blksize: u32,
-        mut decompressed: &mut Vec<u8>,
-    ) -> Result<()> {
-        decompressed.resize(blk.compress_size() as usize, 0u8);
-        self.backend
-            .read(blob_id, &mut decompressed, blk.blob_compress_offset())?;
+    fn read(&self, bio: &RafsBio, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
+        let blob_id = bio.blob_id.as_str();
+        let chunk = bio.chunkinfo.clone();
 
-        if blk.is_compressed() {
-            let _decompressed = &utils::compress::decompress(decompressed.as_slice(), blksize)?;
-            decompressed.resize(_decompressed.len() as usize, 0u8);
-            decompressed.copy_from_slice(_decompressed);
+        if chunk.is_compressed() {
+            let mut compressed = vec![0u8; chunk.compress_size() as usize];
+            self.backend.read(
+                blob_id,
+                compressed.as_mut_slice(),
+                chunk.blob_compress_offset(),
+            )?;
+            let decompressed = &utils::compress::decompress(&compressed, bio.blksize)?;
+            return copyv(&decompressed, bufs, offset);
         }
 
-        Ok(())
-    }
-
-    fn readv(&self, blob_id: &str, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
         self.backend.readv(blob_id, bufs, offset)
     }
 

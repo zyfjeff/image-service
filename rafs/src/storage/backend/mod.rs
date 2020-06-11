@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::storage::utils::copyv;
 use vm_memory::VolatileSlice;
 
 #[allow(dead_code)]
@@ -23,13 +24,20 @@ pub mod localfs;
 // Rafs blob backend API
 pub trait BlobBackend {
     // Read a range of data from blob into the provided slice
-    fn read(&self, blobid: &str, buf: &mut [u8], offset: u64) -> Result<usize>;
+    fn read(&self, blob_id: &str, buf: &mut [u8], offset: u64) -> Result<usize>;
 
     // Read mutilple range of data from blob into the provided slices
-    fn readv(&self, blobid: &str, bufs: &[VolatileSlice], offset: u64) -> Result<usize>;
+    fn readv(&self, blob_id: &str, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
+        let size = bufs.iter().fold(0usize, move |size, s| size + s.len());
+        let mut src = vec![0u8; size];
+
+        self.read(blob_id, src.as_mut_slice(), offset)?;
+
+        copyv(&src, bufs, offset)
+    }
 
     // Write a range of data to blob from the provided slice
-    fn write(&self, blobid: &str, buf: &[u8], offset: u64) -> Result<usize>;
+    fn write(&self, blob_id: &str, buf: &[u8], offset: u64) -> Result<usize>;
 
     // Close a backend
     fn close(&mut self);
@@ -41,7 +49,7 @@ pub trait BlobBackendUploader {
 
     fn upload(
         &self,
-        blobid: &str,
+        blob_id: &str,
         source: Self::Reader,
         size: usize,
         callback: fn((usize, usize)),

@@ -305,27 +305,37 @@ impl<'a> RafsInode for OndiskInodeMapping<'a> {
 
     fn alloc_bio_desc(&self, offset: u64, size: usize) -> Result<RafsBioDesc> {
         let blksize = self.meta.block_size;
-        let mut desc = RafsBioDesc::new();
         let end = offset + size as u64;
 
+        let mut desc = RafsBioDesc::new();
+
         for idx in 0..self.inode.i_child_count {
-            let blk = self.get_chunk_info(idx)?;
-            if (blk.file_offset() + blksize as u64) <= offset {
+            let chunk = self.get_chunk_info(idx)?;
+            if (chunk.file_offset() + blksize as u64) <= offset {
                 continue;
-            } else if blk.file_offset() >= end {
+            } else if chunk.file_offset() >= end {
                 break;
             }
 
-            let blob_id = self.get_chunk_blob_id(blk.blob_index())?;
-            let file_start = cmp::max(blk.file_offset(), offset);
-            let file_end = cmp::min(blk.file_offset() + blksize as u64, end);
-            let compression_algorithm = self.meta.get_compression_algorithm();
+            let blob_id = self.get_chunk_blob_id(chunk.blob_index())?;
+            let chunk_start = if offset > chunk.file_offset() {
+                offset - chunk.file_offset()
+            } else {
+                0
+            };
+            let chunk_end = if end < (chunk.file_offset() + chunk.decompress_size() as u64) {
+                end - chunk.file_offset()
+            } else {
+                chunk.decompress_size() as u64
+            };
+
+            let compressor = self.meta.get_compressor();
             let bio = RafsBio::new(
-                blk.clone(),
+                chunk.clone(),
                 blob_id,
-                compression_algorithm,
-                (file_start - blk.file_offset()) as u32,
-                (file_end - file_start) as usize,
+                compressor,
+                chunk_start as u32,
+                (chunk_end - chunk_start) as usize,
                 blksize,
             );
 

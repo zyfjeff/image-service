@@ -93,10 +93,10 @@ fn main() -> Result<()> {
                 .arg(
                     Arg::with_name("compressor")
                         .long("compressor")
-                        .help("How blob will be compressed: lz4_default, none")
+                        .help("how blob will be compressed: none, lz4_block (default)")
                         .takes_value(true)
                         .required(false)
-                        .default_value("lz4_default"),
+                        .default_value("lz4_block"),
                 )
                 .arg(
                     Arg::with_name("parent_bootstrap")
@@ -161,8 +161,7 @@ fn main() -> Result<()> {
             }
         }
 
-        let blob_compression_algorithm =
-            matches.value_of("compressor").unwrap_or_default().parse()?;
+        let compressor = matches.value_of("compressor").unwrap_or_default().parse()?;
 
         let temp_blob_file = Temp::new_file().unwrap();
 
@@ -183,7 +182,7 @@ fn main() -> Result<()> {
             bootstrap_path.to_owned(),
             parent_bootstrap,
             blob_id.clone(),
-            blob_compression_algorithm,
+            compressor,
         )?;
         blob_id = ib.build()?;
 

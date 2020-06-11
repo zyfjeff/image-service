@@ -13,3 +13,6 @@ pub mod cache;
 
 #[allow(dead_code)]
 pub mod factory;
+
+#[allow(dead_code)]
+pub mod utils;

@@ -15,9 +15,9 @@ struct DummyTarget {
 }
 
 impl DummyTarget {
-    fn new(blobid: &str) -> DummyTarget {
+    fn new(blob_id: &str) -> DummyTarget {
         DummyTarget {
-            path: blobid.to_owned(),
+            path: blob_id.to_owned(),
         }
     }
 }

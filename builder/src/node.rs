@@ -120,7 +120,7 @@ impl Node {
         blob_hash: &mut Sha256,
         blob_compress_offset: &mut u64,
         blob_decompress_offset: &mut u64,
-        blob_compression_algorithm: compress::Algorithm,
+        compressor: compress::Algorithm,
     ) -> Result<OndiskDigest> {
         let mut inode_digest = OndiskDigest::new();
 
@@ -156,13 +156,13 @@ impl Node {
             chunk.block_id = OndiskDigest::from_buf(chunk_data.as_slice());
 
             // compress chunk data
-            let compressed = compress::compress(&chunk_data, blob_compression_algorithm)?;
+            let compressed = compress::compress(&chunk_data, compressor)?;
             let compressed_size = compressed.len();
             chunk.blob_compress_offset = *blob_compress_offset;
             chunk.blob_decompress_offset = *blob_decompress_offset;
             chunk.compress_size = compressed_size as u32;
             chunk.decompress_size = chunk_size as u32;
-            if !blob_compression_algorithm.is_none() {
+            if !compressor.is_none() {
                 chunk.flags |= CHUNK_FLAG_COMPRESSED;
             }
 
@@ -171,13 +171,13 @@ impl Node {
             *blob_decompress_offset += chunk_size as u64;
 
             trace!(
-                "\tbuilding chunk: file_offset {}, blob_compress_offset {}, compress_size {}, blob_decompress_offset {}, decompress_size {}, compression_algorithm {}, block_id {}",
+                "\tbuilding chunk: file_offset {}, blob_compress_offset {}, compress_size {}, blob_decompress_offset {}, decompress_size {}, compressor {}, block_id {}",
                 chunk.file_offset,
                 chunk.blob_compress_offset,
                 chunk.compress_size,
                 chunk.blob_decompress_offset,
                 chunk.decompress_size,
-                blob_compression_algorithm,
+                compressor,
                 chunk.block_id.to_string(),
             );
 

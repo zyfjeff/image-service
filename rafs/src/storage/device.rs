@@ -116,46 +116,14 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
             return self.fill_hole(bufs);
         }
 
-        if !self.bio.chunkinfo.is_compressed() {
-            return self.dev.rw_layer.readv(
-                &self.bio.blob_id.to_string(),
-                bufs,
-                offset + self.bio.chunkinfo.blob_compress_offset(),
-            );
-        }
-
-        let mut f_offset: u64 = offset;
-        let mut count: usize = 0;
-        if self.buf.is_empty() {
-            self.buf
-                .resize(self.bio.chunkinfo.decompress_size() as usize, 0u8);
-            self.dev.rw_layer.read(
-                &self.bio.blob_id.to_string(),
-                self.bio.chunkinfo.clone(),
-                self.bio.blksize,
-                &mut self.buf,
-            )?;
-        }
-        for buf in bufs.iter() {
-            let res = self.read_at_volatile(*buf, f_offset)?;
-            count += res;
-            f_offset += res as u64;
-            if res == 0
-                || count >= self.bio.size
-                || f_offset >= self.bio.offset as u64 + self.bio.size as u64
-            {
-                break;
-            }
-        }
-
-        Ok(count)
+        self.dev.rw_layer.read(&self.bio, bufs, offset)
     }
 
     fn write_at_volatile(&mut self, slice: VolatileSlice, _offset: u64) -> Result<usize, Error> {
         let mut buf = vec![0u8; slice.len()];
         slice.copy_to(&mut buf);
         let wbuf = if self.bio.chunkinfo.is_compressed() {
-            compress::compress(&buf, self.bio.compression_algorithm)?
+            compress::compress(&buf, self.bio.compressor)?
         } else {
             Cow::Owned(buf)
         };

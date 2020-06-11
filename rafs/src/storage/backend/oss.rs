@@ -9,8 +9,6 @@ use std::io::Result;
 use std::time::SystemTime;
 use url::Url;
 
-use vm_memory::VolatileSlice;
-
 use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, ReqErr, Request};
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 
@@ -192,10 +190,6 @@ impl BlobBackend for OSS {
                 Err(ReqErr::broken_pipe(err))
             })
             .map(|size| size as usize)
-    }
-
-    fn readv(&self, _blobid: &str, _bufs: &[VolatileSlice], _offset: u64) -> Result<usize> {
-        unimplemented!();
     }
 
     /// append data to oss object

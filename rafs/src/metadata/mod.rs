@@ -5,7 +5,6 @@
 
 //! Structs and Traits for RAFS file system meta data management.
 
-use std::cmp;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write;
@@ -79,7 +78,7 @@ pub struct RafsSuperMeta {
 }
 
 impl RafsSuperMeta {
-    pub fn get_compression_algorithm(&self) -> compress::Algorithm {
+    pub fn get_compressor(&self) -> compress::Algorithm {
         self.flags.to_be_bytes().last().unwrap().into()
     }
 }

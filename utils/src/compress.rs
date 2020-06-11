@@ -12,7 +12,7 @@ use std::str::FromStr;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Algorithm {
     None = 0,
-    LZ4Default = 1,
+    LZ4Block = 1,
 }
 
 impl fmt::Display for Algorithm {
@@ -27,10 +27,10 @@ impl FromStr for Algorithm {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s {
             "none" => Ok(Self::None),
-            "lz4_default" => Ok(Self::LZ4Default),
+            "lz4_block" => Ok(Self::LZ4Block),
             _ => Err(Error::new(
                 ErrorKind::InvalidInput,
-                "compression algorithm should be none or lz4_default",
+                "compression algorithm should be none or lz4_block",
             )),
         }
     }
@@ -39,7 +39,7 @@ impl FromStr for Algorithm {
 impl From<&u8> for Algorithm {
     fn from(src: &u8) -> Self {
         match *src {
-            1 => Self::LZ4Default,
+            1 => Self::LZ4Block,
             _ => Self::None,
         }
     }
@@ -51,7 +51,7 @@ impl Algorithm {
     }
 }
 
-// Algorithm::LZ4Default:
+// Algorithm::LZ4Block:
 // 1. Default ratio
 // 2. No prepend size
 
@@ -61,7 +61,7 @@ impl Algorithm {
 pub fn compress(src: &[u8], algorithm: Algorithm) -> Result<Cow<[u8]>> {
     match algorithm {
         Algorithm::None => Ok(Cow::Borrowed(src)),
-        Algorithm::LZ4Default => liblz4::block::compress(src, None, false).map(Cow::Owned),
+        Algorithm::LZ4Block => liblz4::block::compress(src, None, false).map(Cow::Owned),
     }
 }
 
