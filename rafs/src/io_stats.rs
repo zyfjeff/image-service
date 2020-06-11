@@ -189,7 +189,7 @@ impl GlobalIOStats {
     /// enabled per rafs.
     pub fn new_file_counter(&self, ino: Inode) {
         let mut counters = self.file_counters.write().unwrap();
-        if counters.get(&ino).is_none() {
+        if self.ios_files_enabled() && counters.get(&ino).is_none() {
             counters.insert(ino, Arc::new(InodeIOStats::default()));
         }
     }
