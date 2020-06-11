@@ -70,7 +70,8 @@ pub fn new(work_dir: &PathBuf, enable_cache: bool) -> Result<Nydusd> {
                 }}
                 {}
             }},
-            "mode": "direct"
+            "mode": "direct",
+            "iostats_files": true
         }}
         "###,
         work_dir.join("blobs"),
