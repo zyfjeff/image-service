@@ -15,5 +15,5 @@ xattr = "0.2.2"
 [dependencies.rafs]
 path = "../rafs"
 
-[dependencies.utils]
+[dependencies.nydus-utils]
 path = "../utils"

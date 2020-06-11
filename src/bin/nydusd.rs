@@ -43,10 +43,11 @@ use vmm_sys_util::eventfd::EventFd;
 
 use nydus_api::http::start_http_thread;
 use nydus_api::http_endpoint::{ApiError, ApiRequest, ApiResponsePayload, DaemonInfo, MountInfo};
+use nydus_utils::log_level_to_verbosity;
+#[cfg(feature = "fusedev")]
+use nydus_utils::{FuseChannel, FuseSession};
 use rafs::fs::{Rafs, RafsConfig};
 use rafs::io_stats;
-#[cfg(feature = "fusedev")]
-use utils::*;
 
 #[cfg(feature = "virtiofsd")]
 const VIRTIO_F_VERSION_1: u32 = 32;
@@ -674,7 +675,7 @@ fn main() -> Result<()> {
 
     stderrlog::new()
         .quiet(false)
-        .verbosity(utils::log_level_to_verbosity(v))
+        .verbosity(log_level_to_verbosity(v))
         .timestamp(stderrlog::Timestamp::Second)
         .init()
         .unwrap();

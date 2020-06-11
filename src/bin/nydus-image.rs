@@ -19,6 +19,7 @@ use std::io::{self, Error, ErrorKind, Result, Write};
 use std::os::linux::fs::MetadataExt;
 
 use nydus_builder::builder;
+use nydus_utils::log_level_to_verbosity;
 use rafs::storage::{backend, factory};
 
 fn upload_blob(
@@ -137,7 +138,7 @@ fn main() -> Result<()> {
     stderrlog::new()
         .quiet(false)
         .modules(vec![module_path!(), "nydus_builder", "rafs"])
-        .verbosity(utils::log_level_to_verbosity(v))
+        .verbosity(log_level_to_verbosity(v))
         .timestamp(stderrlog::Timestamp::Second)
         .init()
         .unwrap();

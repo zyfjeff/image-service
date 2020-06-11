@@ -16,7 +16,7 @@ use crate::metadata::RafsChunkInfo;
 use crate::metadata::RafsSuperMeta;
 use crate::storage::cache::RafsCache;
 use crate::storage::factory;
-use utils::compress;
+use nydus_utils::compress;
 
 static ZEROS: &[u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
 
@@ -163,7 +163,7 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
         let mut buf = vec![0u8; slice.len()];
         slice.copy_to(&mut buf);
         let wbuf = if self.bio.chunkinfo.is_compressed() {
-            utils::compress::compress(&buf, self.bio.compression_algorithm)?
+            compress::compress(&buf, self.bio.compression_algorithm)?
         } else {
             Cow::Owned(buf)
         };

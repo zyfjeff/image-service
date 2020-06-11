@@ -14,9 +14,9 @@ use std::str;
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 
+use nydus_utils::{compress, div_round_up};
 use rafs::metadata::layout::*;
 use rafs::metadata::*;
-use utils::compress;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Overlay {
@@ -156,7 +156,7 @@ impl Node {
             chunk.block_id = digest;
 
             // compress chunk data
-            let compressed = utils::compress::compress(&chunk_data, blob_compression_algorithm)?;
+            let compressed = compress::compress(&chunk_data, blob_compression_algorithm)?;
             let compressed_size = compressed.len();
             chunk.blob_offset = *blob_offset;
             chunk.compress_size = compressed_size as u32;
@@ -278,7 +278,7 @@ impl Node {
                 }
             }
             self.inode.i_child_count =
-                utils::div_round_up(self.inode.i_size, RAFS_DEFAULT_BLOCK_SIZE) as u32;
+                div_round_up(self.inode.i_size, RAFS_DEFAULT_BLOCK_SIZE) as u32;
         } else if self.is_symlink() {
             self.inode.i_flags |= INO_FLAG_SYMLINK as u64;
             let target_path = fs::read_link(&self.path)?;

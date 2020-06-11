@@ -12,7 +12,7 @@ use std::sync::RwLock;
 
 use crate::storage::backend::request::ReqErr;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
-use utils::readahead;
+use nydus_utils::readahead;
 
 #[derive(Debug, Default)]
 pub struct LocalFs {

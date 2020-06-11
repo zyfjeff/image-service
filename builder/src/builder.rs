@@ -13,9 +13,9 @@ use std::path::PathBuf;
 
 use crypto::sha2::Sha256;
 
+use nydus_utils::compress;
 use rafs::metadata::layout::*;
 use rafs::{RafsIoRead, RafsIoWrite};
-use utils::compress;
 
 use crate::node::*;
 

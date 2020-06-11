@@ -909,9 +909,9 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "log 0.4.8",
+ "nydus-utils",
  "rafs",
  "rust-crypto",
- "utils",
  "xattr",
 ]
 
@@ -928,17 +928,28 @@ dependencies = [
  "mktemp",
  "nydus-api",
  "nydus-builder",
+ "nydus-utils",
  "rafs",
  "rust-crypto",
  "serde_json",
  "stderrlog",
- "utils",
  "uuid 0.8.1",
  "vhost",
  "vhost-user-backend",
  "vm-memory",
  "vmm-sys-util",
  "xattr",
+]
+
+[[package]]
+name = "nydus-utils"
+version = "0.1.0"
+dependencies = [
+ "fuse-rs",
+ "libc",
+ "log 0.4.8",
+ "lz4",
+ "nix",
 ]
 
 [[package]]
@@ -1071,13 +1082,13 @@ dependencies = [
  "log 0.4.8",
  "madvise",
  "nix",
+ "nydus-utils",
  "reqwest",
  "rust-crypto",
  "serde 1.0.110",
  "serde_derive",
  "serde_json",
  "url",
- "utils",
  "vm-memory",
 ]
 
@@ -1779,17 +1790,6 @@ dependencies = [
  "idna",
  "matches",
  "percent-encoding",
-]
-
-[[package]]
-name = "utils"
-version = "0.1.0"
-dependencies = [
- "fuse-rs",
- "libc",
- "log 0.4.8",
- "lz4",
- "nix",
 ]
 
 [[package]]

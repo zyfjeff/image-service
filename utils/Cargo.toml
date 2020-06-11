@@ -1,5 +1,5 @@
 [package]
-name = "utils"
+name = "nydus-utils"
 version = "0.1.0"
 authors = ["The Ant Financial Nydus Developers"]
 edition = "2018"
