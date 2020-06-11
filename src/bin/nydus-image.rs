@@ -90,9 +90,9 @@ fn main() -> Result<()> {
                         .takes_value(true),
                 )
                 .arg(
-                    Arg::with_name("blob_compression_algorithm")
-                        .long("blob_compression_algorithm")
-                        .help("blob compression algorithm (lz4_default as default)")
+                    Arg::with_name("compressor")
+                        .long("compressor")
+                        .help("How blob will be compressed: lz4_default, none")
                         .takes_value(true)
                         .required(false)
                         .default_value("lz4_default"),
@@ -160,10 +160,8 @@ fn main() -> Result<()> {
             }
         }
 
-        let blob_compression_algorithm = matches
-            .value_of("blob_compression_algorithm")
-            .unwrap_or_default()
-            .parse()?;
+        let blob_compression_algorithm =
+            matches.value_of("compressor").unwrap_or_default().parse()?;
 
         let temp_blob_file = Temp::new_file().unwrap();
 
