@@ -673,10 +673,12 @@ impl_metadata_converter!(OndiskDigest);
 
 /// On disk xattr data.
 #[repr(C)]
-#[derive(Clone, Default, Debug)]
+#[derive(Copy, Clone, Default, Debug)]
 pub struct OndiskXAttrs {
     pub size: u64,
 }
+
+impl_metadata_converter!(OndiskXAttrs);
 
 impl OndiskXAttrs {
     pub fn new() -> Self {
@@ -686,12 +688,12 @@ impl OndiskXAttrs {
     }
 
     #[inline]
-    pub fn size(&self) -> usize {
+    pub fn size(self) -> usize {
         self.size as usize
     }
 
     #[inline]
-    pub fn aligned_size(&self) -> usize {
+    pub fn aligned_size(self) -> usize {
         align_to_rafs(self.size())
     }
 }

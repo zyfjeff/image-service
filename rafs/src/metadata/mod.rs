@@ -21,10 +21,12 @@ use self::direct::DirectMapping;
 use self::layout::*;
 use self::noop::NoopInodes;
 use crate::fs::{Inode, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
+use crate::metadata::cached::CachedInodes;
 use crate::storage::compress;
 use crate::storage::device::{RafsBio, RafsBioDesc};
 use crate::*;
 
+pub mod cached;
 pub mod direct;
 pub mod layout;
 pub mod noop;
@@ -59,7 +61,7 @@ macro_rules! impl_getter {
 }
 
 /// Cached Rafs super block metadata.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct RafsSuperMeta {
     pub magic: u32,
     pub version: u32,
@@ -182,8 +184,17 @@ impl RafsSuper {
                         self.inodes = inodes;
                     }
                     RafsMode::Cached => {
-                        // TODO: Support Rafs v5 cached mode
-                        unimplemented!();
+                        // TODO: PASS INODE TABLE
+                        let mut inode_table =
+                            OndiskInodeTable::new(sb.inode_table_entries() as usize);
+                        inode_table.load(r)?;
+
+                        let mut blob_table = OndiskBlobTable::new();
+                        blob_table.load(r, sb.blob_table_size() as usize)?;
+
+                        let mut inodes = Box::new(CachedInodes::new(self.meta, blob_table));
+                        inodes.load(r)?;
+                        self.inodes = inodes;
                     }
                 }
             }
