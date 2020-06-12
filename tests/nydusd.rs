@@ -39,12 +39,24 @@ pub struct Nydusd {
     mount_path: PathBuf,
 }
 
-pub fn new(work_dir: &PathBuf) -> Result<Nydusd> {
+pub fn new(work_dir: &PathBuf, enable_cache: bool) -> Result<Nydusd> {
     let mount_path = work_dir.join("mnt");
     fs::create_dir_all(mount_path.clone())?;
 
     let cache_path = work_dir.join("cache");
     fs::create_dir_all(cache_path.clone())?;
+
+    let cache = format!(
+        r###"
+        ,"cache": {{
+            "type": "blobcache",
+            "config": {{
+                "work_dir": {:?}
+            }}
+        }}
+    "###,
+        work_dir.join("cache")
+    );
 
     let config = format!(
         r###"
@@ -55,19 +67,14 @@ pub fn new(work_dir: &PathBuf) -> Result<Nydusd> {
                     "config": {{
                         "dir": {:?}
                     }}
-                }},
-                "cache": {{
-                    "type": "blobcache",
-                    "config": {{
-                        "work_dir": {:?}
-                    }}
                 }}
+                {}
             }},
             "mode": "direct"
         }}
         "###,
         work_dir.join("blobs"),
-        work_dir.join("cache"),
+        if enable_cache { cache } else { String::new() },
     );
 
     File::create(work_dir.join("config.json"))?.write_all(config.as_bytes())?;

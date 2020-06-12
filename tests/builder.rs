@@ -190,7 +190,7 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    pub fn build_parent(&mut self) -> Result<String> {
+    pub fn build_parent(&mut self, enable_compress: bool) -> Result<String> {
         let parent_dir = self.work_dir.join("parent");
 
         self.create_dir(&self.work_dir.join("blobs"))?;
@@ -206,11 +206,12 @@ impl<'a> Builder<'a> {
 
         exec(
             format!(
-                "{:?} create --bootstrap {:?} {:?} --backend_type localfs --backend_config '{{\"dir\": {:?}}}' --log_level error",
+                "{:?} create --bootstrap {:?} {:?} --backend_type localfs --backend_config '{{\"dir\": {:?}}}' --log_level error {}",
                 NYDUS_IMAGE,
                 self.work_dir.join("parent-bootstrap"),
                 parent_dir,
                 self.work_dir.join("blobs"),
+                if enable_compress { "" } else { "--compressor none" },
             )
             .as_str(),
         )?;
