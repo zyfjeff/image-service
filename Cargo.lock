@@ -1006,6 +1006,7 @@ dependencies = [
  "lz4-sys",
  "madvise",
  "nix",
+ "nydus-utils",
  "reqwest",
  "rust-crypto",
  "serde 1.0.110",

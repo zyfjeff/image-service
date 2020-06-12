@@ -71,7 +71,8 @@ impl RafsCache for DummyCache {
         true
     }
 
-    fn init(&mut self, _sb_meta: &RafsSuperMeta) -> Result<()> {
+    fn init(&mut self, _sb_meta: &RafsSuperMeta, blobs: Vec<&str>) -> Result<()> {
+        self.backend.init_blob(blobs);
         Ok(())
     }
 

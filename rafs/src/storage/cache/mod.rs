@@ -19,7 +19,7 @@ pub trait RafsCache {
     fn has(&self, blk: Arc<dyn RafsChunkInfo>) -> bool;
 
     // do init after super block loaded
-    fn init(&mut self, sb_info: &RafsSuperMeta) -> Result<()>;
+    fn init(&mut self, sb_info: &RafsSuperMeta, blobs: Vec<&str>) -> Result<()>;
 
     // evict block data
     fn evict(&self, blk: Arc<dyn RafsChunkInfo>) -> Result<()>;

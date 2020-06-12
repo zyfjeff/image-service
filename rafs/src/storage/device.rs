@@ -29,8 +29,8 @@ impl RafsDevice {
         })
     }
 
-    pub fn init(&mut self, sb_meta: &RafsSuperMeta) -> io::Result<()> {
-        self.rw_layer.init(sb_meta)
+    pub fn init(&mut self, sb_meta: &RafsSuperMeta, blobs: Vec<&str>) -> io::Result<()> {
+        self.rw_layer.init(sb_meta, blobs)
     }
 
     pub fn close(&mut self) -> io::Result<()> {

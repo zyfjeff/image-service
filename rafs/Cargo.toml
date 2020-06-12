@@ -27,6 +27,8 @@ url = "2.1.1"
 fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git", branch = "nydus" }
 vm-memory = ">=0.2.0"
 
+nydus-utils = { path = "../utils" }
+
 [features]
 fusedev = ["fuse-rs/fusedev"]
 virtio-fs = ["fuse-rs/virtiofs"]

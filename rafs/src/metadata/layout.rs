@@ -433,6 +433,10 @@ impl OndiskBlobTable {
 
         Ok(())
     }
+
+    pub fn get_all(&self) -> Vec<String> {
+        self.data.clone()
+    }
 }
 
 /// Ondisk rafs inode

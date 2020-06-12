@@ -273,6 +273,10 @@ pub trait RafsSuperInodes {
     fn get_inode(&self, ino: Inode) -> Result<Arc<dyn RafsInode>>;
 
     fn get_max_ino(&self) -> Inode;
+
+    fn get_blobs(&self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 /// Trait to access Rafs Inode Information.

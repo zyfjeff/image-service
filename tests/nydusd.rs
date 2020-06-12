@@ -67,7 +67,8 @@ pub fn new(work_dir: &PathBuf, enable_cache: bool, rafs_mode: RafsMode) -> Resul
                 "backend": {{
                     "type": "localfs",
                     "config": {{
-                        "dir": {:?}
+                        "dir": {:?},
+                        "readahead": "true"
                     }}
                 }}
                 {}

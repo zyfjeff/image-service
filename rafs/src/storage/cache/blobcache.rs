@@ -266,8 +266,9 @@ impl RafsCache for BlobCache {
             .contains_key(blk.block_id().data())
     }
 
-    fn init(&mut self, sb_meta: &RafsSuperMeta) -> Result<()> {
+    fn init(&mut self, sb_meta: &RafsSuperMeta, blobs: Vec<&str>) -> Result<()> {
         self.blksize = sb_meta.block_size;
+        self.backend.init_blob(blobs);
         Ok(())
     }
 
