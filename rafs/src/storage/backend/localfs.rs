@@ -14,8 +14,7 @@ use vm_memory::VolatileSlice;
 
 use crate::storage::backend::request::ReqErr;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
-use crate::storage::utils::readv;
-use nydus_utils::readahead;
+use crate::storage::utils::{readahead, readv};
 
 #[derive(Debug, Default)]
 pub struct LocalFs {

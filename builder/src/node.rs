@@ -14,9 +14,10 @@ use std::str;
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 
-use nydus_utils::{compress, div_round_up};
+use nydus_utils::div_round_up;
 use rafs::metadata::layout::*;
 use rafs::metadata::*;
+use rafs::storage::compress;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Overlay {

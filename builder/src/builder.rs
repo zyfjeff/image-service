@@ -13,8 +13,8 @@ use std::path::PathBuf;
 
 use crypto::sha2::Sha256;
 
-use nydus_utils::compress;
 use rafs::metadata::layout::*;
+use rafs::storage::compress;
 use rafs::{RafsIoRead, RafsIoWrite};
 
 use crate::node::*;

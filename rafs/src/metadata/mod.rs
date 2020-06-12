@@ -22,9 +22,9 @@ use self::layout::*;
 use self::noop::NoopInodes;
 use crate::fs::{Inode, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
 use crate::storage::cache::RafsBio;
+use crate::storage::compress;
 use crate::storage::device::RafsBioDesc;
 use crate::*;
-use nydus_utils::compress;
 
 pub mod direct;
 pub mod layout;

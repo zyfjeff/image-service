@@ -10,7 +10,7 @@ use std::slice;
 
 use crate::metadata::layout::*;
 use crate::metadata::*;
-use nydus_utils::readahead;
+use crate::storage::utils::readahead;
 
 /// Impl get / set accessor for an object.
 #[allow(unused_macros)]

@@ -14,8 +14,8 @@ use vm_memory::VolatileSlice;
 use crate::metadata::RafsSuperMeta;
 use crate::storage::cache::RafsBio;
 use crate::storage::cache::RafsCache;
+use crate::storage::compress;
 use crate::storage::factory;
-use nydus_utils::compress;
 
 static ZEROS: &[u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
 

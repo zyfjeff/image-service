@@ -11,8 +11,8 @@ use crate::metadata::RafsChunkInfo;
 use crate::metadata::RafsSuperMeta;
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::{RafsBio, RafsCache};
+use crate::storage::compress;
 use crate::storage::utils::copyv;
-use nydus_utils::compress;
 
 pub struct DummyCache {
     pub backend: Box<dyn BlobBackend + Sync + Send>,

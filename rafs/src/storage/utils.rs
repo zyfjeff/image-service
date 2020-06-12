@@ -51,3 +51,19 @@ pub fn copyv(src: &[u8], dst: &[VolatileSlice], offset: u64, max_size: usize) ->
 
     Ok(size)
 }
+
+/// A customized readahead function to ask kernel to fault in all pages
+/// from offset to end. Call libc::readahead on every 128KB range because
+/// otherwise readahead stops at kernel bdi readahead size which is 128KB
+/// by default.
+pub fn readahead(fd: libc::c_int, mut offset: u64, end: u64) {
+    // Kernel default 128KB readahead size
+    let count = 128 << 10;
+    loop {
+        if offset >= end {
+            break;
+        }
+        unsafe { libc::readahead(fd, offset as i64, count) };
+        offset += count as u64;
+    }
+}
