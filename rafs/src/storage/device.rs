@@ -6,13 +6,14 @@ use std::borrow::Cow;
 use std::cmp;
 use std::io;
 use std::io::Error;
+use std::sync::Arc;
 
 use fuse_rs::api::filesystem::{ZeroCopyReader, ZeroCopyWriter};
 use fuse_rs::transport::FileReadWriteVolatile;
 use vm_memory::VolatileSlice;
 
+use crate::metadata::RafsChunkInfo;
 use crate::metadata::RafsSuperMeta;
-use crate::storage::cache::RafsBio;
 use crate::storage::cache::RafsCache;
 use crate::storage::compress;
 use crate::storage::factory;
@@ -170,6 +171,42 @@ impl RafsBioDesc {
     pub fn new() -> Self {
         RafsBioDesc {
             ..Default::default()
+        }
+    }
+}
+
+// Rafs blob IO info
+pub struct RafsBio {
+    /// reference to the chunk
+    pub chunkinfo: Arc<dyn RafsChunkInfo>,
+    /// blob id of chunk
+    pub blob_id: String,
+    /// compression algorithm of chunk
+    pub compressor: compress::Algorithm,
+    /// offset within the chunk
+    pub offset: u32,
+    /// size within the chunk
+    pub size: usize,
+    /// block size to read in one shot
+    pub blksize: u32,
+}
+
+impl RafsBio {
+    pub fn new(
+        chunkinfo: Arc<dyn RafsChunkInfo>,
+        blob_id: String,
+        compressor: compress::Algorithm,
+        offset: u32,
+        size: usize,
+        blksize: u32,
+    ) -> Self {
+        RafsBio {
+            chunkinfo,
+            blob_id,
+            compressor,
+            offset,
+            size,
+            blksize,
         }
     }
 }

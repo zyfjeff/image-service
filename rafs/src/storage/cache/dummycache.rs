@@ -10,8 +10,9 @@ use vm_memory::VolatileSlice;
 use crate::metadata::RafsChunkInfo;
 use crate::metadata::RafsSuperMeta;
 use crate::storage::backend::BlobBackend;
-use crate::storage::cache::{RafsBio, RafsCache};
+use crate::storage::cache::RafsCache;
 use crate::storage::compress;
+use crate::storage::device::RafsBio;
 use crate::storage::utils::copyv;
 
 pub struct DummyCache {

@@ -7,48 +7,12 @@ use std::sync::Arc;
 
 use crate::metadata::RafsChunkInfo;
 use crate::metadata::RafsSuperMeta;
-use crate::storage::compress;
+use crate::storage::device::RafsBio;
 
 use vm_memory::VolatileSlice;
 
 pub mod blobcache;
 pub mod dummycache;
-
-// Rafs blob IO info
-pub struct RafsBio {
-    /// reference to the chunk
-    pub chunkinfo: Arc<dyn RafsChunkInfo>,
-    /// blob id of chunk
-    pub blob_id: String,
-    /// compression algorithm of chunk
-    pub compressor: compress::Algorithm,
-    /// offset within the chunk
-    pub offset: u32,
-    /// size within the chunk
-    pub size: usize,
-    /// block size to read in one shot
-    pub blksize: u32,
-}
-
-impl RafsBio {
-    pub fn new(
-        chunkinfo: Arc<dyn RafsChunkInfo>,
-        blob_id: String,
-        compressor: compress::Algorithm,
-        offset: u32,
-        size: usize,
-        blksize: u32,
-    ) -> Self {
-        RafsBio {
-            chunkinfo,
-            blob_id,
-            compressor,
-            offset,
-            size,
-            blksize,
-        }
-    }
-}
 
 pub trait RafsCache {
     // whether has a block data

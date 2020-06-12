@@ -14,8 +14,9 @@ use vm_memory::VolatileSlice;
 use crate::metadata::layout::OndiskDigest;
 use crate::metadata::{RafsChunkInfo, RafsDigest, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
-use crate::storage::cache::{RafsBio, RafsCache};
+use crate::storage::cache::RafsCache;
 use crate::storage::compress;
+use crate::storage::device::RafsBio;
 use crate::storage::utils::{copyv, readv};
 
 #[derive(Clone)]

@@ -21,9 +21,8 @@ use self::direct::DirectMapping;
 use self::layout::*;
 use self::noop::NoopInodes;
 use crate::fs::{Inode, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
-use crate::storage::cache::RafsBio;
 use crate::storage::compress;
-use crate::storage::device::RafsBioDesc;
+use crate::storage::device::{RafsBio, RafsBioDesc};
 use crate::*;
 
 pub mod direct;
