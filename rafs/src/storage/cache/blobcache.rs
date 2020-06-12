@@ -16,6 +16,7 @@ use crate::metadata::{RafsChunkInfo, RafsDigest, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::{RafsBio, RafsCache};
 use crate::storage::utils::{copyv, readv};
+use nydus_utils::compress;
 
 #[derive(Clone)]
 enum CacheStatus {
@@ -167,7 +168,7 @@ impl BlobCache {
         )?;
 
         if chunk.is_compressed() {
-            let decompressed = &utils::compress::decompress(&chunk_data, bio.blksize)?;
+            let decompressed = &compress::decompress(&chunk_data, bio.blksize)?;
             cache_entry.status = CacheStatus::Ready;
             cache_entry.write(decompressed)?;
             return copyv(&decompressed, bufs, offset);

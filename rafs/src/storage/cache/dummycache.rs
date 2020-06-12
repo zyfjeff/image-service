@@ -12,6 +12,7 @@ use crate::metadata::RafsSuperMeta;
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::{RafsBio, RafsCache};
 use crate::storage::utils::copyv;
+use nydus_utils::compress;
 
 pub struct DummyCache {
     pub backend: Box<dyn BlobBackend + Sync + Send>,
@@ -51,11 +52,12 @@ impl RafsCache for DummyCache {
                 compressed.as_mut_slice(),
                 chunk.blob_compress_offset(),
             )?;
-            let decompressed = &utils::compress::decompress(&compressed, bio.blksize)?;
+            let decompressed = &compress::decompress(&compressed, bio.blksize)?;
             return copyv(&decompressed, bufs, offset);
         }
 
-        self.backend.readv(blob_id, bufs, offset)
+        self.backend
+            .readv(blob_id, bufs, offset + chunk.blob_decompress_offset())
     }
 
     fn write(&self, blob_id: &str, blk: Arc<dyn RafsChunkInfo>, buf: &[u8]) -> Result<usize> {

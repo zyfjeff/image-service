@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::metadata::RafsChunkInfo;
 use crate::metadata::RafsSuperMeta;
-use utils::compress;
+use nydus_utils::compress;
 
 use vm_memory::VolatileSlice;
 
