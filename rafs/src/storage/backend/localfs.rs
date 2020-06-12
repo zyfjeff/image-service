@@ -99,9 +99,15 @@ impl BlobBackend for LocalFs {
         Ok(len)
     }
 
-    fn readv(&self, blob_id: &str, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
+    fn readv(
+        &self,
+        blob_id: &str,
+        bufs: &[VolatileSlice],
+        offset: u64,
+        max_size: usize,
+    ) -> Result<usize> {
         let fd = self.get_blob_fd(blob_id)?;
-        readv(fd, bufs, offset)
+        readv(fd, bufs, offset, max_size)
     }
 
     fn write(&self, _blob_id: &str, _buf: &[u8], _offset: u64) -> Result<usize> {

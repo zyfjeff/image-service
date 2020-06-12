@@ -52,8 +52,8 @@ impl BlobCacheEntry {
         Ok(())
     }
 
-    fn readv(&self, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
-        readv(self.fd, bufs, offset)
+    fn readv(&self, bufs: &[VolatileSlice], offset: u64, max_size: usize) -> Result<usize> {
+        readv(self.fd, bufs, offset, max_size)
     }
 
     fn write(&self, src: &[u8]) -> Result<usize> {
@@ -141,7 +141,7 @@ impl BlobCache {
                 chunk.block_id().to_string(),
                 chunk.compress_size()
             );
-            return cache_entry.readv(bufs, offset + chunk.blob_decompress_offset());
+            return cache_entry.readv(bufs, offset + chunk.blob_decompress_offset(), bio.size);
         }
 
         // try to recovery cache from disk
@@ -155,7 +155,7 @@ impl BlobCache {
                     chunk.compress_size()
                 );
                 cache_entry.status = CacheStatus::Ready;
-                return copyv(&decompressed, bufs, offset);
+                return copyv(&decompressed, bufs, offset, bio.size);
             }
         }
 
@@ -171,12 +171,12 @@ impl BlobCache {
             let decompressed = &compress::decompress(&chunk_data, bio.blksize)?;
             cache_entry.status = CacheStatus::Ready;
             cache_entry.write(decompressed)?;
-            return copyv(&decompressed, bufs, offset);
+            return copyv(&decompressed, bufs, offset, bio.size);
         }
 
         cache_entry.status = CacheStatus::Ready;
         cache_entry.write(&chunk_data)?;
-        copyv(&chunk_data, bufs, offset)
+        copyv(&chunk_data, bufs, offset, bio.size)
     }
 }
 

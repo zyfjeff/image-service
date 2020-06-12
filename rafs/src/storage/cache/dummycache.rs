@@ -53,11 +53,15 @@ impl RafsCache for DummyCache {
                 chunk.blob_compress_offset(),
             )?;
             let decompressed = &compress::decompress(&compressed, bio.blksize)?;
-            return copyv(&decompressed, bufs, offset);
+            return copyv(&decompressed, bufs, offset, bio.size);
         }
 
-        self.backend
-            .readv(blob_id, bufs, offset + chunk.blob_decompress_offset())
+        self.backend.readv(
+            blob_id,
+            bufs,
+            offset + chunk.blob_decompress_offset(),
+            bio.size,
+        )
     }
 
     fn write(&self, blob_id: &str, blk: Arc<dyn RafsChunkInfo>, buf: &[u8]) -> Result<usize> {

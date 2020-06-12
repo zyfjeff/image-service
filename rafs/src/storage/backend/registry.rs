@@ -7,8 +7,6 @@ use std::fs::File;
 use std::io::Result;
 use url::Url;
 
-use vm_memory::VolatileSlice;
-
 use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, ReqErr, Request};
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 
@@ -125,10 +123,6 @@ impl BlobBackend for Registry {
                 Err(ReqErr::broken_pipe(err))
             })
             .map(|size| size as usize)
-    }
-
-    fn readv(&self, _blobid: &str, _bufs: &[VolatileSlice], _offset: u64) -> Result<usize> {
-        unimplemented!();
     }
 
     fn write(&self, _blob_id: &str, _buf: &[u8], _offset: u64) -> Result<usize> {

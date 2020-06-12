@@ -38,8 +38,14 @@ impl BlobBackend for Dummy {
         Ok(buf.len())
     }
 
-    fn readv(&self, _blobid: &str, _bufs: &[VolatileSlice], _offset: u64) -> Result<usize> {
-        Ok(0)
+    fn readv(
+        &self,
+        _blobid: &str,
+        bufs: &[VolatileSlice],
+        _offset: u64,
+        _max_size: usize,
+    ) -> Result<usize> {
+        Ok(bufs.iter().fold(0usize, move |size, s| size + s.len()))
     }
 
     // Write a range of data to blob from the provided source

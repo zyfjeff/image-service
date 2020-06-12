@@ -27,13 +27,19 @@ pub trait BlobBackend {
     fn read(&self, blob_id: &str, buf: &mut [u8], offset: u64) -> Result<usize>;
 
     // Read mutilple range of data from blob into the provided slices
-    fn readv(&self, blob_id: &str, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
+    fn readv(
+        &self,
+        blob_id: &str,
+        bufs: &[VolatileSlice],
+        offset: u64,
+        max_size: usize,
+    ) -> Result<usize> {
         let size = bufs.iter().fold(0usize, move |size, s| size + s.len());
         let mut src = vec![0u8; size];
 
         self.read(blob_id, src.as_mut_slice(), offset)?;
 
-        copyv(&src, bufs, offset)
+        copyv(&src, bufs, offset, max_size)
     }
 
     // Write a range of data to blob from the provided slice
