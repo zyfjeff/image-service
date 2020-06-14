@@ -367,7 +367,7 @@ impl OndiskBlobTable {
                 Ok(())
             })
             .collect::<Result<()>>()?;
-        w.write_all(&[0].repeat(align_to_rafs(size) - size))?;
+        w.write_all(&vec![0u8; align_to_rafs(size) - size])?;
 
         Ok(size)
     }
@@ -454,14 +454,14 @@ impl OndiskInode {
 
         w.write_all(name)?;
         size += name.len();
-        let padding = [0].repeat(self.i_name_size as usize - name.len());
+        let padding = vec![0u8; self.i_name_size as usize - name.len()];
         w.write_all(&padding)?;
         size += padding.len();
 
         if !symlink.is_empty() {
             w.write_all(symlink)?;
             size += symlink.len();
-            let padding = [0].repeat(self.i_symlink_size as usize - symlink.len());
+            let padding = vec![0u8; self.i_symlink_size as usize - symlink.len()];
             w.write_all(&padding)?;
             size += padding.len();
         }
@@ -717,7 +717,7 @@ impl XAttrs {
         }
 
         let final_size = align_to_rafs(size);
-        let padding = [0].repeat(final_size - size);
+        let padding = vec![0u8; final_size - size];
         w.write_all(&padding)?;
         size += padding.len();
 
