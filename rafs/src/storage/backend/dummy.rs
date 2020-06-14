@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::io::Result;
 use std::sync::{Arc, Mutex, RwLock};
+
 use vm_memory::VolatileSlice;
 
 use crate::storage::backend::BlobBackend;
@@ -12,14 +13,6 @@ use crate::storage::backend::BlobBackend;
 #[derive(Default, Clone)]
 struct DummyTarget {
     path: String,
-}
-
-impl DummyTarget {
-    fn new(blob_id: &str) -> DummyTarget {
-        DummyTarget {
-            path: blob_id.to_owned(),
-        }
-    }
 }
 
 pub struct Dummy {
