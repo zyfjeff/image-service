@@ -31,7 +31,7 @@ pub trait RafsCache {
     fn read(&self, bio: &RafsBio, bufs: &[VolatileSlice], offset: u64) -> Result<usize>;
 
     // write a chunk data through cache
-    fn write(&self, blob_id: &str, blk: Arc<dyn RafsChunkInfo>, buf: &[u8]) -> Result<usize>;
+    fn write(&self, blob_id: &str, blk: &Arc<dyn RafsChunkInfo>, buf: &[u8]) -> Result<usize>;
 
     // release cache
     fn release(&mut self);

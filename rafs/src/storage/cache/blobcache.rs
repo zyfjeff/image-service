@@ -116,7 +116,6 @@ impl BlocCacheState {
 
 pub struct BlobCache {
     cache: RwLock<BlocCacheState>,
-    work_dir: String,
     blksize: u32,
     pub backend: Box<dyn BlobBackend + Sync + Send>,
 }
@@ -299,7 +298,7 @@ impl RafsCache for BlobCache {
         }
     }
 
-    fn write(&self, _blob_id: &str, _blk: Arc<dyn RafsChunkInfo>, _buf: &[u8]) -> Result<usize> {
+    fn write(&self, _blob_id: &str, _blk: &Arc<dyn RafsChunkInfo>, _buf: &[u8]) -> Result<usize> {
         Err(Error::from_raw_os_error(libc::ENOSYS))
     }
 
@@ -337,7 +336,6 @@ pub fn new<S: std::hash::BuildHasher>(
             file_map: HashMap::new(),
             work_dir: String::from(work_dir),
         }),
-        work_dir: String::from(work_dir),
         backend,
         blksize: (1024u32 * 1024u32),
     })

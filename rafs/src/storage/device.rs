@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::borrow::Cow;
 use std::cmp;
 use std::io;
 use std::io::Error;
@@ -10,13 +9,11 @@ use std::sync::Arc;
 
 use fuse_rs::api::filesystem::{ZeroCopyReader, ZeroCopyWriter};
 use fuse_rs::transport::FileReadWriteVolatile;
-use vm_memory::VolatileSlice;
+use vm_memory::{Bytes, VolatileSlice};
 
-use crate::metadata::RafsChunkInfo;
-use crate::metadata::RafsSuperMeta;
+use crate::metadata::{RafsChunkInfo, RafsSuperMeta};
 use crate::storage::cache::RafsCache;
-use crate::storage::compress;
-use crate::storage::factory;
+use crate::storage::{compress, factory};
 
 static ZEROS: &[u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
 
@@ -66,17 +63,12 @@ impl RafsDevice {
 struct RafsBioDevice<'a> {
     bio: &'a RafsBio,
     dev: &'a RafsDevice,
-    buf: Vec<u8>,
 }
 
 impl<'a> RafsBioDevice<'a> {
     fn new(bio: &'a RafsBio, b: &'a RafsDevice) -> io::Result<Self> {
         // FIXME: make sure bio is valid
-        Ok(RafsBioDevice {
-            bio,
-            dev: b,
-            buf: Vec::new(),
-        })
+        Ok(RafsBioDevice { bio, dev: b })
     }
 
     fn blob_offset(&self) -> u64 {
@@ -85,26 +77,18 @@ impl<'a> RafsBioDevice<'a> {
 }
 
 impl FileReadWriteVolatile for RafsBioDevice<'_> {
-    fn read_volatile(&mut self, slice: VolatileSlice) -> Result<usize, Error> {
+    fn read_volatile(&mut self, _slice: VolatileSlice) -> Result<usize, Error> {
         // Skip because we don't really use it
-        Ok(slice.len())
+        unimplemented!();
     }
 
-    fn write_volatile(&mut self, slice: VolatileSlice) -> Result<usize, Error> {
+    fn write_volatile(&mut self, _slice: VolatileSlice) -> Result<usize, Error> {
         // Skip because we don't really use it
-        Ok(slice.len())
+        unimplemented!();
     }
 
-    fn read_at_volatile(&mut self, slice: VolatileSlice, offset: u64) -> Result<usize, Error> {
-        let count = cmp::min(
-            cmp::min(
-                self.bio.offset as usize + self.bio.size - offset as usize,
-                slice.len(),
-            ),
-            self.buf.len() - offset as usize,
-        );
-        slice.copy_from(&self.buf[offset as usize..offset as usize + count]);
-        Ok(count)
+    fn read_at_volatile(&mut self, _slice: VolatileSlice, _offset: u64) -> Result<usize, Error> {
+        unimplemented!();
     }
 
     // The default read_vectored_at_volatile only read to the first slice, so we have to overload it.
@@ -121,18 +105,19 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
     }
 
     fn write_at_volatile(&mut self, slice: VolatileSlice, _offset: u64) -> Result<usize, Error> {
-        let mut buf = vec![0u8; slice.len()];
-        slice.copy_to(&mut buf);
-        let wbuf = if self.bio.chunkinfo.is_compressed() {
-            compress::compress(&buf, self.bio.compressor)?
+        // It's safe because the virtio buffer shouldn't be accessed concurrently.
+        let buf = unsafe { std::slice::from_raw_parts_mut(slice.as_ptr(), slice.len()) };
+
+        if self.bio.chunkinfo.is_compressed() {
+            let wbuf = compress::compress(buf, self.bio.compressor)?;
+            self.dev
+                .rw_layer
+                .write(&self.bio.blob_id, &self.bio.chunkinfo, &wbuf)
         } else {
-            Cow::Owned(buf)
-        };
-        self.dev
-            .rw_layer
-            .write(&self.bio.blob_id, self.bio.chunkinfo.clone(), &wbuf)?;
-        // Need to return slice length because that's what upper layer asks to write
-        Ok(slice.len())
+            self.dev
+                .rw_layer
+                .write(&self.bio.blob_id, &self.bio.chunkinfo, buf)
+        }
     }
 }
 
@@ -140,16 +125,25 @@ impl RafsBioDevice<'_> {
     fn fill_hole(&self, bufs: &[VolatileSlice]) -> Result<usize, Error> {
         let mut count: usize = 0;
         let mut remain: usize = self.bio.size;
+
         for &buf in bufs.iter() {
             let mut total = cmp::min(remain, buf.len());
+            let mut offset = 0;
             while total > 0 {
                 let cnt = cmp::min(total, ZEROS.len());
-                buf.copy_from(&ZEROS[ZEROS.len() - cnt..]);
+                buf.write_slice(&ZEROS[0..cnt], offset).map_err(|_| {
+                    Error::new(
+                        std::io::ErrorKind::Other,
+                        "Decompression failed. Input invalid or too long?",
+                    )
+                })?;
                 count += cnt;
                 remain -= cnt;
                 total -= cnt;
+                offset += cnt;
             }
         }
+
         Ok(count)
     }
 }
@@ -173,7 +167,7 @@ impl RafsBioDesc {
     }
 }
 
-// Rafs blob IO info
+/// Rafs blob IO info
 pub struct RafsBio {
     /// reference to the chunk
     pub chunkinfo: Arc<dyn RafsChunkInfo>,

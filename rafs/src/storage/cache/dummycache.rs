@@ -130,7 +130,7 @@ impl RafsCache for DummyCache {
         self.alloc_decompress(src_buf.as_mut_slice(), bio, bufs, offset, d_size)
     }
 
-    fn write(&self, blob_id: &str, blk: Arc<dyn RafsChunkInfo>, buf: &[u8]) -> Result<usize> {
+    fn write(&self, blob_id: &str, blk: &Arc<dyn RafsChunkInfo>, buf: &[u8]) -> Result<usize> {
         self.backend.write(blob_id, buf, blk.blob_compress_offset())
     }
 

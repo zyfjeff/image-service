@@ -1,9 +1,13 @@
+// Copyright 2020 Ant Financial. All rights reserved.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 use std::alloc::Layout;
-use std::io::{Error, Result};
+use std::io::{Error, ErrorKind, Result};
 use std::os::unix::io::RawFd;
 
 use libc::{c_int, c_void, off64_t, preadv64, size_t};
-use vm_memory::VolatileSlice;
+use vm_memory::{Bytes, VolatileSlice};
 
 pub fn readv(fd: RawFd, bufs: &[VolatileSlice], offset: u64, max_size: usize) -> Result<usize> {
     let mut size: usize = 0;
@@ -27,11 +31,17 @@ pub fn readv(fd: RawFd, bufs: &[VolatileSlice], offset: u64, max_size: usize) ->
         return Ok(0);
     }
 
-    let ret = unsafe { preadv64(fd, &iovecs[0], iovecs.len() as c_int, offset as off64_t) };
-    if ret >= 0 {
-        Ok(ret as usize)
-    } else {
-        Err(Error::last_os_error())
+    loop {
+        let ret = unsafe { preadv64(fd, &iovecs[0], iovecs.len() as c_int, offset as off64_t) };
+        if ret >= 0 {
+            return Ok(ret as usize);
+        }
+
+        let err = Error::last_os_error();
+        // Retry if the IO is interrupted by signal.
+        if err.kind() != ErrorKind::Interrupted {
+            return Err(err);
+        }
     }
 }
 
@@ -45,7 +55,12 @@ pub fn copyv(src: &[u8], dst: &[VolatileSlice], offset: u64, max_size: usize) ->
         } else {
             s.len()
         };
-        s.copy_from(&src[offset..offset + len]);
+        s.write_slice(&src[offset..offset + len], 0).map_err(|_| {
+            Error::new(
+                std::io::ErrorKind::Other,
+                "Decompression failed. Input invalid or too long?",
+            )
+        })?;
         offset += len;
         size += len;
     }
@@ -53,10 +68,10 @@ pub fn copyv(src: &[u8], dst: &[VolatileSlice], offset: u64, max_size: usize) ->
     Ok(size)
 }
 
-/// A customized readahead function to ask kernel to fault in all pages
-/// from offset to end. Call libc::readahead on every 128KB range because
-/// otherwise readahead stops at kernel bdi readahead size which is 128KB
-/// by default.
+/// A customized readahead function to ask kernel to fault in all pages from offset to end.
+///
+/// Call libc::readahead on every 128KB range because otherwise readahead stops at kernel bdi
+/// readahead size which is 128KB by default.
 pub fn readahead(fd: libc::c_int, mut offset: u64, end: u64) {
     // Kernel default 128KB readahead size
     let count = 128 << 10;
@@ -70,8 +85,8 @@ pub fn readahead(fd: libc::c_int, mut offset: u64, end: u64) {
 }
 
 pub struct DataBuf {
-    pub size: usize,
     layout: Layout,
+    size: usize,
     ptr: *mut u8,
 }
 
