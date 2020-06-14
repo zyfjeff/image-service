@@ -6,9 +6,8 @@
 
 #[macro_use]
 extern crate log;
-extern crate serde;
 #[macro_use]
-extern crate serde_derive;
+extern crate serde;
 
 use std::fs::File;
 use std::io::{Read, Write};
