@@ -9,7 +9,8 @@ use std::io::Result;
 use std::time::SystemTime;
 use url::Url;
 
-use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, ReqErr, Request};
+use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, Request};
+use crate::storage::backend::ReqErr;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 
 const HEADER_DATE: &str = "Date";

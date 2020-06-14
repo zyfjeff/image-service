@@ -2,8 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::storage::utils::copyv;
+use std::io::{Read, Result};
+
 use vm_memory::VolatileSlice;
+
+use crate::storage::utils::copyv;
 
 #[allow(dead_code)]
 pub mod request;
@@ -11,13 +14,15 @@ pub mod request;
 #[allow(dead_code)]
 pub mod dummy;
 
+mod error;
+pub use error::ReqErr;
+
 #[allow(dead_code)]
 pub mod oss;
 
 #[allow(dead_code)]
 pub mod registry;
 
-use std::io::{Read, Result};
 #[allow(dead_code)]
 pub mod localfs;
 

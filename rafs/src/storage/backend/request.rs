@@ -2,29 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::io::Read;
+use std::io::Result;
+
 use reqwest::blocking::{Body, Client, Response};
 pub use reqwest::header::HeaderMap;
 use reqwest::{self, Method, StatusCode};
-use std::io::Read;
-use std::io::Result;
-use std::io::{Error, ErrorKind};
 
-pub struct ReqErr {}
-
-impl ReqErr {
-    pub fn inv_input<E: std::fmt::Debug>(err: E) -> Error {
-        Error::new(ErrorKind::InvalidInput, format!("{:?}", err))
-    }
-    pub fn inv_data<E: std::fmt::Debug>(err: E) -> Error {
-        Error::new(ErrorKind::InvalidData, format!("{:?}", err))
-    }
-    pub fn other<E: std::fmt::Debug>(err: E) -> Error {
-        Error::new(ErrorKind::Other, format!("{:?}", err))
-    }
-    pub fn broken_pipe<E: std::fmt::Debug>(err: E) -> Error {
-        Error::new(ErrorKind::BrokenPipe, format!("{:?}", err))
-    }
-}
+use super::ReqErr;
 
 pub struct Progress<R> {
     inner: R,

@@ -12,7 +12,7 @@ use std::sync::RwLock;
 
 use vm_memory::VolatileSlice;
 
-use crate::storage::backend::request::ReqErr;
+use crate::storage::backend::ReqErr;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 use crate::storage::utils::{readahead, readv};
 
