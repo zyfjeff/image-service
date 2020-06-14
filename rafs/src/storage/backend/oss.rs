@@ -31,7 +31,7 @@ impl OSS {
     fn sign(
         &self,
         verb: &str,
-        headers: HeaderMap,
+        mut headers: HeaderMap,
         canonicalized_resource: &str,
     ) -> Result<HeaderMap> {
         let content_md5 = "";
@@ -67,17 +67,16 @@ impl OSS {
 
         let authorization = format!("OSS {}:{}", self.access_key_id, signature);
 
-        let mut new_headers = headers.clone();
-        new_headers.insert(
+        headers.insert(
             HEADER_DATE,
             date.as_str().parse().map_err(ReqErr::inv_data)?,
         );
-        new_headers.insert(
+        headers.insert(
             HEADER_AUTHORIZATION,
             authorization.as_str().parse().map_err(ReqErr::inv_data)?,
         );
 
-        Ok(new_headers)
+        Ok(headers)
     }
 
     fn resource(&self, object_key: &str, query_str: &str) -> String {

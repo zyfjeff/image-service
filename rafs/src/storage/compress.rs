@@ -2,12 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use lz4 as liblz4;
 use std::borrow::Cow;
 use std::convert::From;
 use std::fmt;
 use std::io::{Error, ErrorKind, Result};
 use std::str::FromStr;
+
+use lz4 as liblz4;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Algorithm {
@@ -65,8 +66,37 @@ pub fn compress(src: &[u8], algorithm: Algorithm) -> Result<Cow<[u8]>> {
     }
 }
 
-// Size must be provided otherwise the rust binding tries
-// to guess the size as if it were prepended and fail
-pub fn decompress(src: &[u8], blksize: u32) -> Result<Vec<u8>> {
-    liblz4::block::decompress(src, Some(blksize as i32))
+pub fn decompress(src: &[u8], dst: &mut [u8]) -> Result<usize> {
+    if dst.len() >= std::i32::MAX as usize {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "the destination buffer is big than i32::MAX.",
+        ));
+    }
+    let size = dst.len() as i32;
+
+    if unsafe { lz4_sys::LZ4_compressBound(size) } <= 0 {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "Given size parameter is too big",
+        ));
+    }
+
+    let dec_bytes = unsafe {
+        lz4_sys::LZ4_decompress_safe(
+            src.as_ptr() as *const i8,
+            dst.as_mut_ptr() as *mut i8,
+            src.len() as i32,
+            size,
+        )
+    };
+
+    if dec_bytes < 0 {
+        return Err(Error::new(
+            ErrorKind::InvalidData,
+            "Decompression failed. Input invalid or too long?",
+        ));
+    }
+
+    Ok(dec_bytes as usize)
 }

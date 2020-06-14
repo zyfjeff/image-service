@@ -1013,6 +1013,7 @@ dependencies = [
  "libc",
  "log 0.4.8",
  "lz4",
+ "lz4-sys",
  "madvise",
  "nix",
  "nydus-utils",

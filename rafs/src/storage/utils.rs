@@ -1,3 +1,4 @@
+use std::alloc::Layout;
 use std::io::{Error, Result};
 use std::os::unix::io::RawFd;
 
@@ -65,5 +66,35 @@ pub fn readahead(fd: libc::c_int, mut offset: u64, end: u64) {
         }
         unsafe { libc::readahead(fd, offset as i64, count) };
         offset += count as u64;
+    }
+}
+
+pub struct DataBuf {
+    size: usize,
+    layout: Layout,
+    ptr: *mut u8,
+}
+
+impl DataBuf {
+    pub fn alloc(size: usize) -> Self {
+        let layout = std::alloc::Layout::from_size_align(size, 8).unwrap();
+        let ptr = unsafe { std::alloc::alloc(layout) };
+
+        DataBuf { size, ptr, layout }
+    }
+
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.ptr, self.size) }
+    }
+}
+
+impl Drop for DataBuf {
+    fn drop(&mut self) {
+        if !self.ptr.is_null() {
+            unsafe {
+                std::alloc::dealloc(self.ptr, self.layout);
+            }
+            self.ptr = std::ptr::null_mut();
+        }
     }
 }

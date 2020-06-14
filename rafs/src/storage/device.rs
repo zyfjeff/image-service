@@ -128,11 +128,9 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
         } else {
             Cow::Owned(buf)
         };
-        self.dev.rw_layer.write(
-            &self.bio.blob_id.to_string(),
-            self.bio.chunkinfo.clone(),
-            &wbuf,
-        )?;
+        self.dev
+            .rw_layer
+            .write(&self.bio.blob_id, self.bio.chunkinfo.clone(), &wbuf)?;
         // Need to return slice length because that's what upper layer asks to write
         Ok(slice.len())
     }
