@@ -2,16 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use crypto::{hmac::Hmac, mac::Mac, sha1::Sha1};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Result;
 use std::time::SystemTime;
+
+use crypto::{hmac::Hmac, mac::Mac, sha1::Sha1};
 use url::Url;
 
 use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, Request};
-use crate::storage::backend::ReqErr;
-use crate::storage::backend::{BlobBackend, BlobBackendUploader};
+use crate::storage::backend::{BlobBackend, BlobBackendUploader, ReqErr};
 
 const HEADER_DATE: &str = "Date";
 const HEADER_AUTHORIZATION: &str = "Authorization";
@@ -67,8 +67,7 @@ impl OSS {
 
         let authorization = format!("OSS {}:{}", self.access_key_id, signature);
 
-        let mut new_headers = HeaderMap::new();
-        new_headers.extend(headers);
+        let mut new_headers = headers.clone();
         new_headers.insert(
             HEADER_DATE,
             date.as_str().parse().map_err(ReqErr::inv_data)?,
@@ -82,37 +81,34 @@ impl OSS {
     }
 
     fn resource(&self, object_key: &str, query_str: &str) -> String {
-        let prefix = if self.bucket_name != "" {
-            format!("/{}", self.bucket_name)
+        if self.bucket_name != "" {
+            format!("/{}/{}{}", self.bucket_name, object_key, query_str)
         } else {
-            String::new()
-        };
-        format!("{}/{}{}", prefix, object_key, query_str)
+            format!("/{}{}", object_key, query_str)
+        }
     }
 
     fn url(&self, object_key: &str, query: &[&str]) -> Result<(String, String)> {
-        let host_prefix = if self.bucket_name != "" {
-            format!("{}.", self.bucket_name)
+        let url = if self.bucket_name != "" {
+            format!("{}://{}.{}", self.scheme, self.bucket_name, self.endpoint)
         } else {
-            String::new()
+            format!("{}://{}", self.scheme, self.endpoint)
         };
-
-        let url = format!("{}://{}{}", self.scheme, host_prefix, self.endpoint);
         let mut url = Url::parse(url.as_str()).map_err(ReqErr::inv_data)?;
+
         url.path_segments_mut()
             .map_err(ReqErr::inv_data)?
             .push(object_key);
 
-        let query_str = if !query.is_empty() {
-            format!("?{}", query.join("&"))
+        if query.is_empty() {
+            Ok((self.resource(object_key, ""), url.to_string()))
         } else {
-            String::new()
-        };
+            let query_str = format!("?{}", query.join("&"));
+            let resource = self.resource(object_key, &query_str);
+            let url = format!("{}{}", url.as_str(), &query_str);
 
-        let resource = self.resource(object_key, query_str.as_str());
-        let url = format!("{}{}", url.as_str(), query_str);
-
-        Ok((resource, url))
+            Ok((resource, url))
+        }
     }
 
     fn create_bucket(&self) -> Result<()> {
@@ -122,7 +118,7 @@ impl OSS {
         let headers = self.sign(method, HeaderMap::new(), resource.as_str())?;
 
         // Safe because the the call() is a synchronous operation.
-        let data = unsafe { ReqBody::from_static_slice("".as_bytes()) };
+        let data = unsafe { ReqBody::from_static_slice(b"") };
         self.request
             .call::<&[u8]>(method, url.as_str(), data, headers)?;
 
@@ -130,27 +126,26 @@ impl OSS {
     }
 }
 
-pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Result<OSS> {
+pub fn new<S: ::std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Result<OSS> {
     let endpoint = config
         .get("endpoint")
+        .map(|s| s.to_owned())
         .ok_or_else(|| ReqErr::inv_input("endpoint required"))?;
     let access_key_id = config
         .get("access_key_id")
+        .map(|s| s.to_owned())
         .ok_or_else(|| ReqErr::inv_input("access_key_id required"))?;
     let access_key_secret = config
         .get("access_key_secret")
+        .map(|s| s.to_owned())
         .ok_or_else(|| ReqErr::inv_input("access_key_secret required"))?;
     let bucket_name = config
         .get("bucket_name")
+        .map(|s| s.to_owned())
         .ok_or_else(|| ReqErr::inv_input("bucket_name required"))?;
 
-    let endpoint = (*endpoint).to_owned();
-    let access_key_id = (*access_key_id).to_owned();
-    let access_key_secret = (*access_key_secret).to_owned();
-    let bucket_name = (*bucket_name).to_owned();
-
     let scheme = if let Some(scheme) = config.get("scheme") {
-        (*scheme).to_owned()
+        scheme.to_owned()
     } else {
         String::from("https")
     };
@@ -180,7 +175,7 @@ impl BlobBackend for OSS {
         let headers = self.sign(method, headers, resource.as_str())?;
 
         // Safe because the the call() is a synchronous operation.
-        let data = unsafe { ReqBody::from_static_slice("".as_bytes()) };
+        let data = unsafe { ReqBody::from_static_slice(b"") };
         let mut resp = self
             .request
             .call::<&[u8]>(method, url.as_str(), data, headers)

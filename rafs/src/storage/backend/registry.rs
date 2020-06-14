@@ -8,15 +8,14 @@ use std::io::Result;
 use url::Url;
 
 use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, Request};
-use crate::storage::backend::ReqErr;
-use crate::storage::backend::{BlobBackend, BlobBackendUploader};
+use crate::storage::backend::{BlobBackend, BlobBackendUploader, ReqErr};
 
 const HEADER_CONTENT_LENGTH: &str = "Content-Length";
 const HEADER_CONTENT_TYPE: &str = "Content-Type";
 const HEADER_LOCATION: &str = "LOCATION";
 const HEADER_OCTET_STREAM: &str = "application/octet-stream";
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Registry {
     request: Request,
     scheme: String,
@@ -35,15 +34,13 @@ impl Registry {
     }
 
     fn url(&self, path: &str, query: &[&str]) -> Result<String> {
-        let query_str = if !query.is_empty() {
-            format!("?{}", query.join("&"))
+        let path = if !query.is_empty() {
+            format!("/v2/{}{}?{}", self.repo, path, query.join("&"))
         } else {
-            String::new()
+            format!("/v2/{}{}", self.repo, path)
         };
-
         let url = format!("{}://{}", self.scheme, self.host.as_str());
         let url = Url::parse(url.as_str()).map_err(ReqErr::inv_data)?;
-        let path = format!("/v2/{}{}{}", self.repo, path, query_str);
         let url = url.join(path.as_str()).map_err(ReqErr::inv_input)?;
 
         Ok(url.to_string())
@@ -51,39 +48,32 @@ impl Registry {
 
     fn create_upload(&self) -> Result<String> {
         let method = "POST";
-
         let url = self.url("/blobs/uploads/", &[])?;
 
         // Safe because the the call() is a synchronous operation.
-        let data = unsafe { ReqBody::from_static_slice("".as_bytes()) };
+        let data = unsafe { ReqBody::from_static_slice(b"") };
         let resp = self
             .request
             .call::<&[u8]>(method, url.as_str(), data, HeaderMap::new())?;
 
-        let location = resp.headers().get(HEADER_LOCATION);
-
-        if let Some(location) = location {
-            let location = location.to_str().map_err(ReqErr::inv_data)?.to_owned();
-            return Ok(location);
+        match resp.headers().get(HEADER_LOCATION) {
+            Some(location) => Ok(location.to_str().map_err(ReqErr::inv_data)?.to_owned()),
+            None => Err(ReqErr::inv_data("location not found in header")),
         }
-
-        Err(ReqErr::inv_data("location not found in header"))
     }
 }
 
 pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Result<Registry> {
     let host = config
         .get("host")
+        .map(|s| s.to_owned())
         .ok_or_else(|| ReqErr::inv_input("host required"))?;
     let repo = config
         .get("repo")
+        .map(|s| s.to_owned())
         .ok_or_else(|| ReqErr::inv_input("repo required"))?;
-
-    let host = (*host).to_owned();
-    let repo = (*repo).to_owned();
-
     let scheme = if let Some(scheme) = config.get("scheme") {
-        (*scheme).to_owned()
+        scheme.to_owned()
     } else {
         String::from("https")
     };
@@ -110,7 +100,7 @@ impl BlobBackend for Registry {
         headers.insert("Range", range.as_str().parse().map_err(ReqErr::inv_data)?);
 
         // Safe because the the call() is a synchronous operation.
-        let data = unsafe { ReqBody::from_static_slice("".as_bytes()) };
+        let data = unsafe { ReqBody::from_static_slice(b"") };
         let mut resp = self
             .request
             .call::<&[u8]>(method, url.as_str(), data, headers)
@@ -145,14 +135,16 @@ impl BlobBackendUploader for Registry {
         callback: fn((usize, usize)),
     ) -> Result<usize> {
         let location = self.create_upload()?;
-
-        let mut blob_id = blob_id.to_owned();
-        if !blob_id.starts_with("sha256:") {
-            blob_id = format!("sha256:{}", blob_id);
-        }
-
         let method = "PUT";
-        let url = Url::parse_with_params(location.as_str(), &[("digest", blob_id.as_str())])
+
+        let blob_id_storage;
+        let blob_id_val = if !blob_id.starts_with("sha256:") {
+            blob_id_storage = format!("sha256:{}", blob_id);
+            &blob_id_storage
+        } else {
+            blob_id
+        };
+        let url = Url::parse_with_params(location.as_str(), &[("digest", blob_id_val)])
             .map_err(ReqErr::inv_data)?;
 
         let url = format!(
