@@ -1004,6 +1004,7 @@ dependencies = [
 name = "rafs"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "base64",
  "compress",
  "config",
@@ -1016,11 +1017,9 @@ dependencies = [
  "lz4-sys",
  "madvise",
  "nix",
- "nydus-utils",
  "reqwest",
  "rust-crypto",
  "serde 1.0.110",
- "serde_derive",
  "serde_json",
  "url",
  "vm-memory",

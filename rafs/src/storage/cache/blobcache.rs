@@ -136,18 +136,20 @@ impl BlobCache {
         blob_id: &str,
         blk: &Arc<dyn RafsChunkInfo>,
     ) -> Result<Arc<Mutex<BlobCacheEntry>>> {
-        let block_id = blk.block_id().data();
+        let block_id = blk.block_id();
         // Do not expect poisoned lock here.
         let mut cache = self.cache.write().unwrap();
 
         // Double check if someone else has inserted the blob chunk concurrently.
-        if let Some(entry) = cache.chunk_map.get(block_id) {
+        if let Some(entry) = cache.chunk_map.get(block_id.data()) {
             Ok(entry.clone())
         } else {
             let fd = cache.get_blob_fd(blob_id)?;
             let entry = Arc::new(Mutex::new(BlobCacheEntry::new(blk.clone(), fd)));
 
-            cache.chunk_map.insert(block_id.to_owned(), entry.clone());
+            cache
+                .chunk_map
+                .insert(block_id.data().to_owned(), entry.clone());
 
             Ok(entry)
         }

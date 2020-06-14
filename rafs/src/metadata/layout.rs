@@ -86,6 +86,7 @@ macro_rules! impl_metadata_converter {
         }
 
         impl AsRef<[u8]> for $T {
+            #[inline]
             fn as_ref(&self) -> &[u8] {
                 let ptr = self as *const $T as *const u8;
                 unsafe { &*std::slice::from_raw_parts(ptr, size_of::<$T>()) }
@@ -93,6 +94,7 @@ macro_rules! impl_metadata_converter {
         }
 
         impl AsMut<[u8]> for $T {
+            #[inline]
             fn as_mut(&mut self) -> &mut [u8] {
                 let ptr = self as *mut $T as *mut u8;
                 unsafe { &mut *std::slice::from_raw_parts_mut(ptr, size_of::<$T>()) }
@@ -103,10 +105,12 @@ macro_rules! impl_metadata_converter {
 
 macro_rules! impl_pub_getter_setter {
     ($G: ident, $S: ident, $F: ident, $U: ty) => {
+        #[inline]
         pub fn $G(&self) -> $U {
             <$U>::from_le(self.$F)
         }
 
+        #[inline]
         pub fn $S(&mut self, $F: $U) {
             self.$F = <$U>::to_le($F);
         }
@@ -131,11 +135,11 @@ pub struct OndiskSuperBlock {
     s_inodes_count: u64,
     /// V5: Offset of inode table
     s_inode_table_offset: u64,
-    /// V5: Offset of inode table
+    /// V5: Offset of blob table
     s_blob_table_offset: u64,
     /// V5: Size of inode table.
     s_inode_table_entries: u32,
-    /// V5: Entries of inode table.
+    /// V5: Entries of blob table.
     s_blob_table_size: u32,
     /// Unused area.
     s_reserved: [u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
@@ -252,7 +256,7 @@ impl fmt::Display for OndiskSuperBlock {
 #[repr(C)]
 #[derive(Clone, Default)]
 pub struct OndiskInodeTable {
-    data: Vec<u32>,
+    pub(crate) data: Vec<u32>,
 }
 
 impl OndiskInodeTable {
@@ -263,14 +267,17 @@ impl OndiskInodeTable {
         }
     }
 
+    #[inline]
     pub fn size(&self) -> usize {
         self.data.len() * size_of::<u32>()
     }
 
+    #[inline]
     pub fn len(&self) -> usize {
         self.data.len()
     }
 
+    #[inline]
     pub fn is_empty(&self) -> bool {
         self.data.len() == 0
     }
@@ -323,6 +330,7 @@ impl OndiskBlobTable {
         OndiskBlobTable { data: Vec::new() }
     }
 
+    #[inline]
     pub fn aligned_size(size: usize) -> usize {
         align_to_rafs(size)
     }
@@ -343,6 +351,7 @@ impl OndiskBlobTable {
         (self.data.len() - 1) as u32
     }
 
+    #[inline]
     pub fn get(&self, blob_index: u32) -> Result<String> {
         if blob_index > (self.data.len() - 1) as u32 {
             return Err(enoent());
@@ -374,9 +383,13 @@ impl OndiskBlobTable {
 
     pub fn load(&mut self, r: &mut RafsIoReader, size: usize) -> Result<()> {
         let mut input = vec![0u8; size];
-        r.read_exact(&mut input)?;
 
-        let mut input_rest = input.as_slice();
+        r.read_exact(&mut input)?;
+        self.load_from_slice(&input)
+    }
+
+    pub fn load_from_slice(&mut self, input: &[u8]) -> Result<()> {
+        let mut input_rest = input;
         loop {
             let (s, rest) = parse_string(input_rest)?;
             self.data.push(s.to_string());
@@ -429,14 +442,17 @@ impl OndiskInode {
         Self::default()
     }
 
+    #[inline]
     pub fn set_name_size(&mut self, name_len: usize) {
         self.i_name_size = align_to_rafs(name_len) as u16;
     }
 
+    #[inline]
     pub fn set_symlink_size(&mut self, symlink_len: usize) {
         self.i_symlink_size = align_to_rafs(symlink_len) as u16;
     }
 
+    #[inline]
     pub fn size(&self) -> usize {
         size_of::<Self>() + (self.i_name_size + self.i_symlink_size) as usize
     }
@@ -469,22 +485,27 @@ impl OndiskInode {
         Ok(size)
     }
 
+    #[inline]
     pub fn is_dir(&self) -> bool {
         self.i_mode & libc::S_IFMT == libc::S_IFDIR
     }
 
+    #[inline]
     pub fn is_symlink(&self) -> bool {
         self.i_mode & libc::S_IFMT == libc::S_IFLNK
     }
 
+    #[inline]
     pub fn is_reg(&self) -> bool {
         self.i_mode & libc::S_IFMT == libc::S_IFREG
     }
 
+    #[inline]
     pub fn is_hardlink(&self) -> bool {
         self.i_nlink > 1
     }
 
+    #[inline]
     pub fn has_xattr(&self) -> bool {
         self.i_flags & INO_FLAG_XATTR == INO_FLAG_XATTR
     }
@@ -538,21 +559,21 @@ impl RafsChunkInfo for OndiskChunkInfo {
         Ok(())
     }
 
-    fn block_id(&self) -> &dyn RafsDigest {
-        &self.block_id
+    #[inline]
+    fn block_id(&self) -> Arc<dyn RafsDigest> {
+        Arc::new(self.block_id)
     }
 
+    #[inline]
     fn is_compressed(&self) -> bool {
         self.flags & CHUNK_FLAG_COMPRESSED == CHUNK_FLAG_COMPRESSED
     }
 
     impl_getter!(blob_index, blob_index, u32);
-
     impl_getter!(blob_compress_offset, blob_compress_offset, u64);
     impl_getter!(compress_size, compress_size, u32);
     impl_getter!(blob_decompress_offset, blob_decompress_offset, u64);
     impl_getter!(decompress_size, decompress_size, u32);
-
     impl_getter!(file_offset, file_offset, u64);
 }
 
@@ -627,10 +648,12 @@ impl RafsDigest for OndiskDigest {
         Ok(())
     }
 
+    #[inline]
     fn data(&self) -> &[u8] {
         &self.data
     }
 
+    #[inline]
     fn data_mut(&mut self) -> &mut [u8] {
         &mut self.data
     }
@@ -662,10 +685,12 @@ impl OndiskXAttrs {
         }
     }
 
+    #[inline]
     pub fn size(&self) -> usize {
         self.size as usize
     }
 
+    #[inline]
     pub fn aligned_size(&self) -> usize {
         align_to_rafs(self.size())
     }
@@ -688,6 +713,7 @@ impl XAttrs {
         size
     }
 
+    #[inline]
     pub fn aligned_size(&self) -> usize {
         align_to_rafs(self.size())
     }
@@ -725,6 +751,7 @@ impl XAttrs {
     }
 }
 
+#[inline]
 pub fn align_to_rafs(size: usize) -> usize {
     if size & (RAFS_ALIGNMENT - 1) == 0 {
         return size;

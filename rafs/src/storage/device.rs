@@ -71,9 +71,11 @@ impl<'a> RafsBioDevice<'a> {
         Ok(RafsBioDevice { bio, dev: b })
     }
 
+    /*
     fn blob_offset(&self) -> u64 {
         self.bio.chunkinfo.blob_compress_offset() + self.bio.offset as u64
     }
+     */
 }
 
 impl FileReadWriteVolatile for RafsBioDevice<'_> {

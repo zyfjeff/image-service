@@ -59,7 +59,7 @@ macro_rules! impl_getter {
 }
 
 /// Cached Rafs super block metadata.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct RafsSuperMeta {
     pub magic: u32,
     pub version: u32,
@@ -175,16 +175,8 @@ impl RafsSuper {
             RAFS_SUPER_VERSION_V5 => {
                 match self.mode {
                     RafsMode::Direct => {
-                        let mut inode_table =
-                            OndiskInodeTable::new(sb.inode_table_entries() as usize);
-                        inode_table.load(r)?;
-
-                        let mut blob_table = OndiskBlobTable::new();
-                        blob_table.load(r, sb.blob_table_size() as usize)?;
-
-                        let mut inodes = Box::new(DirectMapping::new(inode_table, blob_table));
+                        let mut inodes = Box::new(DirectMapping::new(&self.meta));
                         inodes.load(r)?;
-
                         self.inodes = inodes;
                     }
                     RafsMode::Cached => {
@@ -228,7 +220,7 @@ impl RafsSuper {
     }
 
     pub fn get_inode(&self, ino: Inode) -> Result<Arc<dyn RafsInode>> {
-        self.inodes.get_inode(ino, self.meta)
+        self.inodes.get_inode(ino)
     }
 
     pub fn get_max_ino(&self) -> Inode {
@@ -242,7 +234,7 @@ pub trait RafsSuperInodes {
 
     fn destroy(&mut self);
 
-    fn get_inode(&self, ino: Inode, s_meta: RafsSuperMeta) -> Result<Arc<dyn RafsInode>>;
+    fn get_inode(&self, ino: Inode) -> Result<Arc<dyn RafsInode>>;
 
     fn get_max_ino(&self) -> Inode;
 }
@@ -254,8 +246,8 @@ pub trait RafsInode {
     /// must validate it before accessing any fields of the object.
     fn validate(&self) -> Result<()>;
 
-    fn name(&self) -> Result<&str>;
-    fn get_symlink(&self) -> Result<&str>;
+    fn name(&self) -> Result<String>;
+    fn get_symlink(&self) -> Result<String>;
     fn get_child_by_name(&self, name: &str) -> Result<Arc<dyn RafsInode>>;
     fn get_child_by_index(&self, idx: Inode) -> Result<Arc<dyn RafsInode>>;
     fn get_child_count(&self) -> Result<usize>;
@@ -281,7 +273,7 @@ pub trait RafsInode {
 pub trait RafsChunkInfo: Sync + Send {
     fn validate(&self, sb: &RafsSuperMeta) -> Result<()>;
 
-    fn block_id(&self) -> &dyn RafsDigest;
+    fn block_id(&self) -> Arc<dyn RafsDigest>;
     fn blob_index(&self) -> u32;
 
     fn blob_compress_offset(&self) -> u64;
