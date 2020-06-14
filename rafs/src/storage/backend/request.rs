@@ -6,10 +6,11 @@ use std::io::Read;
 use std::io::Result;
 
 use reqwest::blocking::{Body, Client, Response};
-pub use reqwest::header::HeaderMap;
 use reqwest::{self, Method, StatusCode};
 
 use super::ReqErr;
+
+pub use reqwest::header::HeaderMap;
 
 pub struct Progress<R> {
     inner: R,
@@ -42,6 +43,21 @@ impl<R: Read + Send + 'static> Read for Progress<R> {
 pub enum ReqBody<R> {
     Read(Progress<R>, usize),
     Buf(Vec<u8>),
+    StaticBuf(&'static [u8]),
+}
+
+impl<R> ReqBody<R> {
+    /// Create an ReqBody from a static buffer.
+    ///
+    /// ReqBody::Vec needs to create a new Vector and copy data into the new Vector.
+    /// So reuse the data buffer from the caller to avoid  avoid unnecessary memory copy.
+    ///
+    /// # Safety
+    /// The caller needs to ensure the data buffer is valid or out-lives the ReqBody object.
+    // of the referenced slice.
+    pub unsafe fn from_static_slice(buf: &[u8]) -> Self {
+        ReqBody::StaticBuf(std::mem::transmute::<&[u8], &'static [u8]>(buf))
+    }
 }
 
 #[derive(Debug, Default)]
@@ -55,6 +71,7 @@ impl Request {
         if let Some(proxy) = proxy {
             cb = cb.proxy(reqwest::Proxy::all(proxy).map_err(ReqErr::inv_input)?)
         }
+
         Ok(Request {
             client: cb.build().map_err(ReqErr::inv_input)?,
         })
@@ -68,7 +85,6 @@ impl Request {
         headers: HeaderMap,
     ) -> Result<Response> {
         let method = Method::from_bytes(method.as_bytes()).map_err(ReqErr::inv_input)?;
-
         let rb = self.client.request(method, url).headers(headers);
 
         let ret;
@@ -78,6 +94,9 @@ impl Request {
                 ret = rb.body(body).send();
             }
             ReqBody::Buf(buf) => {
+                ret = rb.body(buf).send();
+            }
+            ReqBody::StaticBuf(buf) => {
                 ret = rb.body(buf).send();
             }
         }

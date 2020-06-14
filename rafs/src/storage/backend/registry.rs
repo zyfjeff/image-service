@@ -54,12 +54,11 @@ impl Registry {
 
         let url = self.url("/blobs/uploads/", &[])?;
 
-        let resp = self.request.call::<&[u8]>(
-            method,
-            url.as_str(),
-            ReqBody::Buf(b"".to_vec()),
-            HeaderMap::new(),
-        )?;
+        // Safe because the the call() is a synchronous operation.
+        let data = unsafe { ReqBody::from_static_slice("".as_bytes()) };
+        let resp = self
+            .request
+            .call::<&[u8]>(method, url.as_str(), data, HeaderMap::new())?;
 
         let location = resp.headers().get(HEADER_LOCATION);
 
@@ -110,9 +109,11 @@ impl BlobBackend for Registry {
         let range = format!("bytes={}-{}", offset, end_at);
         headers.insert("Range", range.as_str().parse().map_err(ReqErr::inv_data)?);
 
+        // Safe because the the call() is a synchronous operation.
+        let data = unsafe { ReqBody::from_static_slice("".as_bytes()) };
         let mut resp = self
             .request
-            .call::<&[u8]>(method, url.as_str(), ReqBody::Buf(b"".to_vec()), headers)
+            .call::<&[u8]>(method, url.as_str(), data, headers)
             .or_else(|e| {
                 error!("registry req failed {:?}", e);
                 Err(e)

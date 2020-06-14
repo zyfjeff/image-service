@@ -121,8 +121,10 @@ impl OSS {
         let (resource, url) = self.url("", query)?;
         let headers = self.sign(method, HeaderMap::new(), resource.as_str())?;
 
+        // Safe because the the call() is a synchronous operation.
+        let data = unsafe { ReqBody::from_static_slice("".as_bytes()) };
         self.request
-            .call::<&[u8]>(method, url.as_str(), ReqBody::Buf(b"".to_vec()), headers)?;
+            .call::<&[u8]>(method, url.as_str(), data, headers)?;
 
         Ok(())
     }
@@ -177,9 +179,11 @@ impl BlobBackend for OSS {
         headers.insert("Range", range.as_str().parse().map_err(ReqErr::inv_data)?);
         let headers = self.sign(method, headers, resource.as_str())?;
 
+        // Safe because the the call() is a synchronous operation.
+        let data = unsafe { ReqBody::from_static_slice("".as_bytes()) };
         let mut resp = self
             .request
-            .call::<&[u8]>(method, url.as_str(), ReqBody::Buf(b"".to_vec()), headers)
+            .call::<&[u8]>(method, url.as_str(), data, headers)
             .or_else(|e| {
                 error!("oss req failed {:?}", e);
                 Err(e)
@@ -201,8 +205,10 @@ impl BlobBackend for OSS {
         let (resource, url) = self.url(blob_id, query)?;
         let headers = self.sign(method, HeaderMap::new(), resource.as_str())?;
 
+        // Safe because the the call() is a synchronous operation.
+        let data = unsafe { ReqBody::from_static_slice(buf) };
         self.request
-            .call::<&[u8]>(method, url.as_str(), ReqBody::Buf(buf.to_vec()), headers)?;
+            .call::<&[u8]>(method, url.as_str(), data, headers)?;
 
         Ok(buf.len())
     }
