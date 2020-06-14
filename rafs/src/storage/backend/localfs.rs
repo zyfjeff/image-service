@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use nix::sys::uio;
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Error, Result};
@@ -10,6 +9,7 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
 use std::sync::RwLock;
 
+use nix::sys::uio;
 use vm_memory::VolatileSlice;
 
 use crate::storage::backend::ReqErr;
@@ -64,22 +64,36 @@ impl LocalFs {
             (blob_id, Path::new(&self.dir).join(blob_id))
         };
 
+        // Don't expect poisoned lock here.
         if let Some(file) = self.file_table.read().unwrap().get(id) {
             return Ok(file.as_raw_fd());
         }
 
-        let mut file_table = self.file_table.write().unwrap();
         let file = OpenOptions::new().read(true).open(&blob_file_path)?;
+        let metadata = file.metadata();
         let fd = file.as_raw_fd();
-        if self.readahead {
-            readahead(fd, 0, file.metadata().unwrap().len());
+
+        // Don't expect poisoned lock here.
+        let mut table_guard = self.file_table.write().unwrap();
+        // Double check whether someone else inserted the file concurrently.
+        if let Some(other) = table_guard.get(id) {
+            return Ok(other.as_raw_fd());
+        } else {
+            table_guard.insert(id.to_string(), file);
+            drop(table_guard);
         }
-        file_table.insert(id.to_string(), file);
+
+        if self.readahead {
+            if let Ok(md) = metadata {
+                readahead(fd, 0, md.len());
+            }
+        }
+
         Ok(fd)
     }
 
     fn use_blob_file(&self) -> bool {
-        self.blob_file != String::default()
+        !self.blob_file.is_empty()
     }
 }
 
@@ -106,6 +120,7 @@ impl BlobBackend for LocalFs {
         max_size: usize,
     ) -> Result<usize> {
         let fd = self.get_blob_fd(blob_id)?;
+
         readv(fd, bufs, offset, max_size)
     }
 
@@ -145,7 +160,7 @@ impl BlobBackendUploader for LocalFs {
                 error!("localfs update: open failed {:?}", e);
                 e
             })?;
-        let len = io::copy(&mut reader, &mut w)?;
-        Ok(len as usize)
+
+        io::copy(&mut reader, &mut w).map(|sz| sz as usize)
     }
 }

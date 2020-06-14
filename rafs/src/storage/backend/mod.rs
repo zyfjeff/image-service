@@ -23,7 +23,6 @@ pub mod oss;
 #[allow(dead_code)]
 pub mod registry;
 
-#[allow(dead_code)]
 pub mod localfs;
 
 // Rafs blob backend API
