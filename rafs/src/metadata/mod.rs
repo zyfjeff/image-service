@@ -175,6 +175,8 @@ impl RafsSuper {
             RAFS_SUPER_VERSION_V5 => {
                 match self.mode {
                     RafsMode::Direct => {
+                        self.meta.blob_table_offset = sb.blob_table_offset();
+                        self.meta.blob_table_size = sb.blob_table_size();
                         let mut inodes = Box::new(DirectMapping::new(&self.meta));
                         inodes.load(r)?;
                         self.inodes = inodes;
