@@ -66,7 +66,7 @@ impl Rafs {
             device: device::RafsDevice::new(conf.device.clone())?,
             sb: RafsSuper::new(conf.mode.as_str())?,
             initialized: false,
-            ios: io_stats::ios_new(id),
+            ios: io_stats::new(id),
         };
 
         rafs.ios.toggle_files_recording(conf.iostats_files);
@@ -229,10 +229,10 @@ impl FileSystem for Rafs {
     fn destroy(&self) {}
 
     fn lookup(&self, _ctx: Context, ino: u64, name: &CStr) -> Result<Entry> {
-        let start = self.ios.ios_latency_start();
+        let start = self.ios.latency_start();
         let r = self.lookup_wrapped(ino, name);
-        self.ios.ios_file_stats_update(ino, StatsFop::Lookup, 0, &r);
-        self.ios.ios_latency_end(&start, StatsFop::Lookup);
+        self.ios.file_stats_update(ino, StatsFop::Lookup, 0, &r);
+        self.ios.latency_end(&start, StatsFop::Lookup);
         r
     }
 
@@ -252,7 +252,7 @@ impl FileSystem for Rafs {
     ) -> Result<(libc::stat64, Duration)> {
         let inode = self.sb.get_inode(ino)?;
         let r = Ok((inode.get_attr().into(), self.sb.meta.attr_timeout));
-        self.ios.ios_file_stats_update(ino, StatsFop::Stat, 0, &r);
+        self.ios.file_stats_update(ino, StatsFop::Stat, 0, &r);
         r
     }
 
@@ -279,11 +279,11 @@ impl FileSystem for Rafs {
             return Ok(0);
         }
         let desc = inode.alloc_bio_desc(offset, size as usize)?;
-        let start = self.ios.ios_latency_start();
+        let start = self.ios.latency_start();
         let r = self.device.read_to(w, desc);
         self.ios
-            .ios_file_stats_update(ino, StatsFop::Read, size as usize, &r);
-        self.ios.ios_latency_end(&start, io_stats::StatsFop::Read);
+            .file_stats_update(ino, StatsFop::Read, size as usize, &r);
+        self.ios.latency_end(&start, io_stats::StatsFop::Read);
         r
     }
 

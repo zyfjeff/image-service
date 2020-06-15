@@ -147,13 +147,13 @@ impl InodeStatsCounter for InodeIOStats {
     }
 }
 
-pub fn ios_new(id: &str) -> Arc<GlobalIOStats> {
+pub fn new(id: &str) -> Arc<GlobalIOStats> {
     let c = Arc::new(GlobalIOStats {
         id: id.to_string(),
         ..Default::default()
     });
     IOS_SET.write().unwrap().insert(id.to_string(), c.clone());
-    c.ios_init();
+    c.init();
     c
 }
 
@@ -172,12 +172,12 @@ fn latency_range_index(elapsed: isize) -> usize {
 }
 
 impl GlobalIOStats {
-    pub fn ios_init(&self) {
+    pub fn init(&self) {
         self.files_account_enabled.store(false, Ordering::Relaxed);
         self.measure_latency.store(true, Ordering::Relaxed);
     }
 
-    pub fn ios_files_enabled(&self) -> bool {
+    pub fn files_enabled(&self) -> bool {
         self.files_account_enabled.load(Ordering::Relaxed)
     }
 
@@ -189,21 +189,21 @@ impl GlobalIOStats {
     /// enabled per rafs.
     pub fn new_file_counter(&self, ino: Inode) {
         let mut counters = self.file_counters.write().unwrap();
-        if self.ios_files_enabled() && counters.get(&ino).is_none() {
+        if self.files_enabled() && counters.get(&ino).is_none() {
             counters.insert(ino, Arc::new(InodeIOStats::default()));
         }
     }
 
-    pub fn ios_file_stats_update<T>(
+    pub fn file_stats_update<T>(
         &self,
         ino: Inode,
         fop: StatsFop,
         bsize: usize,
         r: &Result<T, Error>,
     ) {
-        self.ios_global_update(fop, bsize, &r);
+        self.global_update(fop, bsize, &r);
 
-        if self.ios_files_enabled() {
+        if self.files_enabled() {
             let counters = self.file_counters.read().unwrap();
             if counters.get(&ino).is_some() {
                 counters.get(&ino).unwrap().stats_fop_inc(fop.clone());
@@ -214,7 +214,7 @@ impl GlobalIOStats {
         }
     }
 
-    fn ios_global_update<T>(&self, fop: StatsFop, value: usize, r: &Result<T, Error>) {
+    fn global_update<T>(&self, fop: StatsFop, value: usize, r: &Result<T, Error>) {
         self.last_fop_tp.store(
             SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
@@ -253,8 +253,8 @@ impl GlobalIOStats {
         };
     }
 
-    /// Paired with `ios_latency_end` to record elapsed time for a certain type of fop.
-    pub fn ios_latency_start(&self) -> Option<SystemTime> {
+    /// Paired with `latency_end` to record elapsed time for a certain type of fop.
+    pub fn latency_start(&self) -> Option<SystemTime> {
         if !self.measure_latency.load(Ordering::Relaxed) {
             return None;
         }
@@ -262,7 +262,7 @@ impl GlobalIOStats {
         Some(SystemTime::now())
     }
 
-    pub fn ios_latency_end(&self, start: &Option<SystemTime>, fop: StatsFop) {
+    pub fn latency_end(&self, start: &Option<SystemTime>, fop: StatsFop) {
         if let Some(start) = start {
             if let Ok(d) = SystemTime::elapsed(start) {
                 let elapsed = d.as_micros() as isize;
@@ -355,56 +355,56 @@ mod tests {
     #[test]
     fn test_block_read_count() {
         let g = GlobalIOStats::default();
-        g.ios_init();
-        g.ios_global_update(StatsFop::Read, 4000, &Ok(()));
+        g.init();
+        g.global_update(StatsFop::Read, 4000, &Ok(()));
         assert_eq!(g.block_count_read[1].load(Ordering::Relaxed), 1);
 
-        g.ios_global_update(StatsFop::Read, 4096, &Ok(()));
+        g.global_update(StatsFop::Read, 4096, &Ok(()));
         assert_eq!(g.block_count_read[1].load(Ordering::Relaxed), 1);
 
-        g.ios_global_update(StatsFop::Read, 65535, &Ok(()));
+        g.global_update(StatsFop::Read, 65535, &Ok(()));
         assert_eq!(g.block_count_read[3].load(Ordering::Relaxed), 1);
 
-        g.ios_global_update(StatsFop::Read, 131072, &Ok(()));
+        g.global_update(StatsFop::Read, 131072, &Ok(()));
         assert_eq!(g.block_count_read[4].load(Ordering::Relaxed), 1);
 
-        g.ios_global_update(StatsFop::Read, 65520, &Ok(()));
+        g.global_update(StatsFop::Read, 65520, &Ok(()));
         assert_eq!(g.block_count_read[3].load(Ordering::Relaxed), 2);
 
-        g.ios_global_update(StatsFop::Read, 2015520, &Ok(()));
+        g.global_update(StatsFop::Read, 2015520, &Ok(()));
         assert_eq!(g.block_count_read[3].load(Ordering::Relaxed), 2);
     }
     #[test]
     fn test_latency_record() {
         let g = GlobalIOStats::default();
-        g.ios_init();
-        let start = g.ios_latency_start();
+        g.init();
+        let start = g.latency_start();
         sleep(Duration::from_micros(800));
-        g.ios_global_update(StatsFop::Read, 100, &Ok(()));
-        g.ios_latency_end(&start, StatsFop::Read);
+        g.global_update(StatsFop::Read, 100, &Ok(()));
+        g.latency_end(&start, StatsFop::Read);
 
         println!("{:?}", g.read_latency_dist);
         println!("{:?}", g.fop_hits);
         assert_eq!(g.read_latency_dist[2].load(Ordering::Relaxed), 1);
 
-        let start = g.ios_latency_start();
+        let start = g.latency_start();
         sleep(Duration::from_micros(2000));
-        g.ios_global_update(StatsFop::Read, 100, &Ok(()));
-        g.ios_latency_end(&start, StatsFop::Read);
+        g.global_update(StatsFop::Read, 100, &Ok(()));
+        g.latency_end(&start, StatsFop::Read);
 
         assert_eq!(g.read_latency_dist[3].load(Ordering::Relaxed), 1);
 
-        let start = g.ios_latency_start();
+        let start = g.latency_start();
         sleep(Duration::from_micros(10));
-        g.ios_global_update(StatsFop::Read, 100, &Ok(()));
-        g.ios_latency_end(&start, StatsFop::Read);
+        g.global_update(StatsFop::Read, 100, &Ok(()));
+        g.latency_end(&start, StatsFop::Read);
 
         assert_eq!(g.read_latency_dist[0].load(Ordering::Relaxed), 1);
 
-        let start = g.ios_latency_start();
+        let start = g.latency_start();
         sleep(Duration::from_micros(1600));
-        g.ios_global_update(StatsFop::Read, 100, &Ok(()));
-        g.ios_latency_end(&start, StatsFop::Read);
+        g.global_update(StatsFop::Read, 100, &Ok(()));
+        g.latency_end(&start, StatsFop::Read);
 
         assert_eq!(g.read_latency_dist[3].load(Ordering::Relaxed), 2);
     }
