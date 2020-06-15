@@ -349,10 +349,7 @@ impl OndiskInodeWrapper {
         let offset = self.offset + size_of::<OndiskInode>();
         let name = unsafe {
             let start = state.base.add(offset);
-            slice::from_raw_parts(
-                start.wrapping_add(size_of::<OndiskInode>()),
-                self.inode(state).i_name_size as usize,
-            )
+            slice::from_raw_parts(start, self.inode(state).i_name_size as usize)
         };
 
         Ok(parse_string(name)?.0)
