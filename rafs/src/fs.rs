@@ -41,6 +41,7 @@ const DOTDOT: &str = "..";
 pub struct RafsConfig {
     pub device: factory::Config,
     pub mode: String,
+    #[serde(default)]
     pub iostats_files: bool,
 }
 
