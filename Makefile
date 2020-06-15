@@ -18,3 +18,7 @@ release:
 test: build
 	RUST_BACKTRACE=1 cargo test --features=virtiofsd --target-dir target-virtiofsd -- --nocapture
 	RUST_BACKTRACE=1 cargo test --features=fusedev --target-dir target-fusedev -- --nocapture
+
+docker-smoke:
+	docker build -t nydus-rs-smoke misc/
+	docker run -it --rm --privileged -v ${PWD}:/nydus-rs -v ~/.ssh/id_rsa:/root/.ssh/id_rsa -v ~/.cargo:/usr/local/cargo nydus-rs-smoke
