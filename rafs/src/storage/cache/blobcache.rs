@@ -169,10 +169,10 @@ impl BlobCache {
             return cache_entry.readv(bufs, offset + chunk.blob_decompress_offset(), bio.size);
         }
 
-        // Optimize for the case where the first VolaticeSlice covers the whole chunk.
-        if bufs.len() == 1 && bufs[0].len() == bio.blksize as usize && offset == 0 {
+        // Optimize for the case where the first VolatileSlice covers the whole chunk.
+        if bufs.len() == 1 && bufs[0].len() >= d_size as usize && offset == 0 {
             // Reuse the destination data buffer.
-            let buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), bufs[0].len()) };
+            let buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) };
 
             // try to recovery cache from disk
             if let Ok(sz) = cache_entry.read(buf) {
@@ -212,18 +212,18 @@ impl BlobCache {
                     ErrorKind::InvalidData,
                     "Decompression failed. Input invalid or too long?",
                 ));
-            } else {
-                cache_entry.cache(buf, sz);
-                return Ok(d_size);
             }
+
+            cache_entry.cache(buf, sz);
+            return Ok(d_size);
         }
 
         // Allocate a buffer to received data without zeroing
-        let mut dst_buf = DataBuf::alloc(bio.blksize as usize);
+        let mut dst_buf = DataBuf::alloc(d_size as usize);
 
         // try to recovery cache from disk
         if let Ok(sz) = cache_entry.read(dst_buf.as_mut_slice()) {
-            if sz == bio.blksize as usize
+            if sz == d_size
                 && chunk.block_id().data() == OndiskDigest::from_buf(dst_buf.as_mut_slice()).data()
             {
                 trace!(
@@ -240,7 +240,7 @@ impl BlobCache {
         let sz = self.backend.read(blob_id, c_buf.as_mut_slice(), c_offset)?;
         if !chunk.is_compressed() {
             cache_entry.cache(c_buf.as_mut_slice(), sz);
-            return Ok(sz);
+            return copyv(c_buf.as_mut_slice(), bufs, offset, bio.size);
         }
 
         let sz = compress::decompress(c_buf.as_mut_slice(), dst_buf.as_mut_slice())?;

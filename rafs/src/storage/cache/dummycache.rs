@@ -22,6 +22,49 @@ impl DummyCache {
     pub fn new(backend: Box<dyn BlobBackend + Sync + Send>) -> DummyCache {
         DummyCache { backend }
     }
+
+    pub fn alloc_decompress(
+        &self,
+        src_buf: &mut [u8],
+        bio: &RafsBio,
+        bufs: &[VolatileSlice],
+        offset: u64,
+        d_size: usize,
+    ) -> Result<usize> {
+        // Allocate a buffer to received the decompressed data without zeroing
+        let mut dst_buf = DataBuf::alloc(d_size);
+        let sz = compress::decompress(src_buf, dst_buf.as_mut_slice())?;
+        if sz != d_size {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "Decompression failed. Input invalid or too long?",
+            ));
+        }
+        copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
+    }
+
+    pub fn decompress(
+        &self,
+        src_buf: &mut [u8],
+        bio: &RafsBio,
+        bufs: &[VolatileSlice],
+        offset: u64,
+        d_size: usize,
+    ) -> Result<usize> {
+        if bufs[0].len() >= d_size {
+            // Use the destination buffer to received the decompressed data.
+            let dst_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) };
+            let sz = compress::decompress(src_buf, dst_buf)?;
+            if sz != dst_buf.len() {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "Decompression failed. Input invalid or too long?",
+                ));
+            }
+            return Ok(sz);
+        }
+        self.alloc_decompress(src_buf, bio, bufs, offset, d_size)
+    }
 }
 
 impl RafsCache for DummyCache {
@@ -44,82 +87,47 @@ impl RafsCache for DummyCache {
     fn read(&self, bio: &RafsBio, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
         let blob_id = &bio.blob_id;
         let chunk = &bio.chunkinfo;
-        let result;
+
+        let c_size = chunk.compress_size() as usize;
+        let d_size = chunk.decompress_size() as usize;
 
         if !chunk.is_compressed() {
-            result = self.backend.readv(
+            return self.backend.readv(
                 blob_id,
                 bufs,
                 offset + chunk.blob_decompress_offset(),
                 bio.size,
             );
-        } else if bufs.len() == 1 && bufs[0].len() == bio.blksize as usize && offset == 0 {
-            // Allocate a buffer to received the compressed data without zeroing
-            let src_size = chunk.compress_size() as usize;
-            let mut src_buf = DataBuf::alloc(src_size);
-            self.backend.read(
-                blob_id,
-                src_buf.as_mut_slice(),
-                chunk.blob_compress_offset(),
-            )?;
-
-            // Use the destination buffer to received the decompressed data.
-            let dst_size = bufs[0].len();
-            let dst_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), dst_size) };
-            let sz = compress::decompress(src_buf.as_mut_slice(), dst_buf)?;
-            result = if sz != dst_size {
-                Err(Error::new(
-                    ErrorKind::InvalidData,
-                    "Decompression failed. Input invalid or too long?",
-                ))
-            } else {
-                Ok(sz)
-            };
-        } else if bufs.len() == 1 && bufs[0].len() >= chunk.compress_size() as usize {
-            // Reuse the destination buffer to received the compressed data.
-            let src_buf = unsafe {
-                std::slice::from_raw_parts_mut(bufs[0].as_ptr(), chunk.compress_size() as usize)
-            };
-            self.backend
-                .read(blob_id, src_buf, chunk.blob_compress_offset())?;
-
-            // Allocate a buffer to received the decompressed data without zeroing
-            let dst_size = bio.blksize as usize;
-            let mut dst_buf = DataBuf::alloc(dst_size);
-            let sz = compress::decompress(src_buf, dst_buf.as_mut_slice())?;
-            result = if sz != dst_size {
-                Err(Error::new(
-                    ErrorKind::InvalidData,
-                    "Decompression failed. Input invalid or too long?",
-                ))
-            } else {
-                copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
-            };
-        } else {
-            // Allocate a buffer to received the compressed data without zeroing
-            let src_size = chunk.compress_size() as usize;
-            let mut src_buf = DataBuf::alloc(src_size);
-            self.backend.read(
-                blob_id,
-                src_buf.as_mut_slice(),
-                chunk.blob_compress_offset(),
-            )?;
-
-            // Allocate a buffer to received the decompressed data without zeroing
-            let dst_size = bio.blksize as usize;
-            let mut dst_buf = DataBuf::alloc(dst_size);
-            let sz = compress::decompress(src_buf.as_mut_slice(), dst_buf.as_mut_slice())?;
-            result = if sz != dst_size {
-                Err(Error::new(
-                    ErrorKind::InvalidData,
-                    "Decompression failed. Input invalid or too long?",
-                ))
-            } else {
-                copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
-            };
         }
 
-        result
+        if bufs.len() == 1 && offset == 0 {
+            if bufs[0].len() >= c_size as usize {
+                // Reuse the destination buffer to received the compressed data.
+                let src_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), c_size) };
+                self.backend
+                    .read(blob_id, src_buf, chunk.blob_compress_offset())?;
+                return self.alloc_decompress(src_buf, bio, bufs, offset, d_size);
+            } else {
+                // Allocate a buffer to received the compressed data without zeroing
+                let mut src_buf = DataBuf::alloc(c_size);
+                self.backend.read(
+                    blob_id,
+                    src_buf.as_mut_slice(),
+                    chunk.blob_compress_offset(),
+                )?;
+                return self.decompress(src_buf.as_mut_slice(), bio, bufs, offset, d_size);
+            }
+        }
+
+        // Allocate a buffer to received the compressed data without zeroing
+        let mut src_buf = DataBuf::alloc(c_size);
+        self.backend.read(
+            blob_id,
+            src_buf.as_mut_slice(),
+            chunk.blob_compress_offset(),
+        )?;
+
+        self.alloc_decompress(src_buf.as_mut_slice(), bio, bufs, offset, d_size)
     }
 
     fn write(&self, blob_id: &str, blk: Arc<dyn RafsChunkInfo>, buf: &[u8]) -> Result<usize> {

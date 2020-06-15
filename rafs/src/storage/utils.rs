@@ -70,7 +70,7 @@ pub fn readahead(fd: libc::c_int, mut offset: u64, end: u64) {
 }
 
 pub struct DataBuf {
-    size: usize,
+    pub size: usize,
     layout: Layout,
     ptr: *mut u8,
 }

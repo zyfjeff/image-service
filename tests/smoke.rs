@@ -19,10 +19,17 @@ fn test(enable_compress: bool, enable_cache: bool) -> Result<()> {
 
     let nydusd = nydusd::new(&work_dir, enable_cache)?;
     nydusd.start()?;
-
     let mount_ret = builder.mount_check()?;
-
     assert_eq!(build_ret, mount_ret);
+
+    // test blob cache recovery if enable cache
+    if enable_cache {
+        drop(nydusd);
+        let nydusd = nydusd::new(&work_dir, enable_cache)?;
+        nydusd.start()?;
+        let mount_ret = builder.mount_check()?;
+        assert_eq!(build_ret, mount_ret);
+    }
 
     // create & build source rootfs based parent
     builder.make_source()?;
