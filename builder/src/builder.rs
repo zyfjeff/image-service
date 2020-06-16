@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use rafs::metadata::RafsDigest;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::fs::DirEntry;
 use std::fs::OpenOptions;
@@ -35,6 +34,8 @@ pub struct Builder {
     blob_id: String,
     /// blob chunk compress flag
     compressor: compress::Algorithm,
+    /// readhead file list
+    readhead_files: HashSet<String>,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
     inode_map: HashMap<u64, Node>,
     /// mutilple layers build: upper source nodes
@@ -51,6 +52,7 @@ impl Builder {
         parent_bootstrap_path: String,
         blob_id: String,
         compressor: compress::Algorithm,
+        readhead_files: HashSet<String>,
     ) -> Result<Builder> {
         let f_blob = Box::new(
             OpenOptions::new()
@@ -86,6 +88,7 @@ impl Builder {
             blob_id,
             compressor,
             inode_map: HashMap::new(),
+            readhead_files,
             additions: Vec::new(),
             removals: HashMap::new(),
             opaques: HashMap::new(),

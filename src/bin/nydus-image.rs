@@ -14,6 +14,7 @@ const BLOB_ID_MAXIMUM_LENGTH: usize = 1024;
 use clap::{App, Arg, SubCommand};
 use mktemp::Temp;
 
+use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Error, ErrorKind, Result, Write};
 use std::os::linux::fs::MetadataExt;
@@ -56,6 +57,34 @@ fn upload_blob(
     io::stdout().flush().unwrap();
 
     Ok(())
+}
+
+/// Get readhead file paths line by line from stdin
+fn get_readhead_files() -> Result<HashSet<String>> {
+    let stdin = io::stdin();
+    let mut files = HashSet::new();
+
+    loop {
+        let mut file = String::new();
+        let ret = stdin.read_line(&mut file);
+        match ret {
+            Ok(size) => {
+                if size == 0 {
+                    break;
+                }
+                let file_name = file.trim();
+                if !file_name.is_empty() {
+                    info!("readhead file: {}", file_name);
+                    files.insert(file_name.to_owned());
+                }
+            }
+            Err(err) => {
+                error!("Failed to parse readhead files: {}", err);
+            }
+        }
+    }
+
+    Ok(files)
 }
 
 fn build() -> Result<()> {
@@ -116,6 +145,11 @@ fn build() -> Result<()> {
                         .long("backend_config")
                         .help("blob storage backend config (json)")
                         .takes_value(true),
+                )
+                .arg(
+                    Arg::with_name("enable_readhead")
+                        .long("enable_readhead")
+                        .help("enable blob readhead optimiztion (read file list from stdin)"),
                 ),
         )
         .arg(
@@ -176,6 +210,12 @@ fn build() -> Result<()> {
             parent_bootstrap = _parent_bootstrap.to_owned();
         }
 
+        let readhead_files = if matches.is_present("enable_readhead") {
+            get_readhead_files()?
+        } else {
+            HashSet::new()
+        };
+
         let mut ib = builder::Builder::new(
             source_path.to_owned(),
             real_blob_path.to_owned(),
@@ -183,6 +223,7 @@ fn build() -> Result<()> {
             parent_bootstrap,
             blob_id.clone(),
             compressor,
+            readhead_files,
         )?;
         blob_id = ib.build()?;
 
