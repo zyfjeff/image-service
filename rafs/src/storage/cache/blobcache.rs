@@ -73,12 +73,17 @@ impl BlobCacheEntry {
     fn cache(&mut self, buf: &[u8], sz: usize) {
         // The whole chunk is ready, try to cache it.
         if sz == buf.len() {
-            if let Ok(w_size) = self.write(buf) {
+            if let Ok(w_size) = self.write(buf).map_err(|err| {
+                warn!("Cache write blob file failed: {}", err);
+                err
+            }) {
                 if w_size == sz {
                     self.status = CacheStatus::Ready;
+                    return;
                 }
             }
         }
+        warn!("Cache write failed, the buf length not match");
     }
 }
 
