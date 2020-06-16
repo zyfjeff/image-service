@@ -184,6 +184,7 @@ impl DirectMapping {
             offset,
         };
 
+        // TODO: use bitmap to record validation result.
         wrapper.validate()?;
 
         Ok(wrapper)
@@ -253,6 +254,9 @@ impl RafsSuperInodes for DirectMapping {
                 0,
             )
         } as *const u8;
+        if base as *mut core::ffi::c_void == libc::MAP_FAILED {
+            return Err(Error::last_os_error());
+        }
         if base.is_null() {
             return Err(ebadf());
         }
