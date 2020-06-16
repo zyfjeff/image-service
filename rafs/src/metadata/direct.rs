@@ -408,10 +408,8 @@ impl RafsInode for OndiskInodeWrapper {
             // * - child inode number must be bigger than parent's inode number
             // * - child inode number has mapping in the inode table
             if (inode.i_child_index as u64) <= inode.i_ino
-                || inode.i_child_index as usize >= max_ino
+                || inode.i_child_index as usize > max_ino
                 || inode.i_child_count as usize > max_ino
-                || inode.i_child_count + inode.i_child_count < inode.i_child_count
-                || (inode.i_child_count as usize + inode.i_child_count as usize) >= max_ino
             {
                 return Err(ebadf());
             }
