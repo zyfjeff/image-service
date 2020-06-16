@@ -81,6 +81,8 @@ impl BlobCacheEntry {
                     self.status = CacheStatus::Ready;
                     return;
                 }
+            } else {
+                return;
             }
         }
         warn!("Cache write failed, the buf length not match");
