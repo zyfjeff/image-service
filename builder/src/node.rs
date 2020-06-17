@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use rafs::RafsIoWrite;
+use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::prelude::*;
@@ -18,6 +19,8 @@ use nydus_utils::div_round_up;
 use rafs::metadata::layout::*;
 use rafs::metadata::*;
 use rafs::storage::compress;
+
+pub type ChunkCache = HashMap<OndiskDigest, OndiskChunkInfo>;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Overlay {
@@ -125,6 +128,7 @@ impl Node {
         blob_hash: &mut Sha256,
         blob_compress_offset: &mut u64,
         blob_decompress_offset: &mut u64,
+        chunk_cache: &mut ChunkCache,
         compressor: compress::Algorithm,
     ) -> Result<usize> {
         if self.is_symlink() {
@@ -142,10 +146,9 @@ impl Node {
         let mut file = File::open(&self.path)?;
 
         for i in 0..self.inode.i_child_count {
-            let mut chunk = OndiskChunkInfo::new();
-
             // get chunk info
-            chunk.file_offset = i as u64 * RAFS_DEFAULT_BLOCK_SIZE;
+            let mut chunk = OndiskChunkInfo::new();
+            let file_offset = i as u64 * RAFS_DEFAULT_BLOCK_SIZE;
             let chunk_size = if i == self.inode.i_child_count - 1 {
                 file_size as usize - (RAFS_DEFAULT_BLOCK_SIZE as usize * i as usize)
             } else {
@@ -153,16 +156,29 @@ impl Node {
             };
 
             // get chunk data
-            file.seek(SeekFrom::Start(chunk.file_offset))?;
+            file.seek(SeekFrom::Start(file_offset))?;
             let mut chunk_data = vec![0; chunk_size];
             file.read_exact(&mut chunk_data)?;
 
             // calc chunk digest
             chunk.block_id = OndiskDigest::from_buf(chunk_data.as_slice());
 
+            if let Some(cached_chunk) = chunk_cache.get(&chunk.block_id) {
+                chunk.clone_from(&cached_chunk);
+                chunk.file_offset = file_offset;
+                self.chunks.push(chunk);
+                trace!(
+                    "\tbuilding duplicated chunk: {} compressor {}",
+                    chunk,
+                    compressor,
+                );
+                continue;
+            }
+
             // compress chunk data
             let compressed = compress::compress(&chunk_data, compressor)?;
             let compressed_size = compressed.len();
+            chunk.file_offset = file_offset;
             chunk.blob_compress_offset = *blob_compress_offset;
             chunk.blob_decompress_offset = *blob_decompress_offset;
             chunk.compress_size = compressed_size as u32;
@@ -176,17 +192,6 @@ impl Node {
             *blob_compress_offset += compressed_size as u64;
             *blob_decompress_offset += chunk_size as u64;
 
-            trace!(
-                "\tbuilding chunk: file_offset {}, blob_compress_offset {}, compress_size {}, blob_decompress_offset {}, decompress_size {}, compressor {}, block_id {}",
-                chunk.file_offset,
-                chunk.blob_compress_offset,
-                chunk.compress_size,
-                chunk.blob_decompress_offset,
-                chunk.decompress_size,
-                compressor,
-                chunk.block_id.to_string(),
-            );
-
             // calc blob hash
             blob_hash.input(&compressed);
 
@@ -197,7 +202,10 @@ impl Node {
             inode_hash.input(&chunk.block_id.data());
 
             // stash chunk
+            chunk_cache.insert(chunk.block_id, chunk);
             self.chunks.push(chunk);
+
+            trace!("\tbuilding chunk: {} compressor {}", chunk, compressor,);
         }
 
         // finish calc inode digest

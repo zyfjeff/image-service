@@ -617,16 +617,20 @@ impl fmt::Display for OndiskChunkInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "chunk_info block_id: {:?}, blob_index: {} file offset: {}, blob compress offset: {}, compressed size: {}",
-            self.block_id, self.blob_index, self.file_offset, self.blob_compress_offset,
-            self.compress_size
+            "file_offset {}, blob_compress_offset {}, compress_size {}, blob_decompress_offset {}, decompress_size {}, block_id {}",
+            self.file_offset,
+            self.blob_compress_offset,
+            self.compress_size,
+            self.blob_decompress_offset,
+            self.decompress_size,
+            self.block_id.to_string(),
         )
     }
 }
 
 /// On disk Rafs SHA256 digest data.
 #[repr(C)]
-#[derive(Clone, Copy, Default, Debug)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash)]
 pub struct OndiskDigest {
     data: [u8; RAFS_SHA256_LENGTH],
 }

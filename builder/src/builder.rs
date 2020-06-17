@@ -212,7 +212,9 @@ impl Builder {
         let mut blob_compress_offset = 0u64;
         let mut blob_decompress_offset = 0u64;
         let mut blob_hash = Sha256::new();
+        let mut chunk_cache: ChunkCache = HashMap::new();
         let mut inode_offset = (super_block_size + inode_table_size + blob_table_size) as u32;
+
         for node in &mut self.additions {
             let file_type = node.get_type()?;
             if file_type != "" {
@@ -263,6 +265,7 @@ impl Builder {
                 &mut blob_hash,
                 &mut blob_compress_offset,
                 &mut blob_decompress_offset,
+                &mut chunk_cache,
                 self.compressor,
             )? as u32;
         }
@@ -281,6 +284,7 @@ impl Builder {
                     &mut blob_hash,
                     &mut blob_compress_offset,
                     &mut blob_decompress_offset,
+                    &mut chunk_cache,
                     self.compressor,
                 )?;
             }

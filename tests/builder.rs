@@ -80,6 +80,10 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
+    pub fn copy_file(&mut self, src: &PathBuf, dst: &PathBuf) -> Result<u64> {
+        fs::copy(src, dst)
+    }
+
     pub fn create_symlink(&mut self, src: &PathBuf, dst: &PathBuf) -> Result<()> {
         unix_fs::symlink(src, dst)?;
         self.record(dst, FileInfo { hash: hash(b"") });
@@ -125,8 +129,8 @@ impl<'a> Builder<'a> {
 
         self.create_file(&dir.join("test-1"), b"lower:test-1")?;
         self.create_file(&dir.join("test-2"), b"lower:test-2")?;
-        self.create_rnd_file(&dir.join("test-3-large"), "2MB")?;
-        self.create_rnd_file(&dir.join("test-4-large"), "2M")?;
+        self.create_rnd_file(&dir.join("test-3-large"), "3MB")?;
+        self.create_rnd_file(&dir.join("test-4-large"), "3M")?;
         self.create_dir(&dir.join("sub"))?;
         self.create_file(&dir.join("sub/test-1"), b"lower:sub/test-1")?;
         self.create_file(&dir.join("sub/test-2"), b"lower:sub/test-2")?;
@@ -142,6 +146,11 @@ impl<'a> Builder<'a> {
         self.create_hardlink(
             &dir.join("test-3-large"),
             &dir.join("sub/test-3-large-hardlink"),
+        )?;
+
+        self.copy_file(
+            &dir.join("test-3-large"),
+            &dir.join("test-3-large-duplicated"),
         )?;
 
         self.create_dir(&dir.join("sub/hide"))?;
