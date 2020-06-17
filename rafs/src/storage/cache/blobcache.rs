@@ -360,6 +360,9 @@ mod blob_cache_tests {
     use crate::storage::backend::BlobBackend;
     use crate::storage::cache::blobcache;
     use crate::storage::cache::RafsCache;
+    use crate::storage::compress::Algorithm;
+    use crate::storage::device::RafsBio;
+    use vm_memory::VolatileSlice;
 
     struct MockBackend {}
 
@@ -393,7 +396,7 @@ mod blob_cache_tests {
             Box::new(MockBackend {}) as Box<dyn BlobBackend + Send + Sync>,
         )
         .unwrap();
-        let mut expect = Vec::new();
+        let mut expect = vec![0u8; 100];
         let block_id = [1u8; 32];
         let blob_id = "blobcache";
         // generate init data
@@ -407,19 +410,23 @@ mod blob_cache_tests {
         chunk.file_offset = 0;
         chunk.blob_compress_offset = 0;
         chunk.compress_size = 100;
-
-        let r1 = blob_cache
-            .read(blob_id, Arc::new(chunk))
-            .expect("read err")
-            .decompressed(&|b| Ok(b.to_vec()))
-            .unwrap();
-        assert_eq!(expect, r1);
-        let r2 = blob_cache
-            .read(blob_id, Arc::new(chunk))
-            .expect("read err")
-            .decompressed(&|b| Ok(b.to_vec()))
-            .unwrap();
-        assert_eq!(expect, r2);
+        chunk.blob_decompress_offset = 0;
+        chunk.decompress_size = 100;
+        chunk.flags = 0;
+        let bio = RafsBio::new(
+            Arc::new(chunk),
+            blob_id.to_string(),
+            Algorithm::None,
+            0,
+            100,
+            1024 * 1024,
+        );
+        let mut buf = vec![0u8; 100];
+        let vbuf = unsafe { [VolatileSlice::new(buf.as_mut_ptr(), 4096)] };
+        assert_eq!(blob_cache.read(&bio, &vbuf, 0).unwrap(), 100);
+        assert_eq!(&buf[0..100], expect.as_slice());
+        assert_eq!(blob_cache.read(&bio, &vbuf, 0).unwrap(), 100);
+        assert_eq!(&buf[0..100], expect.as_slice());
         std::fs::remove_file("/tmp/blobcache").expect("remove test file err!");
     }
 }

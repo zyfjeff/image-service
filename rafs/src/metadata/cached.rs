@@ -18,7 +18,6 @@ use fuse_rs::api::filesystem::Entry;
 use crate::fs::Inode;
 use crate::metadata::layout::*;
 use crate::metadata::*;
-use crate::storage::compress::Algorithm::LZ4Block;
 use crate::storage::device::{RafsBio, RafsBioDesc};
 use crate::{einval, enoent, RafsIoReader};
 
@@ -336,7 +335,7 @@ impl RafsInode for CachedInode {
 
     fn alloc_bio_desc(&self, offset: u64, size: usize) -> Result<RafsBioDesc> {
         let mut desc = RafsBioDesc::new();
-        let end = offset + size as u64;
+        let end = cmp::min(offset + size as u64, self.i_size);
         let blksize = self.i_blksize;
 
         for blk in self.i_data.iter() {
@@ -345,12 +344,16 @@ impl RafsInode for CachedInode {
             } else if blk.file_offset() >= end {
                 break;
             }
+            let bio_offset = cmp::max(blk.file_offset(), offset);
             let bio = RafsBio::new(
                 blk.clone(),
                 self.get_chunk_blob_id(blk.blob_index())?,
-                LZ4Block,
-                cmp::max(blk.file_offset(), offset) as u32,
-                cmp::min(end - blk.file_offset(), blksize as u64) as usize,
+                self.i_meta.get_compressor(),
+                bio_offset as u32,
+                cmp::min(
+                    end - blk.file_offset(),
+                    blk.file_offset() + blksize as u64 - bio_offset,
+                ) as usize,
                 blksize,
             );
             desc.bi_size += bio.size;
@@ -459,5 +462,180 @@ impl From<&OndiskChunkInfo> for CachedChunkInfo {
         let mut chunk = CachedChunkInfo::new();
         chunk.copy_from_ondisk(info);
         chunk
+    }
+}
+
+#[cfg(test)]
+mod cached_tests {
+    use crate::metadata::cached::CachedInode;
+    use crate::metadata::layout::{OndiskBlobTable, OndiskChunkInfo, OndiskInode, XAttrs};
+    use crate::metadata::{RafsInode, RafsSuperMeta};
+    use crate::{RafsIoReader, RafsIoWriter};
+    use std::cmp;
+    use std::fs::OpenOptions;
+    use std::io::Seek;
+    use std::io::SeekFrom::Start;
+    use std::sync::Arc;
+
+    #[test]
+    fn test_load_inode() {
+        let mut f = OpenOptions::new()
+            .truncate(true)
+            .create(true)
+            .write(true)
+            .read(true)
+            .open("/tmp/buf_1")
+            .unwrap();
+        let mut writer = Box::new(f.try_clone().unwrap()) as RafsIoWriter;
+        let mut reader = Box::new(f.try_clone().unwrap()) as RafsIoReader;
+        let mut ondisk_inode = OndiskInode::new();
+        let file_name = "c_inode_1";
+        let mut xattr = XAttrs::default();
+        xattr
+            .pairs
+            .insert(String::from("k1"), vec![1u8, 2u8, 3u8, 4u8]);
+        xattr
+            .pairs
+            .insert(String::from("k2"), vec![10u8, 11u8, 12u8]);
+        ondisk_inode.i_name_size = file_name.len() as u16;
+        ondisk_inode.i_child_count = 1;
+        ondisk_inode.i_ino = 3;
+        ondisk_inode.i_size = 8192;
+        ondisk_inode.i_mode = libc::S_IFREG;
+        let mut chunk = OndiskChunkInfo::new();
+        chunk.decompress_size = 8192;
+        chunk.blob_decompress_offset = 0;
+        chunk.blob_compress_offset = 0;
+        chunk.compress_size = 4096;
+        ondisk_inode
+            .store(&mut writer, file_name.as_bytes(), "".as_bytes())
+            .unwrap();
+        chunk.store(&mut writer).unwrap();
+        xattr.store(&mut writer).unwrap();
+
+        f.seek(Start(0)).unwrap();
+        let meta = Arc::new(RafsSuperMeta::default());
+        let blob_table = Arc::new(OndiskBlobTable::new());
+        let mut cached_inode = CachedInode::new(&blob_table, &meta);
+        cached_inode.load(&meta, &mut reader).unwrap();
+        // check data
+        assert_eq!(cached_inode.i_name, file_name);
+        assert_eq!(cached_inode.i_chunk_cnt, 1);
+        let attr = cached_inode.get_attr();
+        assert_eq!(attr.ino, 3);
+        assert_eq!(attr.size, 8192);
+        let cached_chunk = cached_inode.get_chunk_info(0).unwrap();
+        assert_eq!(cached_chunk.compress_size(), 4096);
+        assert_eq!(cached_chunk.decompress_size(), 8192);
+        assert_eq!(cached_chunk.blob_compress_offset(), 0);
+        assert_eq!(cached_chunk.blob_decompress_offset(), 0);
+        let c_xattr = cached_inode.get_xattrs().unwrap();
+        for (k, v) in c_xattr.iter() {
+            assert_eq!(xattr.pairs.get(k).unwrap(), v);
+        }
+
+        // close file
+        drop(f);
+        std::fs::remove_file("/tmp/buf_1").unwrap();
+    }
+
+    #[test]
+    fn test_load_symlink() {
+        let mut f = OpenOptions::new()
+            .truncate(true)
+            .create(true)
+            .write(true)
+            .read(true)
+            .open("/tmp/buf_2")
+            .unwrap();
+        let mut writer = Box::new(f.try_clone().unwrap()) as RafsIoWriter;
+        let mut reader = Box::new(f.try_clone().unwrap()) as RafsIoReader;
+        let file_name = "c_inode_2";
+        let symlink_name = "c_inode_1";
+        let mut ondisk_inode = OndiskInode::new();
+        ondisk_inode.i_name_size = file_name.len() as u16;
+        ondisk_inode.i_symlink_size = symlink_name.len() as u16;
+        ondisk_inode.i_mode = libc::S_IFLNK;
+        ondisk_inode
+            .store(&mut writer, file_name.as_bytes(), symlink_name.as_bytes())
+            .unwrap();
+
+        f.seek(Start(0)).unwrap();
+        let meta = Arc::new(RafsSuperMeta::default());
+        let blob_table = Arc::new(OndiskBlobTable::new());
+        let mut cached_inode = CachedInode::new(&blob_table, &meta);
+        cached_inode.load(&meta, &mut reader).unwrap();
+
+        assert_eq!(cached_inode.i_name, "c_inode_2");
+        assert_eq!(cached_inode.get_symlink().unwrap(), symlink_name);
+
+        drop(f);
+        std::fs::remove_file("/tmp/buf_2").unwrap();
+    }
+
+    #[test]
+    fn test_alloc_bio_desc() {
+        let mut f = OpenOptions::new()
+            .truncate(true)
+            .create(true)
+            .write(true)
+            .read(true)
+            .open("/tmp/buf_3")
+            .unwrap();
+        let mut writer = Box::new(f.try_clone().unwrap()) as RafsIoWriter;
+        let mut reader = Box::new(f.try_clone().unwrap()) as RafsIoReader;
+        let file_name = "c_inode_3";
+        let mut ondisk_inode = OndiskInode::new();
+        ondisk_inode.i_name_size = file_name.len() as u16;
+        ondisk_inode.i_child_count = 4;
+        ondisk_inode.i_mode = libc::S_IFREG;
+        ondisk_inode.i_size = 1024 * 1024 * 3 + 8192;
+        ondisk_inode
+            .store(&mut writer, file_name.as_bytes(), "".as_bytes())
+            .unwrap();
+
+        let mut size = ondisk_inode.i_size;
+        for i in 0..ondisk_inode.i_child_count {
+            let mut chunk = OndiskChunkInfo::new();
+            chunk.decompress_size = cmp::min(1024 * 1024, size as u32);
+            chunk.blob_decompress_offset = (i * 1024 * 1024) as u64;
+            chunk.compress_size = chunk.decompress_size / 2;
+            chunk.blob_compress_offset = ((i * 1024 * 1024) / 2) as u64;
+            chunk.file_offset = chunk.blob_decompress_offset;
+            chunk.store(&mut writer).unwrap();
+            size -= chunk.decompress_size as u64;
+        }
+        f.seek(Start(0)).unwrap();
+        let mut meta = Arc::new(RafsSuperMeta::default());
+        Arc::get_mut(&mut meta).unwrap().block_size = 1024 * 1024;
+        let mut blob_table = Arc::new(OndiskBlobTable::new());
+        Arc::get_mut(&mut blob_table)
+            .unwrap()
+            .add(String::from("123333"));
+        let mut cached_inode = CachedInode::new(&blob_table, &meta);
+        cached_inode.load(&meta, &mut reader).unwrap();
+        let desc1 = cached_inode.alloc_bio_desc(0, 100).unwrap();
+        assert_eq!(desc1.bi_size, 100);
+        assert_eq!(desc1.bi_vec.len(), 1);
+        assert_eq!(desc1.bi_vec[0].offset, 0);
+        assert_eq!(desc1.bi_vec[0].blob_id, "123333");
+
+        let desc2 = cached_inode.alloc_bio_desc(1024 * 1024 - 100, 200).unwrap();
+        assert_eq!(desc2.bi_size, 200);
+        assert_eq!(desc2.bi_vec.len(), 2);
+        assert_eq!(desc2.bi_vec[0].offset, 1024 * 1024 - 100);
+        assert_eq!(desc2.bi_vec[0].size, 100);
+        assert_eq!(desc2.bi_vec[1].offset, 1024 * 1024);
+        assert_eq!(desc2.bi_vec[1].size, 100);
+
+        let desc3 = cached_inode
+            .alloc_bio_desc(1024 * 1024 + 8192, 1024 * 1024 * 4)
+            .unwrap();
+        assert_eq!(desc3.bi_size, 1024 * 1024 * 2);
+        assert_eq!(desc3.bi_vec.len(), 3);
+        assert_eq!(desc3.bi_vec[2].size, 8192);
+
+        drop(f);
+        std::fs::remove_file("/tmp/buf_3").unwrap();
     }
 }
