@@ -21,6 +21,7 @@ use crate::{ebadf, einval};
 use nydus_utils::{round_down_4k, round_up_4k};
 
 const BLOB_ACCESSED_SUFFIX: &str = ".access";
+const BLOB_ACCESS_RECORD_SECOND: u32 = 10;
 
 // Each access record takes 16 bytes: u64 + u32 + u32
 // So we allow 2048 entries at most to avoid hurting backend upon flush
@@ -38,6 +39,8 @@ pub struct LocalFs {
     dir: String,
     // readahead blob file
     readahead: bool,
+    // number of seconds to record blob access logs
+    readahead_sec: u32,
     // blobid-File map
     file_table: RwLock<HashMap<String, FileTableEntry>>,
 }
@@ -47,11 +50,16 @@ pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Re
         .get("readahead")
         .map(|r| r == "true")
         .unwrap_or(false);
+    let readahead_sec = config
+        .get("readahead_sec")
+        .map(|n| n.parse().unwrap_or(BLOB_ACCESS_RECORD_SECOND))
+        .unwrap_or(BLOB_ACCESS_RECORD_SECOND);
 
     match (config.get("blob_file"), config.get("dir")) {
         (Some(blob_file), _) => Ok(LocalFs {
             blob_file: String::from(blob_file),
             readahead,
+            readahead_sec,
             file_table: RwLock::new(HashMap::new()),
             ..Default::default()
         }),
@@ -59,6 +67,7 @@ pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Re
         (_, Some(dir)) => Ok(LocalFs {
             dir: String::from(dir),
             readahead,
+            readahead_sec,
             file_table: RwLock::new(HashMap::new()),
             ..Default::default()
         }),
@@ -350,10 +359,11 @@ impl LocalFs {
             table_guard.insert(blob_id.to_string(), (file, Some(access_log.clone())));
             drop(table_guard);
             // Split a thread to flush access record
+            let wait_sec = self.readahead_sec;
             let _ = thread::Builder::new()
                 .name("nydus-localfs-access-recorder".to_string())
                 .spawn(move || {
-                    thread::sleep(time::Duration::from_secs(10));
+                    thread::sleep(time::Duration::from_secs(wait_sec as u64));
                     access_log.flush();
                 });
             return Ok(fd);
