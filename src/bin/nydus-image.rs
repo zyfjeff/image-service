@@ -14,12 +14,14 @@ const BLOB_ID_MAXIMUM_LENGTH: usize = 1024;
 use clap::{App, Arg, SubCommand};
 use mktemp::Temp;
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Error, ErrorKind, Result, Write};
 use std::os::linux::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 
 use nydus_builder::builder;
+use nydus_builder::node::Node;
 use nydus_utils::{backtrace_enable, log_level_to_verbosity};
 use rafs::storage::{backend, factory};
 
@@ -60,9 +62,9 @@ fn upload_blob(
 }
 
 /// Get readhead file paths line by line from stdin
-fn get_readhead_files() -> Result<HashSet<String>> {
+fn get_readhead_files() -> Result<HashMap<PathBuf, Option<Node>>> {
     let stdin = io::stdin();
-    let mut files = HashSet::new();
+    let mut files = HashMap::new();
 
     loop {
         let mut file = String::new();
@@ -74,8 +76,8 @@ fn get_readhead_files() -> Result<HashSet<String>> {
                 }
                 let file_name = file.trim();
                 if !file_name.is_empty() {
-                    info!("readhead file: {}", file_name);
-                    files.insert(file_name.to_owned());
+                    debug!("readhead file: {}", file_name);
+                    files.insert(Path::new(file_name).to_path_buf(), None);
                 }
             }
             Err(err) => {
@@ -213,7 +215,7 @@ fn build() -> Result<()> {
         let readhead_files = if matches.is_present("enable_readhead") {
             get_readhead_files()?
         } else {
-            HashSet::new()
+            HashMap::new()
         };
 
         let mut ib = builder::Builder::new(

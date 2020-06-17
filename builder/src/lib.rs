@@ -11,4 +11,4 @@ pub mod builder;
 
 #[allow(dead_code)]
 #[allow(unused_variables)]
-mod node;
+pub mod node;

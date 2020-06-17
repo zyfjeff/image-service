@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::fs::DirEntry;
 use std::fs::OpenOptions;
@@ -35,7 +35,7 @@ pub struct Builder {
     /// blob chunk compress flag
     compressor: compress::Algorithm,
     /// readhead file list
-    readhead_files: HashSet<String>,
+    readhead_nodes: HashMap<PathBuf, Option<Node>>,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
     inode_map: HashMap<u64, Node>,
     /// mutilple layers build: upper source nodes
@@ -52,7 +52,7 @@ impl Builder {
         parent_bootstrap_path: String,
         blob_id: String,
         compressor: compress::Algorithm,
-        readhead_files: HashSet<String>,
+        readhead_nodes: HashMap<PathBuf, Option<Node>>,
     ) -> Result<Builder> {
         let f_blob = Box::new(
             OpenOptions::new()
@@ -88,7 +88,7 @@ impl Builder {
             blob_id,
             compressor,
             inode_map: HashMap::new(),
-            readhead_files,
+            readhead_nodes,
             additions: Vec::new(),
             removals: HashMap::new(),
             opaques: HashMap::new(),
@@ -231,6 +231,7 @@ impl Builder {
                     node.inode.has_xattr(),
                 );
             }
+            let root_path = node.rootfs();
             inode_table.set(node.index, inode_offset)?;
             // add inode size
             inode_offset += node.inode.size() as u32;
@@ -238,18 +239,50 @@ impl Builder {
                 // add xattr size
                 inode_offset += (size_of::<OndiskXAttrs>() + node.xattrs.aligned_size()) as u32;
             }
-            node.dump_blob(
+            if self.readhead_nodes.get(&root_path).is_some() {
+                self.readhead_nodes.insert(root_path, Some(node.clone()));
+            }
+            // add chunks size
+            inode_offset += (node.chunk_count() * size_of::<OndiskChunkInfo>()) as u32;
+        }
+
+        // sort readhead list by file size for better prefetch
+        let mut readhead_nodes = self
+            .readhead_nodes
+            .values_mut()
+            .filter_map(|node| node.as_mut())
+            .collect::<Vec<&mut Node>>();
+        readhead_nodes.sort_by_key(|node| node.inode.i_size);
+
+        // dump readhead nodes
+        for readhead_node in &mut readhead_nodes {
+            debug!("upper building readhead {}", readhead_node);
+            readhead_node.dump_blob(
                 &mut self.f_blob,
                 &mut blob_hash,
                 &mut blob_compress_offset,
                 &mut blob_decompress_offset,
                 self.compressor,
             )?;
-            // add chunks size
-            inode_offset += (node.chunks.len() * size_of::<OndiskChunkInfo>()) as u32;
         }
 
-        // set blob id
+        // dump other nodes
+        for node in &mut self.additions {
+            if let Some(Some(readhead_node)) = self.readhead_nodes.get(&node.rootfs()) {
+                node.clone_from(&readhead_node);
+            } else {
+                debug!("upper building {}", node);
+                node.dump_blob(
+                    &mut self.f_blob,
+                    &mut blob_hash,
+                    &mut blob_compress_offset,
+                    &mut blob_decompress_offset,
+                    self.compressor,
+                )?;
+            }
+        }
+
+        // set blob id, blob hash as default
         if self.blob_id == "" {
             let blob_hash = OndiskDigest::from_digest(&mut blob_hash);
             self.blob_id = blob_hash.to_string();

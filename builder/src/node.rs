@@ -44,13 +44,17 @@ impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "{:?} ino {}, parent {}, childs {}, child index {}",
-            // self.get_type(),
-            self.get_rootfs(),
+            "{} {:?}: index {} ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} i_nlink {} has_xattr {}",
+            self.get_type()?,
+            self.rootfs(),
+            self.index,
             self.inode.i_ino,
-            self.inode.i_parent,
             self.inode.i_child_count,
             self.inode.i_child_index,
+            self.inode.i_name_size,
+            self.inode.i_symlink_size,
+            self.inode.i_nlink,
+            self.inode.has_xattr(),
         )
     }
 }
@@ -253,7 +257,7 @@ impl Node {
     }
 
     pub fn build_inode(&mut self, hardlink_node: Option<Node>) -> Result<()> {
-        if self.get_rootfs() == PathBuf::from("/") {
+        if self.rootfs() == PathBuf::from("/") {
             self.name = String::from("/");
             self.inode.set_name_size(self.name.as_bytes().len());
             self.build_inode_stat()?;
@@ -282,8 +286,7 @@ impl Node {
                     return Ok(());
                 }
             }
-            self.inode.i_child_count =
-                div_round_up(self.inode.i_size, RAFS_DEFAULT_BLOCK_SIZE) as u32;
+            self.inode.i_child_count = self.chunk_count() as u32;
         } else if self.is_symlink()? {
             self.inode.i_flags |= INO_FLAG_SYMLINK as u64;
             let target_path = fs::read_link(&self.path)?;
@@ -297,6 +300,10 @@ impl Node {
 
     pub fn meta(&self) -> Result<impl MetadataExt> {
         self.path.symlink_metadata()
+    }
+
+    pub fn rootfs(&self) -> PathBuf {
+        Path::new("/").join(self.path.strip_prefix(&self.root).unwrap())
     }
 
     pub fn is_dir(&self) -> Result<bool> {
@@ -319,6 +326,13 @@ impl Node {
         Ok(self.meta()?.st_ino())
     }
 
+    pub fn chunk_count(&self) -> usize {
+        if !self.is_reg() {
+            return 0;
+        }
+        div_round_up(self.inode.i_size, RAFS_DEFAULT_BLOCK_SIZE) as usize
+    }
+
     pub fn get_type(&self) -> Result<&str> {
         let mut file_type = "";
 
@@ -335,9 +349,5 @@ impl Node {
         }
 
         Ok(file_type)
-    }
-
-    pub fn get_rootfs(&self) -> PathBuf {
-        Path::new("/").join(self.path.strip_prefix(&self.root).unwrap())
     }
 }
