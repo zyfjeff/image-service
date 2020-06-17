@@ -10,7 +10,7 @@ extern crate log;
 extern crate serde;
 
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::os::unix::io::AsRawFd;
 
 pub mod fs;
@@ -23,7 +23,7 @@ extern crate lazy_static;
 pub mod io_stats;
 
 /// A helper trait for RafsIoReader.
-pub trait RafsIoRead: Read + AsRawFd {}
+pub trait RafsIoRead: Read + AsRawFd + Seek {}
 
 /// A helper trait for RafsIoWriter.
 pub trait RafsIoWrite: Write {}

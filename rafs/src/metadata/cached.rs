@@ -43,7 +43,12 @@ impl CachedInodes {
             let mut inode = CachedInode::new(&self.s_blob, &self.s_meta);
             match inode.load(&self.s_meta, r) {
                 Ok(_) => {
-                    trace!("got inode ino {} parent {}", inode.ino(), inode.parent());
+                    trace!(
+                        "got inode ino {} parent {} size {}",
+                        inode.ino(),
+                        inode.parent(),
+                        inode.size()
+                    );
                 }
                 Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => break 'outer,
                 Err(e) => {
@@ -51,7 +56,7 @@ impl CachedInodes {
                     return Err(e);
                 }
             }
-            let child_inode = self.add_node(inode)?;
+            let child_inode = self.hash_inode(Arc::new(inode))?;
             if child_inode.is_dir() {
                 // dir inodes push into parent last
                 dir_inos.push(child_inode.i_ino);
@@ -63,15 +68,9 @@ impl CachedInodes {
             let ino = dir_inos.pop().unwrap();
             self.add_into_parent(&self.get_node(ino)?)?;
         }
+        debug!("all {} inodes loaded", self.s_inodes.len());
 
         Ok(())
-    }
-
-    fn add_node(&mut self, inode: CachedInode) -> Result<Arc<CachedInode>> {
-        // load detail infos
-        let ino = inode.i_ino;
-        self.hash_inode(Arc::new(inode))?;
-        self.get_node(ino)
     }
 
     fn get_node(&self, ino: Inode) -> Result<Arc<CachedInode>> {
@@ -82,7 +81,7 @@ impl CachedInodes {
         self.s_inodes.get_mut(&ino).ok_or_else(enoent)
     }
 
-    fn hash_inode(&mut self, inode: Arc<CachedInode>) -> Result<()> {
+    fn hash_inode(&mut self, inode: Arc<CachedInode>) -> Result<Arc<CachedInode>> {
         let mut skip = false;
 
         if inode.is_hardlink() {
@@ -91,18 +90,15 @@ impl CachedInodes {
             }
         }
         if !skip {
+            let ino = inode.ino();
             self.s_inodes.insert(inode.i_ino, inode);
+            self.get_node(ino)
+        } else {
+            Ok(inode)
         }
-
-        Ok(())
     }
 
     fn add_into_parent(&mut self, child_inode: &Arc<CachedInode>) -> Result<()> {
-        trace!(
-            "try add {} into {}",
-            child_inode.ino(),
-            child_inode.parent()
-        );
         if let Ok(parent_inode) = self.get_node_mut(child_inode.parent()) {
             Arc::get_mut(parent_inode)
                 .unwrap()
@@ -259,7 +255,9 @@ impl CachedInode {
 impl RafsInode for CachedInode {
     fn validate(&self) -> Result<()> {
         // TODO: validate
-
+        if self.is_symlink() && self.i_target.is_empty() {
+            return Err(einval());
+        }
         Ok(())
     }
 
@@ -338,6 +336,7 @@ impl RafsInode for CachedInode {
         let end = cmp::min(offset + size as u64, self.i_size);
         let blksize = self.i_blksize;
 
+        trace!("inode {} offset:{} size:{}", self.i_name, offset, size);
         for blk in self.i_data.iter() {
             if (blk.file_offset() + blksize as u64) <= offset {
                 continue;
@@ -349,9 +348,9 @@ impl RafsInode for CachedInode {
                 blk.clone(),
                 self.get_chunk_blob_id(blk.blob_index())?,
                 self.i_meta.get_compressor(),
-                bio_offset as u32,
+                (bio_offset - blk.file_offset()) as u32,
                 cmp::min(
-                    end - blk.file_offset(),
+                    end - bio_offset,
                     blk.file_offset() + blksize as u64 - bio_offset,
                 ) as usize,
                 blksize,
@@ -625,7 +624,7 @@ mod cached_tests {
         assert_eq!(desc2.bi_vec.len(), 2);
         assert_eq!(desc2.bi_vec[0].offset, 1024 * 1024 - 100);
         assert_eq!(desc2.bi_vec[0].size, 100);
-        assert_eq!(desc2.bi_vec[1].offset, 1024 * 1024);
+        assert_eq!(desc2.bi_vec[1].offset, 0);
         assert_eq!(desc2.bi_vec[1].size, 100);
 
         let desc3 = cached_inode

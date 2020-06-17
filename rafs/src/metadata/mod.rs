@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write;
-use std::io::Result;
+use std::io::{Result, Seek, SeekFrom};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -174,30 +174,24 @@ impl RafsSuper {
                 // TODO: Support Rafs v4
                 unimplemented!();
             }
-            RAFS_SUPER_VERSION_V5 => {
-                match self.mode {
-                    RafsMode::Direct => {
-                        self.meta.blob_table_offset = sb.blob_table_offset();
-                        self.meta.blob_table_size = sb.blob_table_size();
-                        let mut inodes = Box::new(DirectMapping::new(&self.meta));
-                        inodes.load(r)?;
-                        self.inodes = inodes;
-                    }
-                    RafsMode::Cached => {
-                        // TODO: PASS INODE TABLE
-                        let mut inode_table =
-                            OndiskInodeTable::new(sb.inode_table_entries() as usize);
-                        inode_table.load(r)?;
-
-                        let mut blob_table = OndiskBlobTable::new();
-                        blob_table.load(r, sb.blob_table_size() as usize)?;
-
-                        let mut inodes = Box::new(CachedInodes::new(self.meta, blob_table));
-                        inodes.load(r)?;
-                        self.inodes = inodes;
-                    }
+            RAFS_SUPER_VERSION_V5 => match self.mode {
+                RafsMode::Direct => {
+                    self.meta.blob_table_offset = sb.blob_table_offset();
+                    self.meta.blob_table_size = sb.blob_table_size();
+                    let mut inodes = Box::new(DirectMapping::new(&self.meta));
+                    inodes.load(r)?;
+                    self.inodes = inodes;
                 }
-            }
+                RafsMode::Cached => {
+                    r.seek(SeekFrom::Start(sb.blob_table_offset()))?;
+                    let mut blob_table = OndiskBlobTable::new();
+                    blob_table.load(r, sb.blob_table_size() as usize)?;
+
+                    let mut inodes = Box::new(CachedInodes::new(self.meta, blob_table));
+                    inodes.load(r)?;
+                    self.inodes = inodes;
+                }
+            },
             _ => return Err(einval()),
         }
 
