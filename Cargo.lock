@@ -563,16 +563,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lz4"
-version = "1.23.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aac20ed6991e01bf6a2e68cc73df2b389707403662a8ba89f68511fb340f724c"
-dependencies = [
- "libc",
- "lz4-sys",
-]
-
-[[package]]
 name = "lz4-sys"
 version = "1.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1013,7 +1003,6 @@ dependencies = [
  "lazy_static 1.4.0",
  "libc",
  "log 0.4.8",
- "lz4",
  "lz4-sys",
  "madvise",
  "nix",
