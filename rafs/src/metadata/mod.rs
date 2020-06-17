@@ -75,6 +75,8 @@ pub struct RafsSuperMeta {
     pub inode_table_offset: u64,
     pub blob_table_size: u32,
     pub blob_table_offset: u64,
+    pub blob_readhead_offset: u32,
+    pub blob_readhead_size: u32,
     pub attr_timeout: Duration,
     pub entry_timeout: Duration,
 }
@@ -137,6 +139,8 @@ impl Default for RafsSuper {
                 inode_table_offset: 0,
                 blob_table_size: 0,
                 blob_table_offset: 0,
+                blob_readhead_offset: 0,
+                blob_readhead_size: 0,
                 attr_timeout: Duration::from_secs(RAFS_DEFAULT_ATTR_TIMEOUT),
                 entry_timeout: Duration::from_secs(RAFS_DEFAULT_ENTRY_TIMEOUT),
             },
@@ -190,6 +194,10 @@ impl RafsSuper {
                 self.meta.inodes_count = sb.inodes_count();
                 self.meta.inode_table_entries = sb.inode_table_entries();
                 self.meta.inode_table_offset = sb.inode_table_offset();
+                self.meta.blob_table_offset = sb.blob_table_offset();
+                self.meta.blob_table_size = sb.blob_table_size();
+                self.meta.blob_readhead_offset = sb.blob_readhead_offset();
+                self.meta.blob_readhead_size = sb.blob_readhead_size();
             }
             _ => return Err(ebadf()),
         }
@@ -201,8 +209,6 @@ impl RafsSuper {
             }
             RAFS_SUPER_VERSION_V5 => match self.mode {
                 RafsMode::Direct => {
-                    self.meta.blob_table_offset = sb.blob_table_offset();
-                    self.meta.blob_table_size = sb.blob_table_size();
                     let mut inodes = Box::new(DirectMapping::new(&self.meta));
                     inodes.load(r)?;
                     self.inodes = inodes;

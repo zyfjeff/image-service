@@ -126,18 +126,18 @@ impl Node {
         blob_compress_offset: &mut u64,
         blob_decompress_offset: &mut u64,
         compressor: compress::Algorithm,
-    ) -> Result<OndiskDigest> {
-        let mut inode_digest = OndiskDigest::new();
-
-        if self.is_symlink()? {
-            return Ok(inode_digest);
+    ) -> Result<usize> {
+        if self.is_symlink() {
+            return Ok(0);
         }
 
-        if self.is_dir()? {
-            return Ok(inode_digest);
+        if self.is_dir() {
+            return Ok(0);
         }
 
         let file_size = self.inode.i_size;
+        let mut blob_size = 0usize;
+        let mut inode_digest = OndiskDigest::new();
         let mut inode_hash = Sha256::new();
         let mut file = File::open(&self.path)?;
 
@@ -170,6 +170,7 @@ impl Node {
             if !compressor.is_none() {
                 chunk.flags |= CHUNK_FLAG_COMPRESSED;
             }
+            blob_size += compressed_size;
 
             // move cursor to offset of next chunk
             *blob_compress_offset += compressed_size as u64;
@@ -206,7 +207,7 @@ impl Node {
 
         self.inode.i_digest = inode_digest;
 
-        Ok(inode_digest)
+        Ok(blob_size)
     }
 
     #[allow(clippy::borrowed_box)]

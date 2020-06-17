@@ -46,7 +46,7 @@ pub const INO_FLAG_ALL: u64 = INO_FLAG_HARDLINK | INO_FLAG_SYMLINK | INO_FLAG_XA
 pub const CHUNK_FLAG_COMPRESSED: u32 = 0x1;
 
 pub const RAFS_SUPERBLOCK_SIZE: usize = 8192;
-pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 56;
+pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 48;
 pub const RAFS_SUPER_MAGIC: u32 = 0x5241_4653;
 pub const RAFS_SUPER_VERSION_V4: u32 = 0x400;
 pub const RAFS_SUPER_VERSION_V5: u32 = 0x500;
@@ -137,11 +137,15 @@ pub struct OndiskSuperBlock {
     s_inode_table_offset: u64,
     /// V5: Offset of blob table
     s_blob_table_offset: u64,
-    /// V5: Size of inode table.
+    /// V5: Size of inode table
     s_inode_table_entries: u32,
-    /// V5: Entries of blob table.
+    /// V5: Entries of blob table
     s_blob_table_size: u32,
-    /// Unused area.
+    /// readhead fragment offset in blob
+    s_blob_readhead_offset: u32,
+    /// readhead fragment size in blob
+    s_blob_readhead_size: u32,
+    /// Unused area
     s_reserved: [u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
 }
 
@@ -158,6 +162,8 @@ impl Default for OndiskSuperBlock {
             s_inode_table_offset: u64::to_le(0),
             s_blob_table_size: u32::to_le(0),
             s_blob_table_offset: u64::to_le(0),
+            s_blob_readhead_offset: u32::to_le(0),
+            s_blob_readhead_size: u32::to_le(0),
             s_reserved: [0u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
         }
     }
@@ -231,6 +237,18 @@ impl OndiskSuperBlock {
         set_blob_table_offset,
         s_blob_table_offset,
         u64
+    );
+    impl_pub_getter_setter!(
+        blob_readhead_offset,
+        set_blob_readhead_offset,
+        s_blob_readhead_offset,
+        u32
+    );
+    impl_pub_getter_setter!(
+        blob_readhead_size,
+        set_blob_readhead_size,
+        s_blob_readhead_size,
+        u32
     );
 
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {

@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::fs::DirEntry;
 use std::fs::OpenOptions;
@@ -34,8 +34,8 @@ pub struct Builder {
     blob_id: String,
     /// blob chunk compress flag
     compressor: compress::Algorithm,
-    /// readhead file list
-    readhead_nodes: HashMap<PathBuf, Option<Node>>,
+    /// readhead file list, use BTreeMap to keep stable iteration order
+    readhead_nodes: BTreeMap<PathBuf, Option<Node>>,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
     inode_map: HashMap<u64, Node>,
     /// mutilple layers build: upper source nodes
@@ -52,7 +52,7 @@ impl Builder {
         parent_bootstrap_path: String,
         blob_id: String,
         compressor: compress::Algorithm,
-        readhead_nodes: HashMap<PathBuf, Option<Node>>,
+        readhead_nodes: BTreeMap<PathBuf, Option<Node>>,
     ) -> Result<Builder> {
         let f_blob = Box::new(
             OpenOptions::new()
@@ -190,8 +190,7 @@ impl Builder {
         let mut inode_table = OndiskInodeTable::new(inode_table_entries as usize);
         let inode_table_size = inode_table.size();
 
-        // blob table
-        // sha256 string size as default
+        // blob table, blob id use sha256 string (length 64) as default
         let mut blob_table_size = 64;
         if self.blob_id != "" {
             blob_table_size = OndiskBlobTable::aligned_size(self.blob_id.len())
@@ -254,21 +253,26 @@ impl Builder {
             .collect::<Vec<&mut Node>>();
         readhead_nodes.sort_by_key(|node| node.inode.i_size);
 
-        // dump readhead nodes
+        // fist, dump readhead nodes
+        let blob_readhead_offset = 0;
+        let mut blob_readhead_size = 0;
         for readhead_node in &mut readhead_nodes {
             debug!("upper building readhead {}", readhead_node);
-            readhead_node.dump_blob(
+            blob_readhead_size += readhead_node.dump_blob(
                 &mut self.f_blob,
                 &mut blob_hash,
                 &mut blob_compress_offset,
                 &mut blob_decompress_offset,
                 self.compressor,
-            )?;
+            )? as u32;
         }
+        super_block.set_blob_readhead_offset(blob_readhead_offset as u32);
+        super_block.set_blob_readhead_size(blob_readhead_size);
 
-        // dump other nodes
+        // then, dump other nodes
         for node in &mut self.additions {
             if let Some(Some(readhead_node)) = self.readhead_nodes.get(&node.rootfs()) {
+                // prepare correct readhead node data for bootstrap dump
                 node.clone_from(&readhead_node);
             } else {
                 debug!("upper building {}", node);

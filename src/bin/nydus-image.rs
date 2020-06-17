@@ -14,7 +14,7 @@ const BLOB_ID_MAXIMUM_LENGTH: usize = 1024;
 use clap::{App, Arg, SubCommand};
 use mktemp::Temp;
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Error, ErrorKind, Result, Write};
 use std::os::linux::fs::MetadataExt;
@@ -62,9 +62,9 @@ fn upload_blob(
 }
 
 /// Get readhead file paths line by line from stdin
-fn get_readhead_files() -> Result<HashMap<PathBuf, Option<Node>>> {
+fn get_readhead_files() -> Result<BTreeMap<PathBuf, Option<Node>>> {
     let stdin = io::stdin();
-    let mut files = HashMap::new();
+    let mut files = BTreeMap::new();
 
     loop {
         let mut file = String::new();
@@ -215,7 +215,7 @@ fn build() -> Result<()> {
         let readhead_files = if matches.is_present("enable_readhead") {
             get_readhead_files()?
         } else {
-            HashMap::new()
+            BTreeMap::new()
         };
 
         let mut ib = builder::Builder::new(
