@@ -100,8 +100,7 @@ pub fn new(
 
 impl Drop for Nydusd {
     fn drop(&mut self) {
-        exec(format!("pkill nydusd").as_str()).unwrap();
-        exec(format!("umount -l {:?}", self.mount_path).as_str()).unwrap();
+        exec(format!("umount {:?}", self.mount_path).as_str()).unwrap();
     }
 }
 
