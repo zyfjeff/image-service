@@ -263,7 +263,7 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 [[package]]
 name = "fuse-rs"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git#049f7f7d7dcde431930923a89e82510b721f9ecd"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=nydus#2fa652e69f042391b79b5f5b78519443cd92b443"
 dependencies = [
  "arc-swap",
  "bimap",

@@ -10,7 +10,7 @@ edition = "2018"
 log = "0.4"
 libc = "0.2"
 nix = "0.17"
-fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-rs.git", features = ["fusedev"], optional = true }
+fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git", branch = "nydus", optional = true }
 
 [features]
-fusedev = ["fuse-rs"]
+fusedev = ["fuse-rs/fusedev"]
