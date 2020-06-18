@@ -295,7 +295,7 @@ impl RafsInode for CachedInode {
     }
 
     fn get_chunk_blob_id(&self, idx: u32) -> Result<String> {
-        self.i_blob_table.get(idx)
+        Ok(self.i_blob_table.get(idx)?.blob_id)
     }
 
     fn get_entry(&self) -> Entry {

@@ -46,7 +46,7 @@ pub const INO_FLAG_ALL: u64 = INO_FLAG_HARDLINK | INO_FLAG_SYMLINK | INO_FLAG_XA
 pub const CHUNK_FLAG_COMPRESSED: u32 = 0x1;
 
 pub const RAFS_SUPERBLOCK_SIZE: usize = 8192;
-pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 48;
+pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 56;
 pub const RAFS_SUPER_MAGIC: u32 = 0x5241_4653;
 pub const RAFS_SUPER_VERSION_V4: u32 = 0x400;
 pub const RAFS_SUPER_VERSION_V5: u32 = 0x500;
@@ -141,10 +141,6 @@ pub struct OndiskSuperBlock {
     s_inode_table_entries: u32,
     /// V5: Entries of blob table
     s_blob_table_size: u32,
-    /// readhead fragment offset in blob
-    s_blob_readhead_offset: u32,
-    /// readhead fragment size in blob
-    s_blob_readhead_size: u32,
     /// Unused area
     s_reserved: [u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
 }
@@ -162,8 +158,6 @@ impl Default for OndiskSuperBlock {
             s_inode_table_offset: u64::to_le(0),
             s_blob_table_size: u32::to_le(0),
             s_blob_table_offset: u64::to_le(0),
-            s_blob_readhead_offset: u32::to_le(0),
-            s_blob_readhead_size: u32::to_le(0),
             s_reserved: [0u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
         }
     }
@@ -237,18 +231,6 @@ impl OndiskSuperBlock {
         set_blob_table_offset,
         s_blob_table_offset,
         u64
-    );
-    impl_pub_getter_setter!(
-        blob_readhead_offset,
-        set_blob_readhead_offset,
-        s_blob_readhead_offset,
-        u32
-    );
-    impl_pub_getter_setter!(
-        blob_readhead_size,
-        set_blob_readhead_size,
-        s_blob_readhead_size,
-        u32
     );
 
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
@@ -337,59 +319,79 @@ impl OndiskInodeTable {
     }
 }
 
-#[repr(C)]
+#[derive(Clone, Debug, Default)]
+pub struct OndiskBlobTableEntry {
+    pub readhead_offset: u32,
+    pub readhead_size: u32,
+    pub blob_id: String,
+}
+
+impl OndiskBlobTableEntry {
+    pub fn size(&self) -> usize {
+        size_of::<u32>() * 2 + self.blob_id.len()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct OndiskBlobTable {
-    data: Vec<String>,
+    pub entries: Vec<OndiskBlobTableEntry>,
 }
 
 impl OndiskBlobTable {
     pub fn new() -> Self {
-        OndiskBlobTable { data: Vec::new() }
+        OndiskBlobTable {
+            entries: Vec::new(),
+        }
     }
 
     #[inline]
-    pub fn aligned_size(size: usize) -> usize {
-        align_to_rafs(size)
+    pub fn minimum_size(blob_id_size: usize) -> usize {
+        align_to_rafs(size_of::<u32>() * 2 + blob_id_size)
     }
 
     /// Get blob table size, aligned with RAFS_ALIGNMENT bytes
     pub fn size(&self) -> usize {
-        // blob_ids string splited with '\0'
+        // blob entry splited with '\0'
         align_to_rafs(
-            self.data
+            self.entries
                 .iter()
-                .fold(0usize, |size, id| size + id.len() + 1)
+                .fold(0usize, |size, entry| size + entry.size() + 1)
                 - 1,
         )
     }
 
-    pub fn add(&mut self, blob_id: String) -> u32 {
-        self.data.push(blob_id);
-        (self.data.len() - 1) as u32
+    pub fn add(&mut self, blob_id: String, readhead_offset: u32, readhead_size: u32) -> u32 {
+        self.entries.push(OndiskBlobTableEntry {
+            blob_id,
+            readhead_offset,
+            readhead_size,
+        });
+        (self.entries.len() - 1) as u32
     }
 
     #[inline]
-    pub fn get(&self, blob_index: u32) -> Result<String> {
-        if blob_index > (self.data.len() - 1) as u32 {
+    pub fn get(&self, blob_index: u32) -> Result<OndiskBlobTableEntry> {
+        if blob_index > (self.entries.len() - 1) as u32 {
             return Err(enoent());
         }
-        Ok(self.data[blob_index as usize].clone())
+        Ok(self.entries[blob_index as usize].clone())
     }
 
     pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
         let mut size = 0;
 
-        self.data
+        self.entries
             .iter()
             .enumerate()
-            .map(|(idx, id)| {
-                w.write_all(id.as_bytes())?;
-                if idx != self.data.len() - 1 {
-                    size += id.len() + 1;
+            .map(|(idx, entry)| {
+                w.write_all(&u32::to_le_bytes(entry.readhead_offset))?;
+                w.write_all(&u32::to_le_bytes(entry.readhead_size))?;
+                w.write_all(entry.blob_id.as_bytes())?;
+                if idx != self.entries.len() - 1 {
+                    size += entry.blob_id.len() + 1;
                     w.write_all(&[b'\0'])?;
                 } else {
-                    size += id.len();
+                    size += entry.blob_id.len();
                 }
                 Ok(())
             })
@@ -409,8 +411,20 @@ impl OndiskBlobTable {
     pub fn load_from_slice(&mut self, input: &[u8]) -> Result<()> {
         let mut input_rest = input;
         loop {
-            let (s, rest) = parse_string(input_rest)?;
-            self.data.push(s.to_string());
+            let (readhead, rest) = input_rest.split_at(std::mem::size_of::<u64>());
+            let (readhead_offset, readhead_size) = readhead.split_at(std::mem::size_of::<u32>());
+
+            let readhead_offset =
+                u32::from_le_bytes(readhead_offset.try_into().map_err(|_| einval())?);
+            let readhead_size = u32::from_le_bytes(readhead_size.try_into().map_err(|_| einval())?);
+
+            let (blob_id, rest) = parse_string(rest)?;
+
+            self.entries.push(OndiskBlobTableEntry {
+                blob_id: blob_id.to_string(),
+                readhead_offset,
+                readhead_size,
+            });
             if rest.is_empty() || rest.as_bytes()[0] == b'\0' {
                 break;
             }

@@ -196,8 +196,6 @@ impl RafsSuper {
                 self.meta.inode_table_offset = sb.inode_table_offset();
                 self.meta.blob_table_offset = sb.blob_table_offset();
                 self.meta.blob_table_size = sb.blob_table_size();
-                self.meta.blob_readhead_offset = sb.blob_readhead_offset();
-                self.meta.blob_readhead_size = sb.blob_readhead_size();
             }
             _ => return Err(ebadf()),
         }

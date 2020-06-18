@@ -569,7 +569,7 @@ impl RafsInode for OndiskInodeWrapper {
 
     #[inline]
     fn get_chunk_blob_id(&self, idx: u32) -> Result<String> {
-        self.state().blob_table.get(idx)
+        Ok(self.state().blob_table.get(idx)?.blob_id)
     }
 
     fn get_entry(&self) -> Entry {

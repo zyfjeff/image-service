@@ -104,14 +104,6 @@ impl Builder {
         None
     }
 
-    fn fill_blob_id(&mut self) {
-        for node in &mut self.additions {
-            for chunk in &mut node.chunks {
-                chunk.blob_index = 0;
-            }
-        }
-    }
-
     fn new_node(&self, path: &PathBuf) -> Node {
         Node::new(self.root.clone(), path.clone(), Overlay::UpperAddition)
     }
@@ -191,10 +183,12 @@ impl Builder {
         let inode_table_size = inode_table.size();
 
         // blob table, blob id use sha256 string (length 64) as default
-        let mut blob_table_size = 64;
-        if self.blob_id != "" {
-            blob_table_size = OndiskBlobTable::aligned_size(self.blob_id.len())
-        }
+        let blob_id_size = if self.blob_id != "" {
+            self.blob_id.len()
+        } else {
+            64
+        };
+        let blob_table_size = OndiskBlobTable::minimum_size(blob_id_size);
         let mut blob_table = OndiskBlobTable::new();
         let blob_table_offset = (super_block_size + inode_table_size) as u64;
 
@@ -269,8 +263,6 @@ impl Builder {
                 self.compressor,
             )? as u32;
         }
-        super_block.set_blob_readhead_offset(blob_readhead_offset as u32);
-        super_block.set_blob_readhead_size(blob_readhead_size);
 
         // then, dump other nodes
         for node in &mut self.additions {
@@ -295,7 +287,11 @@ impl Builder {
             let blob_hash = OndiskDigest::from_digest(&mut blob_hash);
             self.blob_id = blob_hash.to_string();
         }
-        blob_table.add(self.blob_id.clone());
+        blob_table.add(
+            self.blob_id.clone(),
+            blob_readhead_offset,
+            blob_readhead_size,
+        );
         super_block.set_blob_table_size(blob_table.size() as u32);
 
         // dump bootstrap
