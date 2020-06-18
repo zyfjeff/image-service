@@ -82,20 +82,16 @@ impl CachedInodes {
     }
 
     fn hash_inode(&mut self, inode: Arc<CachedInode>) -> Result<Arc<CachedInode>> {
-        let mut skip = false;
-
         if inode.is_hardlink() {
             if let Some(i) = self.s_inodes.get(&inode.i_ino) {
-                skip = !i.i_data.is_empty();
+                if !i.i_data.is_empty() {
+                    return Ok(inode);
+                }
             }
         }
-        if !skip {
-            let ino = inode.ino();
-            self.s_inodes.insert(inode.i_ino, inode);
-            self.get_node(ino)
-        } else {
-            Ok(inode)
-        }
+        let ino = inode.ino();
+        self.s_inodes.insert(inode.i_ino, inode);
+        self.get_node(ino)
     }
 
     fn add_into_parent(&mut self, child_inode: &Arc<CachedInode>) -> Result<()> {
@@ -146,7 +142,7 @@ pub struct CachedInode {
     i_atime: u64,
     i_mtime: u64,
     i_ctime: u64,
-    i_chunk_cnt: u64,
+    i_child_cnt: u64,
     i_target: String, // for symbol link
 
     // extra info need cache
@@ -192,15 +188,15 @@ impl CachedInode {
             r.read_exact(xattrs.as_mut())?;
             let mut xattr_buf = vec![0u8; xattrs.aligned_size()];
             r.read_exact(xattr_buf.as_mut_slice())?;
-            self.i_xattr = parse_xattrs(&xattr_buf, xattrs.aligned_size())?;
+            self.i_xattr = parse_xattrs(&xattr_buf, xattrs.size())?;
         }
         Ok(())
     }
 
     fn load_chunk_info(&mut self, r: &mut RafsIoReader) -> Result<()> {
-        if self.is_reg() && self.i_chunk_cnt > 0 {
+        if self.is_reg() && self.i_child_cnt > 0 {
             let mut chunk = OndiskChunkInfo::new();
-            for _i in 0..self.i_chunk_cnt {
+            for _i in 0..self.i_child_cnt {
                 chunk.load(r)?;
                 self.i_data.push(Arc::new(CachedChunkInfo::from(&chunk)));
             }
@@ -242,13 +238,15 @@ impl CachedInode {
         self.i_atime = inode.i_atime;
         self.i_mtime = inode.i_mtime;
         self.i_ctime = inode.i_ctime;
-        if self.is_reg() {
-            self.i_chunk_cnt = inode.i_child_count as u64;
-        }
+        self.i_child_cnt = inode.i_child_count as u64;
     }
 
     fn add_child(&mut self, child: Arc<CachedInode>) {
         self.i_child.push(child);
+        if self.i_child.len() == (self.i_child_cnt as usize) {
+            // all children are ready, do sort
+            self.i_child.sort_by(|c1, c2| c1.i_name.cmp(&c2.i_name));
+        }
     }
 }
 
@@ -274,13 +272,11 @@ impl RafsInode for CachedInode {
     }
 
     fn get_child_by_name(&self, name: &str) -> Result<Arc<dyn RafsInode>> {
-        for inode in self.i_child.iter() {
-            if inode.i_name.eq(name) {
-                return Ok(inode.clone());
-            }
-        }
-
-        Err(enoent())
+        let idx = self
+            .i_child
+            .binary_search_by(|c| c.i_name.cmp(&name.to_string()))
+            .map_err(|_| enoent())?;
+        Ok(self.i_child[idx].clone())
     }
 
     fn get_child_by_index(&self, index: Inode) -> Result<Arc<dyn RafsInode>> {
@@ -519,7 +515,7 @@ mod cached_tests {
         cached_inode.load(&meta, &mut reader).unwrap();
         // check data
         assert_eq!(cached_inode.i_name, file_name);
-        assert_eq!(cached_inode.i_chunk_cnt, 1);
+        assert_eq!(cached_inode.i_child_cnt, 1);
         let attr = cached_inode.get_attr();
         assert_eq!(attr.ino, 3);
         assert_eq!(attr.size, 8192);

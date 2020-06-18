@@ -196,7 +196,8 @@ impl<'a> Builder<'a> {
         self.create_dir(&self.work_dir.join("blobs"))?;
 
         let tree_ret = exec(format!("tree -a {:?}", parent_dir).as_str())?;
-        let md5_ret = exec(format!("find {:?} -type f -exec md5sum {{}} +", parent_dir).as_str())?;
+        let md5_ret =
+            exec(format!("find {:?} -type f -exec md5sum {{}} + | sort", parent_dir).as_str())?;
 
         let ret = format!(
             "{}{}",
@@ -242,7 +243,8 @@ impl<'a> Builder<'a> {
         let mount_path = self.work_dir.join("mnt");
 
         let tree_ret = exec(format!("tree -a {:?}", mount_path).as_str())?;
-        let md5_ret = exec(format!("find {:?} -type f -exec md5sum {{}} +", mount_path).as_str())?;
+        let md5_ret =
+            exec(format!("find {:?} -type f -exec md5sum {{}} + | sort", mount_path).as_str())?;
 
         let ret = format!(
             "{}{}",
