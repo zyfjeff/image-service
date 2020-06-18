@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use vm_memory::VolatileSlice;
 
+use crate::metadata::layout::OndiskBlobTableEntry;
 use crate::metadata::{RafsChunkInfo, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::RafsCache;
@@ -71,7 +72,7 @@ impl RafsCache for DummyCache {
         true
     }
 
-    fn init(&mut self, _sb_meta: &RafsSuperMeta, blobs: Vec<&str>) -> Result<()> {
+    fn init(&mut self, _sb_meta: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> Result<()> {
         self.backend.init_blob(blobs);
         Ok(())
     }

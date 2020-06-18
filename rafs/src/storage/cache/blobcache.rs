@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use nix::sys::uio;
 use vm_memory::{VolatileMemory, VolatileSlice};
 
-use crate::metadata::layout::OndiskDigest;
+use crate::metadata::layout::{OndiskBlobTableEntry, OndiskDigest};
 use crate::metadata::{RafsChunkInfo, RafsDigest, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::RafsCache;
@@ -266,7 +266,7 @@ impl RafsCache for BlobCache {
             .contains_key(blk.block_id().data())
     }
 
-    fn init(&mut self, sb_meta: &RafsSuperMeta, blobs: Vec<&str>) -> Result<()> {
+    fn init(&mut self, sb_meta: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> Result<()> {
         self.blksize = sb_meta.block_size;
         self.backend.init_blob(blobs);
         Ok(())

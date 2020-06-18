@@ -327,7 +327,7 @@ impl RafsSuperInodes for DirectMapping {
         state.inode_table.len() as u64
     }
 
-    fn get_blobs(&self) -> Vec<String> {
+    fn get_blobs(&self) -> Vec<OndiskBlobTableEntry> {
         let state = self.state.load();
 
         state.blob_table.get_all()

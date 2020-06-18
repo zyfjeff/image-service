@@ -11,6 +11,7 @@ use fuse_rs::api::filesystem::{ZeroCopyReader, ZeroCopyWriter};
 use fuse_rs::transport::FileReadWriteVolatile;
 use vm_memory::{Bytes, VolatileSlice};
 
+use crate::metadata::layout::OndiskBlobTableEntry;
 use crate::metadata::{RafsChunkInfo, RafsSuperMeta};
 use crate::storage::cache::RafsCache;
 use crate::storage::{compress, factory};
@@ -29,7 +30,11 @@ impl RafsDevice {
         })
     }
 
-    pub fn init(&mut self, sb_meta: &RafsSuperMeta, blobs: Vec<&str>) -> io::Result<()> {
+    pub fn init(
+        &mut self,
+        sb_meta: &RafsSuperMeta,
+        blobs: &[OndiskBlobTableEntry],
+    ) -> io::Result<()> {
         self.rw_layer.init(sb_meta, blobs)
     }
 

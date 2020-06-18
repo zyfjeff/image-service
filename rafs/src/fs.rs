@@ -87,15 +87,8 @@ impl Rafs {
             Err(e)
         })?;
 
-        self.device.init(
-            &self.sb.meta,
-            self.sb
-                .inodes
-                .get_blobs()
-                .iter()
-                .map(|s| s.as_ref())
-                .collect(),
-        )?;
+        self.device
+            .init(&self.sb.meta, &self.sb.inodes.get_blobs())?;
 
         self.initialized = true;
         info!("rafs imported");

@@ -14,6 +14,7 @@ use std::{thread, time};
 use nix::sys::uio;
 use vm_memory::VolatileSlice;
 
+use crate::metadata::layout::OndiskBlobTableEntry;
 use crate::storage::backend::ReqErr;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 use crate::storage::utils::readv;
@@ -380,9 +381,9 @@ impl LocalFs {
 }
 
 impl BlobBackend for LocalFs {
-    fn init_blob(&self, blobs: Vec<&str>) {
-        for blob in blobs.iter() {
-            let _ = self.get_blob_fd(blob, 0, 0);
+    fn init_blob(&self, blobs: &[OndiskBlobTableEntry]) {
+        for entry in blobs.iter() {
+            let _ = self.get_blob_fd(entry.blob_id.as_str(), 0, 0);
         }
     }
 

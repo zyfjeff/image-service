@@ -5,8 +5,8 @@
 use std::io::Result;
 use std::sync::Arc;
 
-use crate::metadata::RafsChunkInfo;
-use crate::metadata::RafsSuperMeta;
+use crate::metadata::layout::OndiskBlobTableEntry;
+use crate::metadata::{RafsChunkInfo, RafsSuperMeta};
 use crate::storage::device::RafsBio;
 
 use vm_memory::VolatileSlice;
@@ -19,7 +19,7 @@ pub trait RafsCache {
     fn has(&self, blk: Arc<dyn RafsChunkInfo>) -> bool;
 
     // do init after super block loaded
-    fn init(&mut self, sb_info: &RafsSuperMeta, blobs: Vec<&str>) -> Result<()>;
+    fn init(&mut self, sb_info: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> Result<()>;
 
     // evict block data
     fn evict(&self, blk: Arc<dyn RafsChunkInfo>) -> Result<()>;

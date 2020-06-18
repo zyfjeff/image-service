@@ -274,7 +274,7 @@ pub trait RafsSuperInodes {
 
     fn get_max_ino(&self) -> Inode;
 
-    fn get_blobs(&self) -> Vec<String> {
+    fn get_blobs(&self) -> Vec<OndiskBlobTableEntry> {
         Vec::new()
     }
 }
