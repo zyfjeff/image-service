@@ -405,7 +405,7 @@ impl OndiskBlobTable {
 
 /// Ondisk rafs inode
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct OndiskInode {
     /// sha256(sha256(chunk) + ...), [char; RAFS_SHA256_LENGTH]
     pub i_digest: OndiskDigest,
