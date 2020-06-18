@@ -101,7 +101,7 @@ impl Nydusd {
         spawn(move || {
             exec(
                 format!(
-                    "{} --config {:?} --apisock {:?} --mountpoint {:?} --metadata {:?} --log-level error",
+                    "{} --config {:?} --apisock {:?} --mountpoint {:?} --metadata {:?} --log-level trace",
                     NYDUSD,
                     work_dir.join("config.json"),
                     work_dir.join("api.sock"),
