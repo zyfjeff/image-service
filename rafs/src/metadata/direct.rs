@@ -384,10 +384,15 @@ impl RafsInode for OndiskInodeWrapper {
         let state = self.state();
         let inode = self.inode(state.deref());
 
+        // * - parent inode nuber must be less than child inode number unless child is a hardlink.
+        // * - inode link count must not be zero.
         // * - name_size must be less than 255. Due to alignment, the check is not so strict.
         // * - name_size and symlink_size must be correctly aligned.
         // Should we store raw size instead of aligned size for name and symlink?
-        if inode.i_name_size as usize > (RAFS_MAX_NAME + 1)
+        if inode.i_parent == inode.i_ino
+            || (inode.i_parent > inode.i_ino && inode.i_nlink == 1)
+            || inode.i_nlink == 0
+            || inode.i_name_size as usize > (RAFS_MAX_NAME + 1)
             || inode.i_name_size & (RAFS_ALIGNMENT as u16 - 1) != 0
             || inode.i_symlink_size & (RAFS_ALIGNMENT as u16 - 1) != 0
         {
