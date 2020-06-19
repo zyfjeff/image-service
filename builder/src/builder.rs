@@ -162,7 +162,9 @@ impl Builder {
                     if node.is_dir()? && !node.is_symlink()? {
                         next_dirs.push(self.additions.len());
                     }
-                    self.inode_map.insert(real_ino, node.clone());
+                    if self.inode_map.get(&real_ino).is_none() {
+                        self.inode_map.insert(real_ino, node.clone());
+                    }
                     self.additions.push(node);
                 }
 
@@ -230,15 +232,17 @@ impl Builder {
             inode_table.set(node.index, inode_offset)?;
             // add inode size
             inode_offset += node.inode.size() as u32;
-            if node.inode.has_xattr() {
-                // add xattr size
+            if node.inode.has_xattr() && !node.xattrs.pairs.is_empty() {
                 inode_offset += (size_of::<OndiskXAttrs>() + node.xattrs.aligned_size()) as u32;
             }
             if self.readhead_nodes.get(&root_path).is_some() {
                 self.readhead_nodes.insert(root_path, Some(node.clone()));
             }
             // add chunks size
-            inode_offset += (node.chunk_count() * size_of::<OndiskChunkInfo>()) as u32;
+            if node.is_reg() {
+                inode_offset +=
+                    (node.inode.i_child_count as usize * size_of::<OndiskChunkInfo>()) as u32;
+            }
         }
 
         // sort readhead list by file size for better prefetch
@@ -292,7 +296,6 @@ impl Builder {
             blob_readhead_offset,
             blob_readhead_size,
         );
-        super_block.set_blob_table_size(blob_table.size() as u32);
 
         // dump bootstrap
         super_block.store(&mut self.f_bootstrap)?;

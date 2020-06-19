@@ -223,7 +223,9 @@ impl Node {
         &mut self,
         f_bootstrap: &mut Box<dyn RafsIoWrite>,
         blob_index: u32,
-    ) -> Result<()> {
+    ) -> Result<usize> {
+        let mut node_size = 0;
+
         // dump inode info
         let mut symlink_path: &[u8] = &[];
         if let Some(symlink) = &self.symlink {
@@ -232,19 +234,22 @@ impl Node {
         let inode_size = self
             .inode
             .store(f_bootstrap, self.name.as_bytes(), symlink_path)?;
+        node_size += inode_size;
 
         // dump inode xattr
         if !self.xattrs.pairs.is_empty() {
-            self.xattrs.store(f_bootstrap)?;
+            let xattr_size = self.xattrs.store(f_bootstrap)?;
+            node_size += xattr_size;
         }
 
         // dump chunk info
         for chunk in &mut self.chunks {
             chunk.blob_index = blob_index;
-            chunk.store(f_bootstrap)?;
+            let chunk_size = chunk.store(f_bootstrap)?;
+            node_size += chunk_size;
         }
 
-        Ok(())
+        Ok(node_size)
     }
 
     fn build_inode_stat(&mut self) -> Result<()> {
@@ -284,7 +289,6 @@ impl Node {
         self.name = file_name;
         self.inode.set_name_size(self.name.as_bytes().len());
         self.build_inode_stat()?;
-        self.build_inode_xattr()?;
 
         if self.is_reg()? {
             if self.is_hardlink()? {
@@ -303,6 +307,8 @@ impl Node {
             self.inode
                 .set_symlink_size(self.symlink.as_ref().unwrap().len());
         }
+
+        self.build_inode_xattr()?;
 
         Ok(())
     }

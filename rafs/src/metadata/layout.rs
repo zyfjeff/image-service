@@ -388,10 +388,10 @@ impl OndiskBlobTable {
                 w.write_all(&u32::to_le_bytes(entry.readhead_size))?;
                 w.write_all(entry.blob_id.as_bytes())?;
                 if idx != self.entries.len() - 1 {
-                    size += entry.blob_id.len() + 1;
+                    size += size_of::<u32>() * 2 + entry.blob_id.len() + 1;
                     w.write_all(&[b'\0'])?;
                 } else {
-                    size += entry.blob_id.len();
+                    size += size_of::<u32>() * 2 + entry.blob_id.len();
                 }
                 Ok(())
             })
@@ -584,8 +584,9 @@ impl OndiskChunkInfo {
         r.read_exact(self.as_mut())
     }
 
-    pub fn store(&self, w: &mut RafsIoWriter) -> Result<()> {
-        w.write_all(self.as_ref())
+    pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
+        w.write_all(self.as_ref())?;
+        Ok(self.as_ref().len())
     }
 }
 
