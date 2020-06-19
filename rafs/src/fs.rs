@@ -24,7 +24,7 @@ use crate::storage::device;
 use crate::storage::*;
 use crate::*;
 
-use nydus_utils::{eacces, ealready, ebadf, einval};
+use nydus_utils::{eacces, ealready, ebadf, einval, enoent};
 
 /// Type of RAFS inode.
 pub type Inode = u64;
@@ -76,6 +76,30 @@ impl Rafs {
         rafs.ios.toggle_files_recording(conf.iostats_files);
 
         Ok(rafs)
+    }
+
+    /// update backend meta and blob file.
+    pub fn update(&self, r: &mut RafsIoReader, conf: RafsConfig) -> Result<()> {
+        info!("update");
+        if !self.initialized {
+            warn!("Rafs is not yet initialized");
+            return Err(enoent!("Rafs is not yet initialized"));
+        }
+
+        // step 1: update sb.
+        // No lock is needed thanks to ArcSwap.
+        self.sb.update(r).or_else(|e| {
+            error!("update failed due to {:?}", e);
+            Err(e)
+        })?;
+
+        info!("update sb is successful");
+
+        // step 2: update device (only localfs is supported)
+        self.device.update(conf.device)?;
+        info!("update device is successful");
+
+        Ok(())
     }
 
     /// Import an rafs metadata to initialize the filesystem instance.

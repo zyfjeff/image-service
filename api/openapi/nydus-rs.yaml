@@ -188,10 +188,15 @@ components:
           description: backend config file
           example: /foo/bar/config
           type: string
+        ops:
+          description: mount operation type
+          example: mount
+          type: string
       required:
         - fstype
         - mountpoint
         - source
+        - ops
       type: object
     Error:
       properties:

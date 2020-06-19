@@ -460,8 +460,6 @@ impl BlobBackend for LocalFs {
     fn write(&self, _blob_id: &str, _buf: &[u8], _offset: u64) -> Result<usize> {
         unimplemented!("write operation not supported with localfs");
     }
-
-    fn close(&mut self) {}
 }
 
 impl BlobBackendUploader for LocalFs {

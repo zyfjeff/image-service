@@ -58,9 +58,6 @@ pub trait BlobBackend {
 
     /// Write a range of data to blob from the provided slice
     fn write(&self, blob_id: &str, buf: &[u8], offset: u64) -> Result<usize>;
-
-    /// Close the backend
-    fn close(&mut self);
 }
 
 // Rafs blob backend upload API

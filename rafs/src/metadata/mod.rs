@@ -171,6 +171,13 @@ impl RafsSuper {
         self.inodes.destroy();
     }
 
+    pub fn update(&self, r: &mut RafsIoReader) -> Result<()> {
+        let mut sb = OndiskSuperBlock::new();
+
+        r.read_exact(sb.as_mut())?;
+        self.inodes.update(r)
+    }
+
     /// Load RAFS super block and optionally cache inodes.
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
         let mut sb = OndiskSuperBlock::new();
@@ -275,6 +282,8 @@ pub trait RafsSuperInodes {
     fn get_blobs(&self) -> Vec<OndiskBlobTableEntry> {
         Vec::new()
     }
+
+    fn update(&self, r: &mut RafsIoReader) -> Result<()>;
 }
 
 /// Trait to access Rafs Inode Information.

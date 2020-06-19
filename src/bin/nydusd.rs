@@ -13,6 +13,7 @@ extern crate stderrlog;
 
 use std::fs::File;
 use std::io::{Read, Result};
+use std::ops::Deref;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
 use std::sync::mpsc::{channel, Receiver};
@@ -838,8 +839,8 @@ fn main() -> Result<()> {
                         }
                     } else {
                         Err(ApiError::MountFailure(einval!(format!(
-                            "mount {:?} failed {}",
-                            info, e
+                            "mount {:?} failed",
+                            info
                         ))))
                     }
                 }
@@ -851,9 +852,59 @@ fn main() -> Result<()> {
                         info, e
                     )))),
                 },
+                "update" => {
+                    info!("switch backend");
+                    let rafs_conf = match info.config.as_ref() {
+                        Some(config) => {
+                            let mut settings = config::Config::new();
+                            settings
+                                .merge(config::File::from(Path::new(config)))
+                                .map_err(|e| ApiError::MountFailure(einval!(e)))?;
+                            let rafs_conf: RafsConfig = settings
+                                .try_into()
+                                .map_err(|e| ApiError::MountFailure(einval!(e)))?;
+
+                            rafs_conf
+                        }
+                        None => {
+                            return Err(ApiError::MountFailure(einval!(format!(
+                                "no config, mount {:?} failed",
+                                info
+                            ))));
+                        }
+                    };
+
+                    let rootfs = vfs
+                        .get_rootfs(&info.mountpoint)
+                        .map_err(ApiError::MountFailure)?;
+                    let any_fs = rootfs.deref().as_any();
+                    if let Some(fs_swap) = any_fs.downcast_ref::<Rafs>() {
+                        if let Some(source) = info.source.as_ref() {
+                            let mut file =
+                                Box::new(File::open(source).map_err(ApiError::MountFailure)?)
+                                    as Box<dyn rafs::RafsIoRead>;
+
+                            fs_swap
+                                .update(&mut file, rafs_conf)
+                                .map_err(ApiError::MountFailure)?;
+                            Ok(ApiResponsePayload::Mount)
+                        } else {
+                            error!("no info.source is found, invalid mount info {:?}", info);
+                            Err(ApiError::MountFailure(einval!(format!(
+                                "no info.source is found, mount {:?} failed",
+                                info
+                            ))))
+                        }
+                    } else {
+                        Err(ApiError::MountFailure(einval!(format!(
+                            "no rafs is found, mount {:?} failed",
+                            info
+                        ))))
+                    }
+                }
                 _ => Err(ApiError::MountFailure(einval!(format!(
-                    "invalid ops, mount {:?} failed {}",
-                    info, e
+                    "invalid ops, mount {:?} failed",
+                    info
                 )))),
             },
         )?;

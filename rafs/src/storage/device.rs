@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use arc_swap::ArcSwap;
 use std::cmp;
 use std::io;
 use std::io::Error;
@@ -20,26 +21,28 @@ static ZEROS: &[u8] = &[0u8; 4096]; // why 4096? volatile slice default size, un
 
 // A rafs storage device
 pub struct RafsDevice {
-    rw_layer: Box<dyn RafsCache + Send + Sync>,
+    rw_layer: ArcSwap<Box<dyn RafsCache + Send + Sync>>,
 }
 
 impl RafsDevice {
     pub fn new(config: factory::Config) -> io::Result<RafsDevice> {
         Ok(RafsDevice {
-            rw_layer: factory::new_rw_layer(&config)?,
+            rw_layer: ArcSwap::new(Arc::new(factory::new_rw_layer(&config)?)),
         })
     }
 
-    pub fn init(
-        &mut self,
-        sb_meta: &RafsSuperMeta,
-        blobs: &[OndiskBlobTableEntry],
-    ) -> io::Result<()> {
-        self.rw_layer.init(sb_meta, blobs)
+    pub fn update(&self, config: factory::Config) -> io::Result<()> {
+        self.rw_layer
+            .store(Arc::new(factory::new_rw_layer(&config)?));
+        Ok(())
     }
 
-    pub fn close(&mut self) -> io::Result<()> {
-        self.rw_layer.release();
+    pub fn init(&self, sb_meta: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> io::Result<()> {
+        self.rw_layer.load().init(sb_meta, blobs)
+    }
+
+    pub fn close(&self) -> io::Result<()> {
+        self.rw_layer.load().release();
         Ok(())
     }
 
@@ -108,7 +111,7 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
             return self.fill_hole(bufs);
         }
 
-        self.dev.rw_layer.read(&self.bio, bufs, offset)
+        self.dev.rw_layer.load().read(&self.bio, bufs, offset)
     }
 
     fn write_at_volatile(&mut self, slice: VolatileSlice, _offset: u64) -> Result<usize, Error> {
@@ -119,10 +122,12 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
             let wbuf = compress::compress(buf, self.bio.compressor)?;
             self.dev
                 .rw_layer
+                .load()
                 .write(&self.bio.blob_id, &self.bio.chunkinfo, &wbuf)
         } else {
             self.dev
                 .rw_layer
+                .load()
                 .write(&self.bio.blob_id, &self.bio.chunkinfo, buf)
         }
     }

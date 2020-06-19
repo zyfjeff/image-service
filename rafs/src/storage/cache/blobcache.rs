@@ -120,7 +120,6 @@ impl BlocCacheState {
 
 pub struct BlobCache {
     cache: RwLock<BlocCacheState>,
-    blksize: u32,
     pub backend: Box<dyn BlobBackend + Sync + Send>,
 }
 
@@ -262,8 +261,7 @@ impl RafsCache for BlobCache {
             .contains_key(blk.block_id().data())
     }
 
-    fn init(&mut self, sb_meta: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> Result<()> {
-        self.blksize = sb_meta.block_size;
+    fn init(&self, _sb_meta: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> Result<()> {
         for b in blobs {
             let _ = self.backend.prefetch_blob(b);
         }
@@ -304,9 +302,7 @@ impl RafsCache for BlobCache {
         Err(enosys!())
     }
 
-    fn release(&mut self) {
-        self.backend.close();
-    }
+    fn release(&self) {}
 }
 
 pub fn new<S: std::hash::BuildHasher>(
@@ -336,7 +332,6 @@ pub fn new<S: std::hash::BuildHasher>(
             work_dir: String::from(work_dir),
         }),
         backend,
-        blksize: (1024u32 * 1024u32),
     })
 }
 
@@ -377,7 +372,7 @@ mod blob_cache_tests {
         }
 
         // Close a backend
-        fn close(&mut self) {}
+        fn close(&self) {}
     }
 
     #[test]

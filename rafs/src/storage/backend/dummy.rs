@@ -16,12 +16,12 @@ struct DummyTarget {
 }
 
 pub struct Dummy {
-    targets: RwLock<HashMap<String, Arc<Mutex<DummyTarget>>>>,
+    _targets: RwLock<HashMap<String, Arc<Mutex<DummyTarget>>>>,
 }
 
 pub fn new() -> Dummy {
     Dummy {
-        targets: RwLock::new(HashMap::new()),
+        _targets: RwLock::new(HashMap::new()),
     }
 }
 
@@ -44,9 +44,5 @@ impl BlobBackend for Dummy {
     // Write a range of data to blob from the provided source
     fn write(&self, _blobid: &str, buf: &[u8], _offset: u64) -> Result<usize> {
         Ok(buf.len())
-    }
-
-    fn close(&mut self) {
-        self.targets.write().unwrap().clear()
     }
 }

@@ -19,7 +19,7 @@ pub trait RafsCache {
     fn has(&self, blk: Arc<dyn RafsChunkInfo>) -> bool;
 
     // do init after super block loaded
-    fn init(&mut self, sb_info: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> Result<()>;
+    fn init(&self, sb_info: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> Result<()>;
 
     // evict block data
     fn evict(&self, blk: Arc<dyn RafsChunkInfo>) -> Result<()>;
@@ -34,5 +34,5 @@ pub trait RafsCache {
     fn write(&self, blob_id: &str, blk: &Arc<dyn RafsChunkInfo>, buf: &[u8]) -> Result<usize>;
 
     // release cache
-    fn release(&mut self);
+    fn release(&self);
 }

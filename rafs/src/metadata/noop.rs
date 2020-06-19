@@ -39,4 +39,8 @@ impl RafsSuperInodes for NoopInodes {
     fn get_max_ino(&self) -> Inode {
         unimplemented!()
     }
+
+    fn update(&self, _r: &mut RafsIoReader) -> Result<()> {
+        unimplemented!()
+    }
 }

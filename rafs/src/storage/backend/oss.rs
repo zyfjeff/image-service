@@ -205,8 +205,6 @@ impl BlobBackend for OSS {
 
         Ok(buf.len())
     }
-
-    fn close(&mut self) {}
 }
 
 impl BlobBackendUploader for OSS {

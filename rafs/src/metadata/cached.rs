@@ -124,6 +124,10 @@ impl RafsSuperInodes for CachedInodes {
     fn get_max_ino(&self) -> u64 {
         self.s_inodes.len() as u64
     }
+
+    fn update(&self, _r: &mut RafsIoReader) -> Result<()> {
+        unimplemented!()
+    }
 }
 
 #[derive(Default, Clone, Debug)]

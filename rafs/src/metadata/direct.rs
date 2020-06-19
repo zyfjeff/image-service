@@ -190,11 +190,9 @@ impl DirectMapping {
 
         Ok(wrapper)
     }
-}
 
-impl RafsSuperInodes for DirectMapping {
     #[allow(clippy::cast_ptr_alignment)]
-    fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
+    fn update_state(&self, r: &mut RafsIoReader) -> Result<()> {
         let old_state = self.state.load();
 
         // Validate file size
@@ -307,6 +305,12 @@ impl RafsSuperInodes for DirectMapping {
 
         Ok(())
     }
+}
+
+impl RafsSuperInodes for DirectMapping {
+    fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
+        self.update_state(r)
+    }
 
     fn destroy(&mut self) {
         let state = DirectMappingState::new(&RafsSuperMeta::default());
@@ -333,6 +337,10 @@ impl RafsSuperInodes for DirectMapping {
         let state = self.state.load();
 
         state.blob_table.get_all()
+    }
+
+    fn update(&self, r: &mut RafsIoReader) -> Result<()> {
+        self.update_state(r)
     }
 }
 

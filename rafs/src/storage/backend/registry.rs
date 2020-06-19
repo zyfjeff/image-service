@@ -119,8 +119,6 @@ impl BlobBackend for Registry {
     fn write(&self, _blob_id: &str, _buf: &[u8], _offset: u64) -> Result<usize> {
         Ok(_buf.len())
     }
-
-    fn close(&mut self) {}
 }
 
 impl BlobBackendUploader for Registry {

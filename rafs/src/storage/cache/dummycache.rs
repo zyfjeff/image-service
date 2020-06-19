@@ -66,7 +66,7 @@ impl RafsCache for DummyCache {
         true
     }
 
-    fn init(&mut self, _sb_meta: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> Result<()> {
+    fn init(&self, _sb_meta: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> Result<()> {
         for b in blobs {
             let _ = self.backend.prefetch_blob(b);
         }
@@ -130,9 +130,7 @@ impl RafsCache for DummyCache {
         self.backend.write(blob_id, buf, blk.blob_compress_offset())
     }
 
-    fn release(&mut self) {
-        self.backend.close();
-    }
+    fn release(&self) {}
 }
 
 pub fn new(backend: Box<dyn BlobBackend + Sync + Send>) -> Result<DummyCache> {
