@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use rafs::metadata::RafsDigest;
 use std::collections::HashMap;
 use std::fs;
+use std::fs::DirEntry;
 use std::fs::OpenOptions;
 use std::io::Result;
-// use std::os::linux::fs::MetadataExt;
-use rafs::metadata::RafsDigest;
 use std::mem::size_of;
 use std::path::PathBuf;
 
@@ -137,8 +137,10 @@ impl Builder {
 
                 dir_node.inode.i_child_index = (iter_ino + 1) as u32;
 
-                for child in childs {
-                    let entry = &child?;
+                let mut childs = childs.collect::<Result<Vec<DirEntry>>>()?;
+                childs.sort_by_key(|entry| entry.file_name());
+
+                for entry in childs {
                     let path = entry.path();
                     let mut node = self.new_node(&path);
                     let real_ino = node.get_real_ino();
