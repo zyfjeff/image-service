@@ -143,6 +143,11 @@ impl Builder {
                     let mut node = self.new_node(&path);
                     let real_ino = node.get_real_ino();
 
+                    // ignore special file
+                    if node.get_type() == "" {
+                        continue;
+                    }
+
                     iter_ino += 1;
                     child_count += 1;
                     let mut hardlink: Option<Node> = None;

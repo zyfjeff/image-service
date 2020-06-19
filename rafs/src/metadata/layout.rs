@@ -698,6 +698,9 @@ impl OndiskXAttrs {
     }
 }
 
+pub type XattrName = Vec<u8>;
+pub type XattrValue = Vec<u8>;
+
 #[derive(Clone, Default)]
 pub struct XAttrs {
     pub pairs: HashMap<String, Vec<u8>>,
@@ -774,10 +777,11 @@ pub fn parse_string(buf: &[u8]) -> Result<(&str, &str)> {
         .map_err(|_| einval())
 }
 
-/// Parse a 'buf' to xattrs.
-pub fn parse_xattrs(data: &[u8], size: usize) -> Result<HashMap<String, Vec<u8>>> {
-    let mut result = HashMap::new();
-
+/// Parse a 'buf' to xattr pair then callback.
+pub fn parse_xattr<F>(data: &[u8], size: usize, mut cb: F) -> Result<()>
+where
+    F: FnMut(&str, XattrValue) -> bool,
+{
     let mut i: usize = 0;
     let mut rest_data = &data[0..size];
 
@@ -788,14 +792,45 @@ pub fn parse_xattrs(data: &[u8], size: usize) -> Result<HashMap<String, Vec<u8>>
 
         let (pair, rest) = rest.split_at(pair_size);
         if let Some(pos) = pair.iter().position(|&c| c == 0) {
-            let (key, value) = pair.split_at(pos);
-            let key = std::str::from_utf8(key).map_err(|_| einval())?;
-            result.insert(key.to_string(), value[1..].to_vec());
+            let (name, value) = pair.split_at(pos);
+            let name = std::str::from_utf8(name).map_err(|_| einval())?;
+            let value = value[1..].to_vec();
+            if !cb(name, value) {
+                break;
+            }
         }
         i += pair_size;
 
         rest_data = rest;
     }
 
+    Ok(())
+}
+
+/// Parse a 'buf' to xattr name list.
+pub fn parse_xattr_names(data: &[u8], size: usize) -> Result<Vec<XattrName>> {
+    let mut result = Vec::new();
+
+    parse_xattr(data, size, |name, _| {
+        result.push(name.as_bytes().to_vec());
+        true
+    })?;
+
     Ok(result)
+}
+
+/// Parse a 'buf' to xattr value by xattr name.
+pub fn parse_xattr_value(data: &[u8], size: usize, name: &str) -> Result<Option<XattrValue>> {
+    let mut value = None;
+
+    parse_xattr(data, size, |_name, _value| {
+        if _name == name {
+            value = Some(_value);
+            // stop the iteration if we found the xattr name.
+            return false;
+        }
+        true
+    })?;
+
+    Ok(value)
 }

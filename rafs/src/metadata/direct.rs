@@ -17,7 +17,6 @@
 /// The metadata file may be provided by untrusted parties, so we must ensure strong validations
 /// before making use of any metadata, especially we are using them in memory-mapped mode. The
 /// rule is to call validate() after creating any data structure from the on-disk metadata.
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Error, Result};
 use std::mem::{size_of, ManuallyDrop};
@@ -375,6 +374,30 @@ impl OndiskInodeWrapper {
             Ok(0)
         }
     }
+
+    #[allow(clippy::cast_ptr_alignment)]
+    fn get_xattr_data(&self) -> Result<(&[u8], usize)> {
+        let state = self.state();
+        let inode = self.inode(state.deref());
+
+        if !inode.has_xattr() {
+            return Ok((&[], 0));
+        }
+
+        let offset = self.offset + inode.size();
+        let start = unsafe { state.base.add(offset) };
+        let xattrs = start as *const OndiskXAttrs;
+        let xattr_size = unsafe { (*xattrs).size() };
+        let xattrs_aligned_size = unsafe { (*xattrs).aligned_size() };
+
+        state.validate_range(offset, size_of::<OndiskXAttrs>() + xattrs_aligned_size)?;
+
+        let xattr_data = unsafe {
+            slice::from_raw_parts(start.wrapping_add(size_of::<OndiskXAttrs>()), xattr_size)
+        };
+
+        Ok((xattr_data, xattr_size))
+    }
 }
 
 impl RafsInode for OndiskInodeWrapper {
@@ -569,28 +592,14 @@ impl RafsInode for OndiskInodeWrapper {
         }
     }
 
-    #[allow(clippy::cast_ptr_alignment)]
-    fn get_xattrs(&self) -> Result<HashMap<String, Vec<u8>>> {
-        let state = self.state();
-        let inode = self.inode(state.deref());
+    fn get_xattr(&self, name: &str) -> Result<Option<XattrValue>> {
+        let (xattr_data, xattr_size) = self.get_xattr_data()?;
+        parse_xattr_value(xattr_data, xattr_size, name)
+    }
 
-        if !inode.has_xattr() {
-            return Ok(HashMap::new());
-        }
-
-        let offset = self.offset + inode.size();
-
-        unsafe {
-            let start = state.base.add(offset);
-            let xattrs = start as *const OndiskXAttrs;
-            let xattrs_size = (*xattrs).size();
-            let xattrs_aligned_size = (*xattrs).aligned_size();
-
-            state.validate_range(offset, size_of::<OndiskXAttrs>() + xattrs_aligned_size)?;
-            let xattrs_data =
-                slice::from_raw_parts(start.wrapping_add(size_of::<OndiskXAttrs>()), xattrs_size);
-            parse_xattrs(xattrs_data, xattrs_size)
-        }
+    fn get_xattrs(&self) -> Result<Vec<XattrName>> {
+        let (xattr_data, xattr_size) = self.get_xattr_data()?;
+        parse_xattr_names(xattr_data, xattr_size)
     }
 
     #[inline]

@@ -316,35 +316,33 @@ impl FileSystem for Rafs {
     }
 
     fn getxattr(&self, _ctx: Context, inode: u64, name: &CStr, size: u32) -> Result<GetxattrReply> {
-        let key = name.to_str().or_else(|_| Err(einval()))?;
+        let name = name.to_str().or_else(|_| Err(einval()))?;
         let inode = self.sb.get_inode(inode)?;
 
-        // Keep for simplicity, not optimized for performance.
-        for (k, v) in inode.get_xattrs()? {
-            if key == k {
-                return match size {
-                    0 => Ok(GetxattrReply::Count((v.len() + 1) as u32)),
-                    _ => Ok(GetxattrReply::Value(v.to_vec())),
-                };
-            }
-        }
-
-        match size {
-            0 => Ok(GetxattrReply::Count(0)),
-            _ => Ok(GetxattrReply::Value(Vec::new())),
+        let value = inode.get_xattr(name)?;
+        match value {
+            Some(value) => match size {
+                0 => Ok(GetxattrReply::Count((value.len() + 1) as u32)),
+                _ => Ok(GetxattrReply::Value(value)),
+            },
+            None => match size {
+                0 => Ok(GetxattrReply::Count(0)),
+                _ => Ok(GetxattrReply::Value(Vec::new())),
+            },
         }
     }
 
     fn listxattr(&self, _ctx: Context, inode: u64, size: u32) -> Result<ListxattrReply> {
         let inode = self.sb.get_inode(inode)?;
+
         let mut count = 0;
         let mut buf = Vec::new();
 
-        for (k, _v) in inode.get_xattrs()? {
+        for mut name in inode.get_xattrs()? {
             match size {
-                0 => count += k.len() + 1,
+                0 => count += name.len() + 1,
                 _ => {
-                    buf.append(&mut k.as_bytes().to_vec());
+                    buf.append(&mut name);
                     buf.append(&mut vec![0u8; 1])
                 }
             }

@@ -58,7 +58,7 @@ fn upload_blob(
     Ok(())
 }
 
-fn main() -> Result<()> {
+fn build() -> Result<()> {
     let cmd = App::new("nydus image builder")
         .version(crate_version!())
         .author(crate_authors!())
@@ -212,4 +212,8 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn main() {
+    build().expect("Build failed");
 }
