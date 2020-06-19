@@ -191,10 +191,10 @@ impl LocalFsAccessLog {
         Ok(())
     }
 
-    fn record(&self, offset: u64, len: u32) {
+    fn record(&self, offset: u64, len: u32) -> bool {
         // Never modify mmaped records
         if !self.log_base.is_null() {
-            return;
+            return false;
         }
 
         let mut r = self.records.lock().unwrap();
@@ -205,7 +205,9 @@ impl LocalFsAccessLog {
                 round_up_4k(len as u64).unwrap() as u32,
                 0,
             ));
+            return true;
         }
+        false
     }
 
     fn flush(&self) {
@@ -288,15 +290,31 @@ impl LocalFs {
     fn get_blob_fd(&self, blob_id: &str, offset: u64, len: usize) -> Result<RawFd> {
         let blob_file_path = self.get_blob_path(blob_id);
 
+        let mut drop_access_log = false;
+        let blob_file;
         // Don't expect poisoned lock here.
-        if let Some((file, access_log)) = self.file_table.read().unwrap().get(blob_id) {
+        let table_guard = self.file_table.read().unwrap();
+        if let Some((file, access_log)) = table_guard.get(blob_id) {
             if let Some(access_log) = access_log {
                 if len != 0 {
-                    access_log.record(offset, len as u32);
+                    drop_access_log = !access_log.record(offset, len as u32);
                 }
             }
-            return Ok(file.as_raw_fd());
+            if !drop_access_log {
+                return Ok(file.as_raw_fd());
+            }
+            // need to drop access log file, clone the blob file first
+            blob_file = file.try_clone()?;
+            drop(table_guard);
+
+            let fd = blob_file.as_raw_fd();
+            self.file_table
+                .write()
+                .unwrap()
+                .insert(blob_id.to_owned(), (blob_file, None));
+            return Ok(fd);
         }
+        drop(table_guard);
 
         let file = OpenOptions::new()
             .read(true)
@@ -313,7 +331,7 @@ impl LocalFs {
         if let Some((other, access_log)) = table_guard.get(blob_id) {
             if let Some(access_log) = access_log {
                 if len != 0 {
-                    access_log.record(offset, len as u32);
+                    let _ = access_log.record(offset, len as u32);
                 }
             }
             return Ok(other.as_raw_fd());
