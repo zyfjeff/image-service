@@ -162,6 +162,8 @@ impl Node {
 
             // calc chunk digest
             chunk.block_id = OndiskDigest::from_buf(chunk_data.as_slice());
+            // calc inode digest
+            inode_hash.input(&chunk.block_id.data());
 
             if let Some(cached_chunk) = chunk_cache.get(&chunk.block_id) {
                 chunk.clone_from(&cached_chunk);
@@ -197,9 +199,6 @@ impl Node {
 
             // dump compressed chunk data to blob
             f_blob.write_all(&compressed)?;
-
-            // calc inode digest
-            inode_hash.input(&chunk.block_id.data());
 
             // stash chunk
             chunk_cache.insert(chunk.block_id, chunk);
