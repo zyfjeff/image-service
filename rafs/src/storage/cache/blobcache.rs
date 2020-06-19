@@ -268,7 +268,10 @@ impl RafsCache for BlobCache {
 
     fn init(&mut self, sb_meta: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> Result<()> {
         self.blksize = sb_meta.block_size;
-        self.backend.init_blob(blobs);
+        for b in blobs {
+            let _ = self.backend.prefetch_blob(b);
+        }
+        // TODO start blob cache level prefetch
         Ok(())
     }
 

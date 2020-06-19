@@ -8,6 +8,8 @@ use std::os::unix::io::RawFd;
 use libc::{c_int, c_void, off64_t, preadv64, size_t};
 use vm_memory::{Bytes, VolatileSlice};
 
+use nydus_utils::round_down_4k;
+
 pub fn readv(fd: RawFd, bufs: &[VolatileSlice], offset: u64, max_size: usize) -> Result<usize> {
     let mut size: usize = 0;
     let iovecs: Vec<libc::iovec> = bufs
@@ -72,14 +74,16 @@ pub fn copyv(src: &[u8], dst: &[VolatileSlice], offset: u64, max_size: usize) ->
 /// Call libc::readahead on every 128KB range because otherwise readahead stops at kernel bdi
 /// readahead size which is 128KB by default.
 pub fn readahead(fd: libc::c_int, mut offset: u64, end: u64) {
-    // Kernel default 128KB readahead size
-    let count = 128 << 10;
+    let mut count;
+    offset = round_down_4k(offset);
     loop {
         if offset >= end {
             break;
         }
-        unsafe { libc::readahead(fd, offset as i64, count) };
-        offset += count as u64;
+        // Kernel default 128KB readahead size
+        count = std::cmp::min(128 << 10, end - offset);
+        unsafe { libc::readahead(fd, offset as i64, count as usize) };
+        offset += count;
     }
 }
 

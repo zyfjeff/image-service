@@ -7,7 +7,7 @@ use std::fs::{self, remove_file, File, OpenOptions};
 use std::io::{self, Error, Result};
 use std::mem::{size_of, ManuallyDrop};
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::{thread, time};
 
@@ -17,7 +17,7 @@ use vm_memory::VolatileSlice;
 use crate::metadata::layout::OndiskBlobTableEntry;
 use crate::storage::backend::ReqErr;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
-use crate::storage::utils::readv;
+use crate::storage::utils::{readahead, readv};
 use crate::{ebadf, einval};
 use nydus_utils::{round_down_4k, round_up_4k};
 
@@ -277,12 +277,16 @@ impl Drop for LocalFsAccessLog {
 }
 
 impl LocalFs {
-    fn get_blob_fd(&self, blob_id: &str, offset: u64, len: usize) -> Result<RawFd> {
-        let blob_file_path = if self.use_blob_file() {
+    fn get_blob_path(&self, blob_id: &str) -> PathBuf {
+        if self.use_blob_file() {
             Path::new(&self.blob_file).to_path_buf()
         } else {
             Path::new(&self.dir).join(blob_id)
-        };
+        }
+    }
+
+    fn get_blob_fd(&self, blob_id: &str, offset: u64, len: usize) -> Result<RawFd> {
+        let blob_file_path = self.get_blob_path(blob_id);
 
         // Don't expect poisoned lock here.
         if let Some((file, access_log)) = self.file_table.read().unwrap().get(blob_id) {
@@ -301,7 +305,6 @@ impl LocalFs {
                 error!("failed to open blob {}: {}", blob_id, e);
                 e
             })?;
-        let size = file.metadata()?.len() as usize;
         let fd = file.as_raw_fd();
 
         // Don't expect poisoned lock here.
@@ -316,61 +319,6 @@ impl LocalFs {
             return Ok(other.as_raw_fd());
         }
 
-        // Case 1: no readahead
-        if !self.readahead {
-            table_guard.insert(blob_id.to_string(), (file, None));
-            return Ok(fd);
-        }
-
-        // Case 2: someone else has done logging, kick off readahead
-        let access_file_path = blob_file_path.to_str().unwrap().to_owned() + BLOB_ACCESSED_SUFFIX;
-        if let Ok(access_file) = OpenOptions::new()
-            .read(true)
-            .open(Path::new(&access_file_path))
-        {
-            table_guard.insert(blob_id.to_string(), (file, None));
-            drop(table_guard);
-            // Found access log, kick off readahead
-            if size > 0 {
-                let mut access_log = LocalFsAccessLog::new();
-                access_log.init(access_file, access_file_path, fd, size, true)?;
-                let _ = thread::Builder::new()
-                    .name("nydus-localfs-readahead".to_string())
-                    .spawn(move || {
-                        let _ = access_log.do_readahead();
-                    });
-            }
-            return Ok(fd);
-        }
-
-        // Case 3: no existing access file, try to get log right
-        // If failing to create exclusively, it means others have succeeded, just ignore the error
-        if let Ok(access_file) = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(Path::new(&access_file_path))
-        {
-            let mut access_log = LocalFsAccessLog::new();
-            access_log.init(access_file, access_file_path, fd, size, false)?;
-            // Log the first access
-            if len != 0 {
-                access_log.record(offset, len as u32);
-            }
-            let access_log = Arc::new(access_log);
-            table_guard.insert(blob_id.to_string(), (file, Some(access_log.clone())));
-            drop(table_guard);
-            // Split a thread to flush access record
-            let wait_sec = self.readahead_sec;
-            let _ = thread::Builder::new()
-                .name("nydus-localfs-access-recorder".to_string())
-                .spawn(move || {
-                    thread::sleep(time::Duration::from_secs(wait_sec as u64));
-                    access_log.flush();
-                });
-            return Ok(fd);
-        }
-
-        // Case 4: failed race, just let others log
         table_guard.insert(blob_id.to_string(), (file, None));
         Ok(fd)
     }
@@ -381,10 +329,89 @@ impl LocalFs {
 }
 
 impl BlobBackend for LocalFs {
-    fn init_blob(&self, blobs: &[OndiskBlobTableEntry]) {
-        for entry in blobs.iter() {
-            let _ = self.get_blob_fd(entry.blob_id.as_str(), 0, 0);
+    fn prefetch_blob(&self, blob: &OndiskBlobTableEntry) -> Result<()> {
+        if !self.readahead {
+            return Ok(());
         }
+
+        let _ = self.get_blob_fd(blob.blob_id.as_str(), 0, 0).map_err(|e| {
+            warn!("failed to find blob {}: {}", blob.blob_id, e);
+            e
+        })?;
+        // Do not expect get failure as we just added it above in get_blob_fd
+        let blob_file = self
+            .file_table
+            .read()
+            .unwrap()
+            .get(&blob.blob_id)
+            .unwrap()
+            .0
+            .try_clone()?;
+        let blob_size = blob_file.metadata()?.len() as usize;
+        let blob_fd = blob_file.as_raw_fd();
+        let blob_path = self.get_blob_path(&blob.blob_id);
+
+        // try to kick off readahead
+        let access_file_path = blob_path.to_str().unwrap().to_owned() + BLOB_ACCESSED_SUFFIX;
+        if let Ok(access_file) = OpenOptions::new()
+            .read(true)
+            .open(Path::new(&access_file_path))
+        {
+            // Found access log, kick off readahead
+            if access_file.metadata()?.len() > 0 {
+                // Don't expect poisoned lock here.
+                let mut access_log = LocalFsAccessLog::new();
+                access_log.init(access_file, access_file_path, blob_fd, blob_size, true)?;
+                let _ = thread::Builder::new()
+                    .name("nydus-localfs-readahead".to_string())
+                    .spawn(move || {
+                        let _ = access_log.do_readahead();
+                    });
+                return Ok(());
+            }
+        }
+
+        // kick off hinted blob readahead
+        if blob.readhead_size != 0
+            && ((blob.readhead_offset + blob.readhead_size) as usize) <= blob_size
+        {
+            info!(
+                "kick off hinted blob readahead offset {} len {}",
+                blob.readhead_offset, blob.readhead_size
+            );
+            readahead(
+                blob_file.as_raw_fd(),
+                blob.readhead_offset as u64,
+                (blob.readhead_offset + blob.readhead_size) as u64,
+            );
+        }
+
+        // start access logging
+        if let Ok(access_file) = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(Path::new(&access_file_path))
+        {
+            let mut access_log = LocalFsAccessLog::new();
+            access_log.init(access_file, access_file_path, blob_fd, blob_size, false)?;
+            let access_log = Arc::new(access_log);
+            // Do not expect poisoned lock here
+            self.file_table.write().unwrap().insert(
+                blob.blob_id.to_owned(),
+                (blob_file, Some(access_log.clone())),
+            );
+
+            // Split a thread to flush access record
+            let wait_sec = self.readahead_sec;
+            let _ = thread::Builder::new()
+                .name("nydus-localfs-access-recorder".to_string())
+                .spawn(move || {
+                    thread::sleep(time::Duration::from_secs(wait_sec as u64));
+                    access_log.flush();
+                });
+        }
+
+        Ok(())
     }
 
     fn read(&self, blob_id: &str, buf: &mut [u8], offset: u64) -> Result<usize> {

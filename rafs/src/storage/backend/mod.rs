@@ -20,8 +20,10 @@ pub mod request;
 
 /// Rafs blob backend API
 pub trait BlobBackend {
-    /// init blobs if necessary. Mostly used for blob readahead
-    fn init_blob(&self, _blobs: &[OndiskBlobTableEntry]) {}
+    /// prefetch blob if supported
+    fn prefetch_blob(&self, _blob: &OndiskBlobTableEntry) -> Result<()> {
+        Ok(())
+    }
 
     /// Read a range of data from blob into the provided slice
     fn read(&self, blob_id: &str, buf: &mut [u8], offset: u64) -> Result<usize>;

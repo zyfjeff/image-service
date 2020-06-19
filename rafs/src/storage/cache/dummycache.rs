@@ -73,7 +73,9 @@ impl RafsCache for DummyCache {
     }
 
     fn init(&mut self, _sb_meta: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> Result<()> {
-        self.backend.init_blob(blobs);
+        for b in blobs {
+            let _ = self.backend.prefetch_blob(b);
+        }
         Ok(())
     }
 
