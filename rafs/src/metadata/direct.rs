@@ -491,24 +491,24 @@ impl RafsInode for OndiskInodeWrapper {
             return Err(einval());
         }
 
-        let mut first = 0;
-        let mut last = inode.i_child_count;
+        let mut first = 0 as i32;
+        let mut last = (inode.i_child_count - 1) as i32;
 
         // Binary search by child name.
         // This implemention is more convenient and slightly outperforms than slice::binary_search.
-        while first < last {
-            let pivot = (first + last) / 2;
+        while first <= last {
+            let pivot = first + ((last - first) >> 1);
 
             let wrapper = self
                 .mapping
-                .get_inode_wrapper((inode.i_child_index + pivot) as u64, state.deref())?;
+                .get_inode_wrapper((inode.i_child_index as i32 + pivot) as u64, state.deref())?;
             let target = wrapper.name_ref(state.deref())?;
 
             if target == name {
                 return Ok(Arc::new(wrapper) as Arc<dyn RafsInode>);
             }
 
-            if name < target {
+            if target > name {
                 last = pivot - 1;
             } else {
                 first = pivot + 1;
