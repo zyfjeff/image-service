@@ -349,17 +349,21 @@ pub fn new<S: std::hash::BuildHasher>(
 
 #[cfg(test)]
 mod blob_cache_tests {
+    use std::alloc::{alloc, dealloc, Layout};
     use std::collections::HashMap;
     use std::io::Result;
+    use std::slice::from_raw_parts;
     use std::sync::Arc;
 
+    use vm_memory::{VolatileMemory, VolatileSlice};
+
     use crate::metadata::layout::{OndiskChunkInfo, OndiskDigest};
+    use crate::metadata::RAFS_DEFAULT_BLOCK_SIZE;
     use crate::storage::backend::BlobBackend;
     use crate::storage::cache::blobcache;
     use crate::storage::cache::RafsCache;
-    use crate::storage::compress::Algorithm;
+    use crate::storage::compress;
     use crate::storage::device::RafsBio;
-    use vm_memory::VolatileSlice;
 
     struct MockBackend {}
 
@@ -385,7 +389,7 @@ mod blob_cache_tests {
 
     #[test]
     fn test_add() {
-        // config
+        // new blob cache
         let mut config = HashMap::new();
         config.insert(String::from("work_dir"), String::from("/tmp"));
         let blob_cache = blobcache::new(
@@ -393,15 +397,17 @@ mod blob_cache_tests {
             Box::new(MockBackend {}) as Box<dyn BlobBackend + Send + Sync>,
         )
         .unwrap();
+
+        // generate backend data
         let mut expect = vec![0u8; 100];
         let block_id = [1u8; 32];
         let blob_id = "blobcache";
-        // generate init data
         blob_cache
             .backend
             .read(blob_id, expect.as_mut(), 0)
             .unwrap();
 
+        // generate chunk and bio
         let mut chunk = OndiskChunkInfo::new();
         chunk.block_id = OndiskDigest::from_raw(&block_id);
         chunk.file_offset = 0;
@@ -409,21 +415,39 @@ mod blob_cache_tests {
         chunk.compress_size = 100;
         chunk.blob_decompress_offset = 0;
         chunk.decompress_size = 100;
-        chunk.flags = 0;
         let bio = RafsBio::new(
             Arc::new(chunk),
             blob_id.to_string(),
-            Algorithm::None,
-            0,
-            100,
-            1024 * 1024,
+            compress::Algorithm::None,
+            50,
+            50,
+            RAFS_DEFAULT_BLOCK_SIZE as u32,
         );
-        let mut buf = vec![0u8; 100];
-        let vbuf = unsafe { [VolatileSlice::new(buf.as_mut_ptr(), 4096)] };
-        assert_eq!(blob_cache.read(&bio, &vbuf, 0).unwrap(), 100);
-        assert_eq!(&buf[0..100], expect.as_slice());
-        assert_eq!(blob_cache.read(&bio, &vbuf, 0).unwrap(), 100);
-        assert_eq!(&buf[0..100], expect.as_slice());
+
+        // read from cache
+        let r1 = unsafe {
+            let layout = Layout::from_size_align(50, 1).unwrap();
+            let ptr = alloc(layout);
+            let vs = VolatileSlice::new(ptr, 50);
+            blob_cache.read(&bio, &[vs], 50).unwrap();
+            let data = Vec::from(from_raw_parts(ptr, 50).clone());
+            dealloc(ptr, layout);
+            data
+        };
+
+        let r2 = unsafe {
+            let layout = Layout::from_size_align(50, 1).unwrap();
+            let ptr = alloc(layout);
+            let vs = VolatileSlice::new(ptr, 50);
+            blob_cache.read(&bio, &[vs], 50).unwrap();
+            let data = Vec::from(from_raw_parts(ptr, 50).clone());
+            dealloc(ptr, layout);
+            data
+        };
+
+        assert_eq!(r1, &expect[50..]);
+        assert_eq!(r2, &expect[50..]);
+
         std::fs::remove_file("/tmp/blobcache").expect("remove test file err!");
     }
 }
