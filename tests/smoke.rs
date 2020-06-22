@@ -8,7 +8,7 @@ use std::io::Result;
 mod builder;
 mod nydusd;
 
-fn test(enable_compress: bool, enable_cache: bool) -> Result<()> {
+fn test(enable_compress: bool, enable_cache: bool, rafs_mode: &str) -> Result<()> {
     let work_dir = Temp::new_dir()?;
 
     let mut builder = builder::new(&work_dir);
@@ -17,7 +17,7 @@ fn test(enable_compress: bool, enable_cache: bool) -> Result<()> {
     builder.make_parent()?;
     let build_ret = builder.build_parent(enable_compress)?;
 
-    let nydusd = nydusd::new(&work_dir, enable_cache)?;
+    let nydusd = nydusd::new(&work_dir, enable_cache, rafs_mode.parse()?)?;
     nydusd.start()?;
     let mount_ret = builder.mount_check()?;
     assert_eq!(build_ret, mount_ret);
@@ -25,7 +25,7 @@ fn test(enable_compress: bool, enable_cache: bool) -> Result<()> {
     // test blob cache recovery if enable cache
     if enable_cache {
         drop(nydusd);
-        let nydusd = nydusd::new(&work_dir, enable_cache)?;
+        let nydusd = nydusd::new(&work_dir, enable_cache, rafs_mode.parse()?)?;
         nydusd.start()?;
         let mount_ret = builder.mount_check()?;
         assert_eq!(build_ret, mount_ret);
@@ -40,8 +40,13 @@ fn test(enable_compress: bool, enable_cache: bool) -> Result<()> {
 
 #[test]
 fn run() -> Result<()> {
-    test(true, true)?;
-    test(false, false)?;
-    test(true, false)?;
-    test(false, true)
+    test(true, true, "direct")?;
+    test(false, false, "direct")?;
+    test(true, false, "direct")?;
+    test(false, true, "direct")?;
+
+    test(true, true, "cached")?;
+    test(false, false, "cached")?;
+    test(true, false, "cached")?;
+    test(false, true, "cached")
 }

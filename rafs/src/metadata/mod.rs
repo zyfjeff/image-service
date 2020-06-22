@@ -8,7 +8,8 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write;
-use std::io::{Result, Seek, SeekFrom};
+use std::io::{Error, ErrorKind, Result, Seek, SeekFrom};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -85,8 +86,32 @@ impl RafsSuperMeta {
 }
 
 pub enum RafsMode {
-    Cached,
     Direct,
+    Cached,
+}
+
+impl FromStr for RafsMode {
+    type Err = Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "direct" => Ok(Self::Direct),
+            "cached" => Ok(Self::Cached),
+            _ => Err(Error::new(
+                ErrorKind::InvalidInput,
+                "rafs mode should be direct or cached",
+            )),
+        }
+    }
+}
+
+impl fmt::Display for RafsMode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Direct => write!(f, "direct"),
+            Self::Cached => write!(f, "cached"),
+        }
+    }
 }
 
 /// Cached Rafs super block and inode information.

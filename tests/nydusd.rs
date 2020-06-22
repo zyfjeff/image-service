@@ -9,6 +9,8 @@ use std::process::{Command, Stdio};
 use std::thread::*;
 use std::time;
 
+use rafs::metadata::RafsMode;
+
 const NYDUSD: &str = "./target-fusedev/debug/nydusd";
 
 pub fn exec(cmd: &str) -> Result<()> {
@@ -39,7 +41,7 @@ pub struct Nydusd {
     mount_path: PathBuf,
 }
 
-pub fn new(work_dir: &PathBuf, enable_cache: bool) -> Result<Nydusd> {
+pub fn new(work_dir: &PathBuf, enable_cache: bool, rafs_mode: RafsMode) -> Result<Nydusd> {
     let mount_path = work_dir.join("mnt");
     fs::create_dir_all(mount_path.clone())?;
 
@@ -70,12 +72,13 @@ pub fn new(work_dir: &PathBuf, enable_cache: bool) -> Result<Nydusd> {
                 }}
                 {}
             }},
-            "mode": "direct",
+            "mode": "{}",
             "iostats_files": true
         }}
         "###,
         work_dir.join("blobs"),
         if enable_cache { cache } else { String::new() },
+        rafs_mode,
     );
 
     File::create(work_dir.join("config.json"))?.write_all(config.as_bytes())?;
