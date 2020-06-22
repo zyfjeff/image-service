@@ -15,6 +15,10 @@ release:
 	cargo build --features=virtiofsd --release --target-dir target-virtiofsd
 	cargo build --features=fusedev --release --target-dir target-fusedev
 
+static-release:
+	cargo build --target x86_64-unknown-linux-musl --features=fusedev --release --target-dir target-fusedev
+	cargo build --target x86_64-unknown-linux-musl --features=virtiofsd --release --target-dir target-virtiofsd
+
 test: build
 	RUST_BACKTRACE=1 cargo test --features=virtiofsd --target-dir target-virtiofsd -- --nocapture
 	RUST_BACKTRACE=1 cargo test --features=fusedev --target-dir target-fusedev -- --nocapture
@@ -22,3 +26,8 @@ test: build
 docker-smoke:
 	docker build -t nydus-rs-smoke misc/smoke
 	docker run -it --rm --privileged -v ${PWD}:/nydus-rs -v ~/.ssh/id_rsa:/root/.ssh/id_rsa -v ~/.cargo:/usr/local/cargo nydus-rs-smoke
+
+docker-static:
+	# For static build with musl
+	docker build -t nydus-rs-static misc/musl-static
+	docker run -it --rm --privileged -v ${PWD}:/nydus-rs -v ~/.ssh/id_rsa:/root/.ssh/id_rsa -v ~/.cargo:/root/.cargo nydus-rs-static
