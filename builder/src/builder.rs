@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use rafs::metadata::RafsDigest;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::fs::DirEntry;
@@ -212,12 +213,13 @@ impl Builder {
         let mut inode_offset = (super_block_size + inode_table_size + blob_table_size) as u32;
 
         for node in &mut self.additions {
+            let root_path = node.rootfs();
             let file_type = node.get_type()?;
             if file_type != "" {
                 debug!(
                     "upper building {} {:?}: index {} ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} i_nlink {} has_xattr {}",
                     file_type,
-                    node.get_rootfs(),
+                    &root_path,
                     node.index,
                     node.inode.i_ino,
                     node.inode.i_child_count,
@@ -228,7 +230,6 @@ impl Builder {
                     node.inode.has_xattr(),
                 );
             }
-            let root_path = node.rootfs();
             inode_table.set(node.index, inode_offset)?;
             // add inode size
             inode_offset += node.inode.size() as u32;
@@ -239,7 +240,7 @@ impl Builder {
                 self.readhead_nodes.insert(root_path, Some(node.clone()));
             }
             // add chunks size
-            if node.is_reg() {
+            if node.is_reg()? {
                 inode_offset +=
                     (node.inode.i_child_count as usize * size_of::<OndiskChunkInfo>()) as u32;
             }

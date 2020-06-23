@@ -48,7 +48,7 @@ impl fmt::Display for Node {
         write!(
             f,
             "{} {:?}: index {} ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} i_nlink {} has_xattr {}",
-            self.get_type()?,
+            self.get_type().unwrap(),
             self.rootfs(),
             self.index,
             self.inode.i_ino,
@@ -131,11 +131,11 @@ impl Node {
         chunk_cache: &mut ChunkCache,
         compressor: compress::Algorithm,
     ) -> Result<usize> {
-        if self.is_symlink() {
+        if self.is_symlink()? {
             return Ok(0);
         }
 
-        if self.is_dir() {
+        if self.is_dir()? {
             return Ok(0);
         }
 
@@ -341,7 +341,7 @@ impl Node {
     }
 
     pub fn chunk_count(&self) -> usize {
-        if !self.is_reg() {
+        if !self.is_reg().unwrap() {
             return 0;
         }
         div_round_up(self.inode.i_size, RAFS_DEFAULT_BLOCK_SIZE) as usize
