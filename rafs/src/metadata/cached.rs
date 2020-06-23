@@ -536,8 +536,10 @@ mod cached_tests {
         assert_eq!(cached_chunk.blob_compress_offset(), 0);
         assert_eq!(cached_chunk.blob_decompress_offset(), 0);
         let c_xattr = cached_inode.get_xattrs().unwrap();
-        for (k, v) in c_xattr.iter() {
-            assert_eq!(xattr.pairs.get(k).unwrap(), v);
+        for k in c_xattr.iter() {
+            let k = std::str::from_utf8(k.as_slice()).unwrap();
+            let v = cached_inode.get_xattr(k).unwrap();
+            assert_eq!(xattr.pairs.get(k).cloned().unwrap(), v.unwrap());
         }
 
         // close file
