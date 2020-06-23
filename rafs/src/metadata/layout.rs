@@ -321,8 +321,8 @@ impl OndiskInodeTable {
 
 #[derive(Clone, Debug, Default)]
 pub struct OndiskBlobTableEntry {
-    pub readhead_offset: u32,
-    pub readhead_size: u32,
+    pub readahead_offset: u32,
+    pub readahead_size: u32,
     pub blob_id: String,
 }
 
@@ -360,11 +360,11 @@ impl OndiskBlobTable {
         )
     }
 
-    pub fn add(&mut self, blob_id: String, readhead_offset: u32, readhead_size: u32) -> u32 {
+    pub fn add(&mut self, blob_id: String, readahead_offset: u32, readahead_size: u32) -> u32 {
         self.entries.push(OndiskBlobTableEntry {
             blob_id,
-            readhead_offset,
-            readhead_size,
+            readahead_offset,
+            readahead_size,
         });
         (self.entries.len() - 1) as u32
     }
@@ -384,8 +384,8 @@ impl OndiskBlobTable {
             .iter()
             .enumerate()
             .map(|(idx, entry)| {
-                w.write_all(&u32::to_le_bytes(entry.readhead_offset))?;
-                w.write_all(&u32::to_le_bytes(entry.readhead_size))?;
+                w.write_all(&u32::to_le_bytes(entry.readahead_offset))?;
+                w.write_all(&u32::to_le_bytes(entry.readahead_size))?;
                 w.write_all(entry.blob_id.as_bytes())?;
                 if idx != self.entries.len() - 1 {
                     size += size_of::<u32>() * 2 + entry.blob_id.len() + 1;
@@ -411,19 +411,20 @@ impl OndiskBlobTable {
     pub fn load_from_slice(&mut self, input: &[u8]) -> Result<()> {
         let mut input_rest = input;
         loop {
-            let (readhead, rest) = input_rest.split_at(std::mem::size_of::<u64>());
-            let (readhead_offset, readhead_size) = readhead.split_at(std::mem::size_of::<u32>());
+            let (readahead, rest) = input_rest.split_at(std::mem::size_of::<u64>());
+            let (readahead_offset, readahead_size) = readahead.split_at(std::mem::size_of::<u32>());
 
-            let readhead_offset =
-                u32::from_le_bytes(readhead_offset.try_into().map_err(|_| einval())?);
-            let readhead_size = u32::from_le_bytes(readhead_size.try_into().map_err(|_| einval())?);
+            let readahead_offset =
+                u32::from_le_bytes(readahead_offset.try_into().map_err(|_| einval())?);
+            let readahead_size =
+                u32::from_le_bytes(readahead_size.try_into().map_err(|_| einval())?);
 
             let (blob_id, rest) = parse_string(rest)?;
 
             self.entries.push(OndiskBlobTableEntry {
                 blob_id: blob_id.to_string(),
-                readhead_offset,
-                readhead_size,
+                readahead_offset,
+                readahead_size,
             });
             if rest.is_empty() || rest.as_bytes()[0] == b'\0' {
                 break;

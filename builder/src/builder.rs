@@ -35,8 +35,8 @@ pub struct Builder {
     blob_id: String,
     /// blob chunk compress flag
     compressor: compress::Algorithm,
-    /// readhead file list, use BTreeMap to keep stable iteration order
-    readhead_nodes: BTreeMap<PathBuf, Option<Node>>,
+    /// readahead file list, use BTreeMap to keep stable iteration order
+    readahead_nodes: BTreeMap<PathBuf, Option<Node>>,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
     inode_map: HashMap<u64, Node>,
     /// mutilple layers build: upper source nodes
@@ -53,7 +53,7 @@ impl Builder {
         parent_bootstrap_path: String,
         blob_id: String,
         compressor: compress::Algorithm,
-        readhead_nodes: BTreeMap<PathBuf, Option<Node>>,
+        readahead_nodes: BTreeMap<PathBuf, Option<Node>>,
     ) -> Result<Builder> {
         let f_blob = Box::new(
             OpenOptions::new()
@@ -89,7 +89,7 @@ impl Builder {
             blob_id,
             compressor,
             inode_map: HashMap::new(),
-            readhead_nodes,
+            readahead_nodes,
             additions: Vec::new(),
             removals: HashMap::new(),
             opaques: HashMap::new(),
@@ -236,8 +236,8 @@ impl Builder {
             if node.inode.has_xattr() && !node.xattrs.pairs.is_empty() {
                 inode_offset += (size_of::<OndiskXAttrs>() + node.xattrs.aligned_size()) as u32;
             }
-            if self.readhead_nodes.get(&root_path).is_some() {
-                self.readhead_nodes.insert(root_path, Some(node.clone()));
+            if self.readahead_nodes.get(&root_path).is_some() {
+                self.readahead_nodes.insert(root_path, Some(node.clone()));
             }
             // add chunks size
             if node.is_reg()? {
@@ -246,20 +246,20 @@ impl Builder {
             }
         }
 
-        // sort readhead list by file size for better prefetch
-        let mut readhead_nodes = self
-            .readhead_nodes
+        // sort readahead list by file size for better prefetch
+        let mut readahead_nodes = self
+            .readahead_nodes
             .values_mut()
             .filter_map(|node| node.as_mut())
             .collect::<Vec<&mut Node>>();
-        readhead_nodes.sort_by_key(|node| node.inode.i_size);
+        readahead_nodes.sort_by_key(|node| node.inode.i_size);
 
-        // fist, dump readhead nodes
-        let blob_readhead_offset = 0;
-        let mut blob_readhead_size = 0;
-        for readhead_node in &mut readhead_nodes {
-            debug!("upper building readhead {}", readhead_node);
-            blob_readhead_size += readhead_node.dump_blob(
+        // fist, dump readahead nodes
+        let blob_readahead_offset = 0;
+        let mut blob_readahead_size = 0;
+        for readahead_node in &mut readahead_nodes {
+            debug!("upper building readahead {}", readahead_node);
+            blob_readahead_size += readahead_node.dump_blob(
                 &mut self.f_blob,
                 &mut blob_hash,
                 &mut blob_compress_offset,
@@ -271,9 +271,9 @@ impl Builder {
 
         // then, dump other nodes
         for node in &mut self.additions {
-            if let Some(Some(readhead_node)) = self.readhead_nodes.get(&node.rootfs()) {
-                // prepare correct readhead node data for bootstrap dump
-                node.clone_from(&readhead_node);
+            if let Some(Some(readahead_node)) = self.readahead_nodes.get(&node.rootfs()) {
+                // prepare correct readahead node data for bootstrap dump
+                node.clone_from(&readahead_node);
             } else {
                 debug!("upper building {}", node);
                 node.dump_blob(
@@ -294,8 +294,8 @@ impl Builder {
         }
         blob_table.add(
             self.blob_id.clone(),
-            blob_readhead_offset,
-            blob_readhead_size,
+            blob_readahead_offset,
+            blob_readahead_size,
         );
 
         // dump bootstrap

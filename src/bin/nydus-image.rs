@@ -61,8 +61,8 @@ fn upload_blob(
     Ok(())
 }
 
-/// Get readhead file paths line by line from stdin
-fn get_readhead_files() -> Result<BTreeMap<PathBuf, Option<Node>>> {
+/// Get readahead file paths line by line from stdin
+fn get_readahead_files() -> Result<BTreeMap<PathBuf, Option<Node>>> {
     let stdin = io::stdin();
     let mut files = BTreeMap::new();
 
@@ -76,12 +76,12 @@ fn get_readhead_files() -> Result<BTreeMap<PathBuf, Option<Node>>> {
                 }
                 let file_name = file.trim();
                 if !file_name.is_empty() {
-                    debug!("readhead file: {}", file_name);
+                    debug!("readahead file: {}", file_name);
                     files.insert(Path::new(file_name).to_path_buf(), None);
                 }
             }
             Err(err) => {
-                error!("Failed to parse readhead files: {}", err);
+                error!("Failed to parse readahead files: {}", err);
             }
         }
     }
@@ -149,9 +149,9 @@ fn build() -> Result<()> {
                         .takes_value(true),
                 )
                 .arg(
-                    Arg::with_name("enable_readhead")
-                        .long("enable_readhead")
-                        .help("enable blob readhead optimiztion (read file list from stdin)"),
+                    Arg::with_name("enable_readahead")
+                        .long("enable_readahead")
+                        .help("enable blob readahead optimiztion (read file list from stdin)"),
                 ),
         )
         .arg(
@@ -212,8 +212,8 @@ fn build() -> Result<()> {
             parent_bootstrap = _parent_bootstrap.to_owned();
         }
 
-        let readhead_files = if matches.is_present("enable_readhead") {
-            get_readhead_files()?
+        let readahead_files = if matches.is_present("enable_readahead") {
+            get_readahead_files()?
         } else {
             BTreeMap::new()
         };
@@ -225,7 +225,7 @@ fn build() -> Result<()> {
             parent_bootstrap,
             blob_id.clone(),
             compressor,
-            readhead_files,
+            readahead_files,
         )?;
         blob_id = ib.build()?;
 

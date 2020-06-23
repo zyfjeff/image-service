@@ -390,17 +390,17 @@ impl BlobBackend for LocalFs {
         }
 
         // kick off hinted blob readahead
-        if blob.readhead_size != 0
-            && ((blob.readhead_offset + blob.readhead_size) as usize) <= blob_size
+        if blob.readahead_size != 0
+            && ((blob.readahead_offset + blob.readahead_size) as usize) <= blob_size
         {
             info!(
                 "kick off hinted blob readahead offset {} len {}",
-                blob.readhead_offset, blob.readhead_size
+                blob.readahead_offset, blob.readahead_size
             );
             readahead(
                 blob_file.as_raw_fd(),
-                blob.readhead_offset as u64,
-                (blob.readhead_offset + blob.readhead_size) as u64,
+                blob.readahead_offset as u64,
+                (blob.readahead_offset + blob.readahead_size) as u64,
             );
         }
 
