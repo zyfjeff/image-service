@@ -31,8 +31,8 @@ vhost_user_backend = { git = "https://github.com/cloud-hypervisor/vhost-user-bac
 event-manager = { git = "https://github.com/rust-vmm/event-manager.git", branch= "master" }
 
 [features]
-fusedev = ["nydus-utils/fusedev", "fuse-rs/fusedev"]
-virtiofsd = ["fuse-rs/vhost-user-fs", "vm-memory/backend-mmap", "vhost-rs/vhost-user-slave", "vhost_user_backend"]
+fusedev = ["nydus-utils/fusedev", "fuse-rs/fusedev", "rafs/lz4_ipp"]
+virtiofsd = ["fuse-rs/vhost-user-fs", "vm-memory/backend-mmap", "vhost-rs/vhost-user-slave", "vhost_user_backend", "rafs/lz4_ipp"]
 
 [workspace]
 members = [
