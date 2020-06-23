@@ -12,7 +12,7 @@ use crate::storage::backend::BlobBackend;
 use crate::storage::cache::RafsCache;
 use crate::storage::compress;
 use crate::storage::device::RafsBio;
-use crate::storage::utils::copyv;
+use crate::storage::utils::{alloc_buf, copyv};
 
 pub struct DummyCache {
     pub backend: Box<dyn BlobBackend + Sync + Send>,
@@ -31,10 +31,7 @@ impl DummyCache {
         offset: u64,
         d_size: usize,
     ) -> Result<usize> {
-        // Allocate a buffer to received the decompressed data without zeroing
-        let mut dst_buf = Vec::with_capacity(d_size);
-        unsafe { dst_buf.set_len(d_size) };
-
+        let mut dst_buf = alloc_buf(d_size);
         let sz = compress::decompress(src_buf, dst_buf.as_mut_slice())?;
         if sz != d_size {
             return Err(Error::new(
@@ -111,9 +108,7 @@ impl RafsCache for DummyCache {
                 return self.alloc_decompress(src_buf, bio, bufs, offset, d_size);
             } else {
                 // Allocate a buffer to received the compressed data without zeroing
-                let mut src_buf = Vec::with_capacity(c_size);
-                unsafe { src_buf.set_len(c_size) };
-
+                let mut src_buf = alloc_buf(c_size);
                 self.backend.read(
                     blob_id,
                     src_buf.as_mut_slice(),
@@ -123,10 +118,7 @@ impl RafsCache for DummyCache {
             }
         }
 
-        // Allocate a buffer to received the compressed data without zeroing
-        let mut src_buf = Vec::with_capacity(c_size);
-        unsafe { src_buf.set_len(c_size) };
-
+        let mut src_buf = alloc_buf(c_size);
         self.backend.read(
             blob_id,
             src_buf.as_mut_slice(),

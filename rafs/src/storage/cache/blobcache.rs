@@ -17,7 +17,7 @@ use crate::storage::backend::BlobBackend;
 use crate::storage::cache::RafsCache;
 use crate::storage::compress;
 use crate::storage::device::RafsBio;
-use crate::storage::utils::{copyv, readv};
+use crate::storage::utils::{alloc_buf, copyv, readv};
 
 #[derive(Clone, Eq, PartialEq)]
 enum CacheStatus {
@@ -204,9 +204,7 @@ impl BlobCache {
                 return Ok(sz);
             }
 
-            let mut chunk_data = Vec::with_capacity(c_size);
-            unsafe { chunk_data.set_len(c_size) };
-
+            let mut chunk_data = alloc_buf(c_size);
             let sz = self
                 .backend
                 .read(blob_id, chunk_data.as_mut_slice(), c_offset)?;
@@ -228,10 +226,7 @@ impl BlobCache {
             return Ok(d_size);
         }
 
-        // Allocate a buffer to received data without zeroing
-        let mut dst_buf = Vec::with_capacity(d_size as usize);
-        unsafe { dst_buf.set_len(d_size as usize) };
-
+        let mut dst_buf = alloc_buf(d_size as usize);
         // try to recovery cache from disk
         if let Ok(sz) = cache_entry.read(dst_buf.as_mut_slice()) {
             if sz == d_size
@@ -247,9 +242,7 @@ impl BlobCache {
             }
         }
 
-        let mut c_buf = Vec::with_capacity(c_size);
-        unsafe { c_buf.set_len(c_size) };
-
+        let mut c_buf = alloc_buf(c_size);
         let sz = self.backend.read(blob_id, c_buf.as_mut_slice(), c_offset)?;
         if !chunk.is_compressed() {
             cache_entry.cache(c_buf.as_mut_slice(), sz);
