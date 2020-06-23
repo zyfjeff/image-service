@@ -188,7 +188,10 @@ impl CachedInode {
             r.read_exact(xattrs.as_mut())?;
             let mut xattr_buf = vec![0u8; xattrs.aligned_size()];
             r.read_exact(xattr_buf.as_mut_slice())?;
-            self.i_xattr = parse_xattrs(&xattr_buf, xattrs.size())?;
+            parse_xattr(&xattr_buf, xattrs.size(), |name, value| {
+                self.i_xattr.insert(name.to_string(), value);
+                true
+            })?;
         }
         Ok(())
     }
@@ -323,8 +326,16 @@ impl RafsInode for CachedInode {
         }
     }
 
-    fn get_xattrs(&self) -> Result<HashMap<String, Vec<u8>>> {
-        Ok(self.i_xattr.clone())
+    fn get_xattr(&self, name: &str) -> Result<Option<XattrValue>> {
+        Ok(self.i_xattr.get(name).cloned())
+    }
+
+    fn get_xattrs(&self) -> Result<Vec<XattrName>> {
+        Ok(self
+            .i_xattr
+            .keys()
+            .map(|k| k.as_bytes().to_vec())
+            .collect::<Vec<XattrName>>())
     }
 
     fn alloc_bio_desc(&self, offset: u64, size: usize) -> Result<RafsBioDesc> {
