@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::env;
+
 #[cfg(feature = "fusedev")]
 #[macro_use]
 extern crate log;
@@ -16,4 +18,13 @@ pub fn log_level_to_verbosity(level: log::LevelFilter) -> usize {
 
 pub fn div_round_up(n: u64, d: u64) -> u64 {
     (n + d - 1) / d
+}
+
+pub fn backtrace_enable() -> bool {
+    if let Ok(val) = env::var("RUST_BACKTRACE") {
+        if val.trim() != "0" {
+            return true;
+        }
+    }
+    false
 }

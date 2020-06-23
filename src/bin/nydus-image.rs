@@ -19,7 +19,7 @@ use std::io::{self, Error, ErrorKind, Result, Write};
 use std::os::linux::fs::MetadataExt;
 
 use nydus_builder::builder;
-use nydus_utils::log_level_to_verbosity;
+use nydus_utils::{backtrace_enable, log_level_to_verbosity};
 use rafs::storage::{backend, factory};
 
 fn upload_blob(
@@ -214,6 +214,13 @@ fn build() -> Result<()> {
     Ok(())
 }
 
-fn main() {
-    build().expect("Build failed");
+fn main() -> Result<()> {
+    if backtrace_enable() {
+        build().unwrap();
+        return Ok(());
+    }
+    build().map_err(|err| {
+        error!("Build image failed");
+        err
+    })
 }

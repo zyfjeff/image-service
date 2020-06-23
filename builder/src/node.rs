@@ -125,11 +125,11 @@ impl Node {
     ) -> Result<OndiskDigest> {
         let mut inode_digest = OndiskDigest::new();
 
-        if self.is_symlink() {
+        if self.is_symlink()? {
             return Ok(inode_digest);
         }
 
-        if self.is_dir() {
+        if self.is_dir()? {
             return Ok(inode_digest);
         }
 
@@ -235,7 +235,7 @@ impl Node {
     }
 
     fn build_inode_stat(&mut self) -> Result<()> {
-        let meta = self.meta();
+        let meta = self.meta()?;
 
         self.inode.i_mode = meta.st_mode();
         self.inode.i_uid = meta.st_uid();
@@ -273,8 +273,8 @@ impl Node {
         self.build_inode_stat()?;
         self.build_inode_xattr()?;
 
-        if self.is_reg() {
-            if self.is_hardlink() {
+        if self.is_reg()? {
+            if self.is_hardlink()? {
                 if let Some(hardlink_node) = hardlink_node {
                     self.inode.i_flags |= INO_FLAG_HARDLINK as u64;
                     self.inode.i_digest = hardlink_node.inode.i_digest;
@@ -284,7 +284,7 @@ impl Node {
             }
             self.inode.i_child_count =
                 div_round_up(self.inode.i_size, RAFS_DEFAULT_BLOCK_SIZE) as u32;
-        } else if self.is_symlink() {
+        } else if self.is_symlink()? {
             self.inode.i_flags |= INO_FLAG_SYMLINK as u64;
             let target_path = fs::read_link(&self.path)?;
             self.symlink = Some(target_path.to_str().unwrap().to_owned());
@@ -295,46 +295,46 @@ impl Node {
         Ok(())
     }
 
-    pub fn meta(&self) -> impl MetadataExt {
-        self.path.symlink_metadata().unwrap()
+    pub fn meta(&self) -> Result<impl MetadataExt> {
+        self.path.symlink_metadata()
     }
 
-    pub fn is_dir(&self) -> bool {
-        self.meta().st_mode() & libc::S_IFMT == libc::S_IFDIR
+    pub fn is_dir(&self) -> Result<bool> {
+        Ok(self.meta()?.st_mode() & libc::S_IFMT == libc::S_IFDIR)
     }
 
-    pub fn is_symlink(&self) -> bool {
-        self.meta().st_mode() & libc::S_IFMT == libc::S_IFLNK
+    pub fn is_symlink(&self) -> Result<bool> {
+        Ok(self.meta()?.st_mode() & libc::S_IFMT == libc::S_IFLNK)
     }
 
-    pub fn is_reg(&self) -> bool {
-        self.meta().st_mode() & libc::S_IFMT == libc::S_IFREG
+    pub fn is_reg(&self) -> Result<bool> {
+        Ok(self.meta()?.st_mode() & libc::S_IFMT == libc::S_IFREG)
     }
 
-    pub fn is_hardlink(&self) -> bool {
-        self.meta().st_nlink() > 1
+    pub fn is_hardlink(&self) -> Result<bool> {
+        Ok(self.meta()?.st_nlink() > 1)
     }
 
-    pub fn get_real_ino(&self) -> u64 {
-        self.meta().st_ino()
+    pub fn get_real_ino(&self) -> Result<u64> {
+        Ok(self.meta()?.st_ino())
     }
 
-    pub fn get_type(&self) -> &str {
+    pub fn get_type(&self) -> Result<&str> {
         let mut file_type = "";
 
-        if self.is_symlink() {
+        if self.is_symlink()? {
             file_type = "symlink";
-        } else if self.is_dir() {
+        } else if self.is_dir()? {
             file_type = "dir"
-        } else if self.is_reg() {
-            if self.is_hardlink() {
+        } else if self.is_reg()? {
+            if self.is_hardlink()? {
                 file_type = "hardlink";
             } else {
                 file_type = "file";
             }
         }
 
-        file_type
+        Ok(file_type)
     }
 
     pub fn get_rootfs(&self) -> PathBuf {

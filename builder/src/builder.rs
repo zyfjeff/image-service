@@ -143,10 +143,10 @@ impl Builder {
                 for entry in childs {
                     let path = entry.path();
                     let mut node = self.new_node(&path);
-                    let real_ino = node.get_real_ino();
+                    let real_ino = node.get_real_ino()?;
 
                     // ignore special file
-                    if node.get_type() == "" {
+                    if node.get_type()? == "" {
                         continue;
                     }
 
@@ -164,7 +164,7 @@ impl Builder {
                     node.index = iter_ino;
                     node.inode.i_parent = dir_ino;
 
-                    if node.is_dir() && !node.is_symlink() {
+                    if node.is_dir()? && !node.is_symlink()? {
                         next_dirs.push(self.additions.len());
                     }
                     self.inode_map.insert(real_ino, node.clone());
@@ -212,7 +212,7 @@ impl Builder {
         let mut blob_hash = Sha256::new();
         let mut inode_offset = (super_block_size + inode_table_size + blob_table_size) as u32;
         for node in &mut self.additions {
-            let file_type = node.get_type();
+            let file_type = node.get_type()?;
             if file_type != "" {
                 debug!(
                     "upper building {} {:?}: index {} ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} i_nlink {} has_xattr {}",
