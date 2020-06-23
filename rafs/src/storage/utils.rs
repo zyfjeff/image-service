@@ -4,44 +4,50 @@
 
 use std::io::{Error, ErrorKind, Result};
 use std::os::unix::io::RawFd;
+use std::slice::from_raw_parts_mut;
 
-use libc::{c_int, c_void, off64_t, preadv64, size_t};
+use libc::off64_t;
+use nix::sys::uio::{preadv, IoVec};
 use vm_memory::{Bytes, VolatileSlice};
 
 use nydus_utils::round_down_4k;
 
 pub fn readv(fd: RawFd, bufs: &[VolatileSlice], offset: u64, max_size: usize) -> Result<usize> {
-    let mut size: usize = 0;
-    let iovecs: Vec<libc::iovec> = bufs
-        .iter()
-        .map(|s| {
-            let len = if size + s.len() > max_size {
-                max_size - size
-            } else {
-                s.len()
-            };
-            size += s.len();
-            libc::iovec {
-                iov_base: s.as_ptr() as *mut c_void,
-                iov_len: len as size_t,
-            }
-        })
-        .collect();
-
-    if iovecs.is_empty() {
+    if bufs.is_empty() {
         return Ok(0);
     }
 
-    loop {
-        let ret = unsafe { preadv64(fd, &iovecs[0], iovecs.len() as c_int, offset as off64_t) };
-        if ret >= 0 {
-            return Ok(ret as usize);
-        }
+    let mut size: usize = 0;
+    let mut iovecs: Vec<IoVec<&mut [u8]>> = Vec::new();
 
-        let err = Error::last_os_error();
-        // Retry if the IO is interrupted by signal.
-        if err.kind() != ErrorKind::Interrupted {
-            return Err(err);
+    for buf in bufs {
+        let mut exceed = false;
+        let len = if size + buf.len() > max_size {
+            exceed = true;
+            max_size - size
+        } else {
+            buf.len()
+        };
+        size += len;
+        let iov = IoVec::from_mut_slice(unsafe { from_raw_parts_mut(buf.as_ptr(), len) });
+        iovecs.push(iov);
+        if exceed {
+            break;
+        }
+    }
+
+    loop {
+        let ret = preadv(fd, &iovecs, offset as off64_t).map_err(|_| Error::last_os_error());
+        match ret {
+            Ok(ret) => {
+                return Ok(ret);
+            }
+            Err(err) => {
+                // Retry if the IO is interrupted by signal.
+                if err.kind() != ErrorKind::Interrupted {
+                    return Err(err);
+                }
+            }
         }
     }
 }
