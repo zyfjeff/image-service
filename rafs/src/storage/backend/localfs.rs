@@ -229,19 +229,20 @@ impl LocalFsAccessLog {
         }
         r.sort();
         r.dedup();
-        let record = r.clone();
-        r.clear();
+
+        // record is valid as long as LocalFsAccessLog is not dropped
+        // which means it must be valid within flush()
+        let record = unsafe {
+            std::slice::from_raw_parts(
+                r.as_ptr() as *const u8,
+                r.len() * std::mem::size_of::<AccessLogEntry>(),
+            )
+        };
+
         // set record length to max to no new record is saved
         // safe becasue we have locked records
         unsafe { r.set_len(MAX_ACCESS_RECORD) };
         drop(r);
-
-        let record = unsafe {
-            std::slice::from_raw_parts(
-                record.as_ptr() as *const u8,
-                record.len() * std::mem::size_of::<AccessLogEntry>(),
-            )
-        };
 
         let _ = nix::unistd::write(self.log_fd, record).map_err(|e| {
             warn!("fail to write access log: {}", e);
