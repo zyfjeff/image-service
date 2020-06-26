@@ -11,6 +11,7 @@ mktemp = "0.4.0"
 rust-crypto = "0.2.36"
 
 [dependencies]
+rlimit = "0.3.0"
 log = "0.4"
 epoll = ">=4.0.1"
 libc = "0.2"

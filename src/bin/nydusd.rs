@@ -12,7 +12,7 @@ extern crate rafs;
 extern crate stderrlog;
 
 use std::fs::File;
-use std::io::Result;
+use std::io::{Read, Result};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
 use std::sync::mpsc::{channel, Receiver};
@@ -21,6 +21,8 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::thread;
 use std::{convert, error, fmt, io, process};
+
+use rlimit::{rlim, Resource};
 
 use libc::EFD_NONBLOCK;
 
@@ -594,6 +596,36 @@ fn create_nydus_daemon(mountpoint: &str, fs: Arc<Vfs>) -> Result<Box<dyn NydusDa
     }))
 }
 
+fn get_default_rlimit_nofile() -> Result<rlim> {
+    // Our default RLIMIT_NOFILE target.
+    let mut max_fds: rlim = 1_000_000;
+    // leave at least this many fds free
+    let reserved_fds: rlim = 16_384;
+
+    // Reduce max_fds below the system-wide maximum, if necessary.
+    // This ensures there are fds available for other processes so we
+    // don't cause resource exhaustion.
+    let mut file_max = String::new();
+    let mut f = File::open("/proc/sys/fs/file-max")?;
+    f.read_to_string(&mut file_max)?;
+    let file_max = file_max
+        .trim()
+        .parse::<rlim>()
+        .map_err(|_| Error::InvalidArguments("read fs.file-max sysctl wrong".to_string()))?;
+    if file_max < 2 * reserved_fds {
+        return Err(io::Error::from(Error::InvalidArguments(
+            "The fs.file-max sysctl is too low to allow a reasonable number of open files."
+                .to_string(),
+        )));
+    }
+
+    max_fds = std::cmp::min(file_max - reserved_fds, max_fds);
+
+    Resource::NOFILE
+        .get()
+        .map(|(curr, _)| if curr >= max_fds { 0 } else { max_fds })
+}
+
 fn main() -> Result<()> {
     let cmd_arguments = App::new("vhost-user-fs backend")
         .version(crate_version!())
@@ -660,6 +692,15 @@ fn main() -> Result<()> {
                 .required(false)
                 .global(true),
         )
+        .arg(
+            Arg::with_name("rlimit-nofile")
+                .long("rlimit-nofile")
+                .default_value("1,000,000")
+                .help("set maximum number of file descriptors (0 leaves rlimit unchanged)")
+                .takes_value(true)
+                .required(false)
+                .global(true),
+        )
         .get_matches();
 
     let v = cmd_arguments
@@ -694,6 +735,11 @@ fn main() -> Result<()> {
         .value_of("threads")
         .map(|n| n.parse().unwrap_or(1))
         .unwrap_or(1);
+    let rlimit_nofile_default = get_default_rlimit_nofile()?;
+    let rlimit_nofile: rlim = cmd_arguments
+        .value_of("rlimit-nofile")
+        .map(|n| n.parse().unwrap_or(rlimit_nofile_default))
+        .unwrap_or(rlimit_nofile_default);
 
     // Some basic validation
     if !shared_dir.is_empty() && !metadata.is_empty() {
@@ -734,6 +780,14 @@ fn main() -> Result<()> {
         passthrough_fs.import()?;
         vfs.mount(Box::new(passthrough_fs), "/")?;
         info!("vfs mounted");
+
+        info!(
+            "set rlimit {}, default {}",
+            rlimit_nofile, rlimit_nofile_default
+        );
+        if rlimit_nofile != 0 {
+            Resource::NOFILE.set(rlimit_nofile, rlimit_nofile)?;
+        }
     } else if !metadata.is_empty() {
         let mut rafs = Rafs::new(rafs_conf.clone(), &"/".to_string())?;
         let mut file = Box::new(File::open(metadata)?) as Box<dyn rafs::RafsIoRead>;
