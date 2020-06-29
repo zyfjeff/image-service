@@ -8,7 +8,7 @@ use std::io::Result;
 use reqwest::blocking::{Body, Client, Response};
 use reqwest::{self, Method, StatusCode};
 
-use super::ReqErr;
+use nydus_error::{einval, epipe};
 
 pub use reqwest::header::HeaderMap;
 
@@ -69,11 +69,11 @@ impl Request {
     pub fn new(proxy: Option<&String>) -> Result<Request> {
         let mut cb = Client::builder().timeout(None);
         if let Some(proxy) = proxy {
-            cb = cb.proxy(reqwest::Proxy::all(proxy).map_err(ReqErr::inv_input)?)
+            cb = cb.proxy(reqwest::Proxy::all(proxy).map_err(|e| einval!(e))?)
         }
 
         Ok(Request {
-            client: cb.build().map_err(ReqErr::inv_input)?,
+            client: cb.build().map_err(|e| einval!(e))?,
         })
     }
 
@@ -84,7 +84,7 @@ impl Request {
         data: ReqBody<R>,
         headers: HeaderMap,
     ) -> Result<Response> {
-        let method = Method::from_bytes(method.as_bytes()).map_err(ReqErr::inv_input)?;
+        let method = Method::from_bytes(method.as_bytes()).map_err(|e| einval!(e))?;
         let rb = self.client.request(method, url).headers(headers);
 
         let ret;
@@ -108,11 +108,11 @@ impl Request {
                     return Ok(resp);
                 }
 
-                let message = resp.text().map_err(ReqErr::broken_pipe)?;
+                let message = resp.text().map_err(|e| epipe!(e))?;
 
-                Err(ReqErr::inv_input(message))
+                Err(einval!(message))
             }
-            Err(err) => Err(ReqErr::broken_pipe(err)),
+            Err(err) => Err(epipe!(err)),
         }
     }
 }

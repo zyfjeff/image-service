@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Error, ErrorKind, Result};
+use std::io::Result;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -18,6 +18,8 @@ use crate::storage::cache::RafsCache;
 use crate::storage::compress;
 use crate::storage::device::RafsBio;
 use crate::storage::utils::{alloc_buf, copyv, readv};
+
+use nydus_error::{eio, enoent, enosys, last_error, rafs_decompress_failed};
 
 #[derive(Clone, Eq, PartialEq)]
 enum CacheStatus {
@@ -42,7 +44,7 @@ impl BlobCacheEntry {
 
     fn read(&self, buf: &mut [u8]) -> Result<usize> {
         let nr_read = uio::pread(self.fd, buf, self.chunk.blob_decompress_offset() as i64)
-            .map_err(|_| Error::last_os_error())?;
+            .map_err(|e| last_error!(e))?;
 
         trace!(
             "read {}(offset={}) bytes from cache file",
@@ -59,7 +61,7 @@ impl BlobCacheEntry {
 
     fn write(&self, src: &[u8]) -> Result<usize> {
         let nr_write = uio::pwrite(self.fd, src, self.chunk.blob_decompress_offset() as i64)
-            .map_err(|_| Error::last_os_error())?;
+            .map_err(|e| last_error!(e))?;
 
         trace!(
             "write {}(offset={}) bytes to cache file",
@@ -209,17 +211,11 @@ impl BlobCache {
                 .backend
                 .read(blob_id, chunk_data.as_mut_slice(), c_offset)?;
             if sz != c_size {
-                return Err(Error::new(
-                    ErrorKind::Other,
-                    "Data read from backend is too small.",
-                ));
+                return Err(eio!("data read from backend is too small"));
             }
             let sz = compress::decompress(chunk_data.as_mut_slice(), buf)?;
             if sz != d_size {
-                return Err(Error::new(
-                    ErrorKind::InvalidData,
-                    "Decompression failed. Input invalid or too long?",
-                ));
+                return Err(rafs_decompress_failed!());
             }
 
             cache_entry.cache(buf, sz);
@@ -289,7 +285,7 @@ impl RafsCache for BlobCache {
 
     /* flush cache */
     fn flush(&self) -> Result<()> {
-        Err(Error::from_raw_os_error(libc::ENOSYS))
+        Err(enosys!())
     }
 
     fn read(&self, bio: &RafsBio, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
@@ -305,7 +301,7 @@ impl RafsCache for BlobCache {
     }
 
     fn write(&self, _blob_id: &str, _blk: &Arc<dyn RafsChunkInfo>, _buf: &[u8]) -> Result<usize> {
-        Err(Error::from_raw_os_error(libc::ENOSYS))
+        Err(enosys!())
     }
 
     fn release(&mut self) {
@@ -321,18 +317,15 @@ pub fn new<S: std::hash::BuildHasher>(
         .get("work_dir")
         .map_or(Ok("."), |p| -> Result<&str> {
             let path = fs::metadata(p).map_err(|e| {
-                Error::new(
-                    ErrorKind::Other,
-                    format!("fail to stat blobcache work_dir {}: {}", p, e),
-                )
+                last_error!(format!("fail to stat blobcache work_dir {}: {}", p, e))
             })?;
             if path.is_dir() {
                 Ok(p.as_str())
             } else {
-                Err(Error::new(
-                    ErrorKind::NotFound,
-                    format!("blobcache work_dir {} is not a directory", p),
-                ))
+                Err(enoent!(format!(
+                    "blobcache work_dir {} is not a directory",
+                    p
+                )))
             }
         })?;
 

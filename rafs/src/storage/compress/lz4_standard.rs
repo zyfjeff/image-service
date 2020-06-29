@@ -1,19 +1,18 @@
 // Copyright (C) 2020 Alibaba Cloud. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use std::io::{Error, ErrorKind, Result};
+use std::io::Result;
 
 use lz4_sys::{LZ4_compressBound, LZ4_compress_default, LZ4_decompress_safe};
+
+use nydus_error::{einval, rafs_decompress_failed};
 
 pub(super) fn lz4_compress(src: &[u8]) -> Result<Vec<u8>> {
     // 0 iff src too large
     let compress_bound: i32 = unsafe { LZ4_compressBound(src.len() as i32) };
 
     if src.len() > (i32::max_value() as usize) || compress_bound <= 0 {
-        return Err(Error::new(
-            ErrorKind::InvalidInput,
-            "Compression input data is too big.",
-        ));
+        return Err(einval!("compression input data is too big"));
     }
 
     let mut dst_buf = Vec::with_capacity(compress_bound as usize);
@@ -26,7 +25,7 @@ pub(super) fn lz4_compress(src: &[u8]) -> Result<Vec<u8>> {
         )
     };
     if dec_size <= 0 {
-        return Err(Error::new(ErrorKind::Other, "Compression failed"));
+        return Err(rafs_decompress_failed!());
     }
 
     assert!(dec_size as usize <= dst_buf.capacity());
@@ -37,18 +36,12 @@ pub(super) fn lz4_compress(src: &[u8]) -> Result<Vec<u8>> {
 
 pub(super) fn lz4_decompress(src: &[u8], dst: &mut [u8]) -> Result<usize> {
     if dst.len() >= std::i32::MAX as usize {
-        return Err(Error::new(
-            ErrorKind::InvalidInput,
-            "the destination buffer is big than i32::MAX.",
-        ));
+        return Err(einval!("the destination buffer is big than i32::MAX"));
     }
     let size = dst.len() as i32;
 
     if unsafe { LZ4_compressBound(size) } <= 0 {
-        return Err(Error::new(
-            ErrorKind::InvalidInput,
-            "Given size parameter is too big",
-        ));
+        return Err(einval!("given size parameter is too big"));
     }
 
     let dec_bytes = unsafe {
@@ -61,10 +54,7 @@ pub(super) fn lz4_decompress(src: &[u8], dst: &mut [u8]) -> Result<usize> {
     };
 
     if dec_bytes < 0 {
-        return Err(Error::new(
-            ErrorKind::InvalidData,
-            "Decompression failed. Input invalid or too long?",
-        ));
+        return Err(rafs_decompress_failed!());
     }
 
     Ok(dec_bytes as usize)

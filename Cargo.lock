@@ -57,6 +57,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8aac770f1885fd7e387acedd76065302551364496e46b3dd00860b2f8359b9d"
 
 [[package]]
+name = "backtrace"
+version = "0.3.41"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4ed64ae6d9ebfd9893193c4b2532b1292ec97bd8271c9d7d0fa90cd78a34cba"
+dependencies = [
+ "backtrace-sys",
+ "cfg-if",
+ "libc",
+ "rustc-demangle",
+]
+
+[[package]]
+name = "backtrace-sys"
+version = "0.1.37"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18fbebbe1c9d1f383a9cc7e8ccdb471b91c8d024ee9c2ca5b5346121fe8b4399"
+dependencies = [
+ "cc",
+ "libc",
+]
+
+[[package]]
 name = "base64"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -841,10 +863,21 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "log 0.4.8",
+ "nydus-error",
  "nydus-utils",
  "rafs",
  "rust-crypto",
  "xattr",
+]
+
+[[package]]
+name = "nydus-error"
+version = "0.1.0"
+dependencies = [
+ "backtrace",
+ "libc",
+ "log 0.4.8",
+ "stderrlog",
 ]
 
 [[package]]
@@ -860,6 +893,7 @@ dependencies = [
  "mktemp",
  "nydus-api",
  "nydus-builder",
+ "nydus-error",
  "nydus-utils",
  "rafs",
  "rust-crypto",
@@ -1006,6 +1040,7 @@ dependencies = [
  "lz4-sys",
  "madvise",
  "nix",
+ "nydus-error",
  "nydus-utils",
  "reqwest",
  "rust-crypto",
@@ -1289,6 +1324,12 @@ name = "rust-ini"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e52c148ef37f8c375d49d5a73aa70713125b7f19095948a923f80afdeb22ec2"
+
+[[package]]
+name = "rustc-demangle"
+version = "0.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c691c0e608126e00913e33f0ccf3727d5fc84573623b8d65b2df340b5201783"
 
 [[package]]
 name = "rustc-serialize"

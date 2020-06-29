@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::io::{Error, ErrorKind, Result};
+use std::io::{ErrorKind, Result};
 use std::os::unix::io::RawFd;
 use std::slice::from_raw_parts_mut;
 
@@ -10,6 +10,7 @@ use libc::off64_t;
 use nix::sys::uio::{preadv, IoVec};
 use vm_memory::{Bytes, VolatileSlice};
 
+use nydus_error::{last_error, rafs_decompress_failed};
 use nydus_utils::round_down_4k;
 
 pub fn readv(fd: RawFd, bufs: &[VolatileSlice], offset: u64, max_size: usize) -> Result<usize> {
@@ -37,7 +38,7 @@ pub fn readv(fd: RawFd, bufs: &[VolatileSlice], offset: u64, max_size: usize) ->
     }
 
     loop {
-        let ret = preadv(fd, &iovecs, offset as off64_t).map_err(|_| Error::last_os_error());
+        let ret = preadv(fd, &iovecs, offset as off64_t).map_err(|_| last_error!());
         match ret {
             Ok(ret) => {
                 return Ok(ret);
@@ -62,12 +63,8 @@ pub fn copyv(src: &[u8], dst: &[VolatileSlice], offset: u64, max_size: usize) ->
         } else {
             s.len()
         };
-        s.write_slice(&src[offset..offset + len], 0).map_err(|_| {
-            Error::new(
-                std::io::ErrorKind::Other,
-                "Decompression failed. Input invalid or too long?",
-            )
-        })?;
+        s.write_slice(&src[offset..offset + len], 0)
+            .map_err(|_| rafs_decompress_failed!())?;
         offset += len;
         size += len;
     }

@@ -9,9 +9,6 @@ use vm_memory::VolatileSlice;
 use crate::metadata::layout::OndiskBlobTableEntry;
 use crate::storage::utils::copyv;
 
-mod error;
-pub use error::ReqErr;
-
 pub mod dummy;
 pub mod localfs;
 pub mod oss;

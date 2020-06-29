@@ -16,6 +16,8 @@ use crate::metadata::{RafsChunkInfo, RafsSuperMeta};
 use crate::storage::cache::RafsCache;
 use crate::storage::{compress, factory};
 
+use nydus_error::rafs_decompress_failed;
+
 static ZEROS: &[u8] = &[0u8; 4096]; // why 4096? volatile slice default size, unfortunately
 
 // A rafs storage device
@@ -138,12 +140,8 @@ impl RafsBioDevice<'_> {
             let mut offset = 0;
             while total > 0 {
                 let cnt = cmp::min(total, ZEROS.len());
-                buf.write_slice(&ZEROS[0..cnt], offset).map_err(|_| {
-                    Error::new(
-                        std::io::ErrorKind::Other,
-                        "Decompression failed. Input invalid or too long?",
-                    )
-                })?;
+                buf.write_slice(&ZEROS[0..cnt], offset)
+                    .map_err(|_| rafs_decompress_failed!())?;
                 count += cnt;
                 remain -= cnt;
                 total -= cnt;

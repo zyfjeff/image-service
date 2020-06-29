@@ -18,7 +18,7 @@
 /// before making use of any metadata, especially we are using them in memory-mapped mode. The
 /// rule is to call validate() after creating any data structure from the on-disk metadata.
 use std::fs::File;
-use std::io::{Error, Result};
+use std::io::Result;
 use std::mem::{size_of, ManuallyDrop};
 use std::ops::Deref;
 use std::os::unix::io::{FromRawFd, IntoRawFd, RawFd};
@@ -30,6 +30,8 @@ use arc_swap::{ArcSwap, Guard};
 use crate::metadata::layout::*;
 use crate::metadata::*;
 use crate::storage::utils::readahead;
+
+use nydus_error::{ebadf, einval, enoent, last_error};
 
 /// Impl get accessor for inode object.
 macro_rules! impl_inode_getter {
@@ -112,7 +114,7 @@ impl DirectMappingState {
             || end > self.end
             || start as usize & (std::mem::align_of::<T>() - 1) != 0
         {
-            return Err(einval());
+            return Err(einval!("invalid mmap offset"));
         }
 
         Ok(unsafe { &*(start as *const T) })
@@ -124,7 +126,7 @@ impl DirectMappingState {
         let end = start.wrapping_add(size);
 
         if start > end || start < self.base || end < self.base || end > self.end {
-            return Err(einval());
+            return Err(einval!("invalid range"));
         }
 
         Ok(())
@@ -198,7 +200,7 @@ impl RafsSuperInodes for DirectMapping {
         // Validate file size
         let fd = unsafe { libc::dup(r.as_raw_fd()) };
         if fd < 0 {
-            return Err(Error::last_os_error());
+            return Err(last_error!("failed to dup metadata file fd"));
         }
         let file = unsafe { File::from_raw_fd(fd) };
         let md = file.metadata()?;
@@ -208,7 +210,7 @@ impl RafsSuperInodes for DirectMapping {
             || len > RAFS_MAX_METADATA_SIZE as u64
             || len & (RAFS_ALIGNMENT as u64 - 1) != 0
         {
-            return Err(ebadf());
+            return Err(ebadf!("invalid superblock"));
         }
 
         // Validate inode table layout
@@ -216,13 +218,13 @@ impl RafsSuperInodes for DirectMapping {
         let inode_table_size = old_state.meta.inode_table_entries as u64 * size_of::<u32>() as u64;
         let inode_table_end = inode_table_start
             .checked_add(inode_table_size)
-            .ok_or_else(ebadf)?;
+            .ok_or_else(|| ebadf!("invalid inode table size"))?;
         if inode_table_start < RAFS_SUPERBLOCK_SIZE as u64
             || inode_table_start >= len
             || inode_table_start > inode_table_end
             || inode_table_end > len
         {
-            return Err(ebadf());
+            return Err(ebadf!("invalid inode table"));
         }
 
         // Validate blob table layout
@@ -230,13 +232,13 @@ impl RafsSuperInodes for DirectMapping {
         let blob_table_size = old_state.meta.blob_table_size as u64;
         let blob_table_end = blob_table_start
             .checked_add(blob_table_size)
-            .ok_or_else(ebadf)?;
+            .ok_or_else(|| ebadf!("invalid blob table size"))?;
         if blob_table_start < RAFS_SUPERBLOCK_SIZE as u64
             || blob_table_start >= len
             || blob_table_start > blob_table_end
             || blob_table_end > len
         {
-            return Err(ebadf());
+            return Err(ebadf!("invalid blob table"));
         }
 
         // prefetch the metadata file
@@ -254,10 +256,10 @@ impl RafsSuperInodes for DirectMapping {
             )
         } as *const u8;
         if base as *mut core::ffi::c_void == libc::MAP_FAILED {
-            return Err(Error::last_os_error());
+            return Err(last_error!("failed to mmap metadata"));
         }
         if base.is_null() {
-            return Err(ebadf());
+            return Err(ebadf!("failed to mmap metadata"));
         }
         // Safe because the mmap area should covered the range [start, end)
         let end = unsafe { base.add(size) };
@@ -425,8 +427,10 @@ impl RafsInode for OndiskInodeWrapper {
             || inode.i_name_size & (RAFS_ALIGNMENT as u16 - 1) != 0
             || inode.i_symlink_size & (RAFS_ALIGNMENT as u16 - 1) != 0
         {
-            error!("inode validation failure, inode {:#?}", inode);
-            return Err(ebadf());
+            return Err(ebadf!(format!(
+                "inode validation failure, inode {:#?}",
+                inode
+            )));
         }
 
         let xattr_size = if inode.has_xattr() {
@@ -448,7 +452,7 @@ impl RafsInode for OndiskInodeWrapper {
                 || (inode.i_child_index - 1) as usize > max_ino
                 || inode.i_child_count as usize > max_ino
             {
-                return Err(ebadf());
+                return Err(ebadf!("invalid inode"));
             }
 
             let size = inode.size() + xattr_size;
@@ -494,7 +498,7 @@ impl RafsInode for OndiskInodeWrapper {
         let inode = self.inode(state.deref());
 
         if !inode.is_dir() {
-            return Err(einval());
+            return Err(einval!("inode is not a directory"));
         }
 
         let mut first = 0 as i32;
@@ -521,7 +525,7 @@ impl RafsInode for OndiskInodeWrapper {
             }
         }
 
-        Err(enoent())
+        Err(enoent!())
     }
 
     /// Get the child with the specified index.
@@ -535,10 +539,10 @@ impl RafsInode for OndiskInodeWrapper {
         let child_index = inode.i_child_index as u64;
 
         if !inode.is_dir() {
-            return Err(einval());
+            return Err(einval!("inode is not a directory"));
         }
         if idx >= child_count {
-            return Err(enoent());
+            return Err(enoent!("invalid child index"));
         }
 
         self.mapping.get_inode(idx + child_index)
@@ -554,7 +558,7 @@ impl RafsInode for OndiskInodeWrapper {
         let inode = self.inode(state.deref());
 
         if !inode.is_reg() || inode.i_child_count == 0 || idx > inode.i_child_count - 1 {
-            return Err(enoent());
+            return Err(enoent!("invalid chunk info"));
         }
 
         let mut offset = self.offset + inode.size();

@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write;
-use std::io::{Error, ErrorKind, Result, Seek, SeekFrom};
+use std::io::{Error, Result, Seek, SeekFrom};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,6 +26,8 @@ use crate::metadata::cached::CachedInodes;
 use crate::storage::compress;
 use crate::storage::device::{RafsBio, RafsBioDesc};
 use crate::*;
+
+use nydus_error::{ebadf, einval};
 
 pub mod cached;
 pub mod direct;
@@ -99,10 +101,7 @@ impl FromStr for RafsMode {
         match s {
             "direct" => Ok(Self::Direct),
             "cached" => Ok(Self::Cached),
-            _ => Err(Error::new(
-                ErrorKind::InvalidInput,
-                "rafs mode should be direct or cached",
-            )),
+            _ => Err(einval!("rafs mode should be direct or cached")),
         }
     }
 }
@@ -161,8 +160,7 @@ impl RafsSuper {
                 rs.mode = RafsMode::Cached;
             }
             _ => {
-                error!("Rafs mode should be 'direct' or 'cached'.");
-                return Err(einval());
+                return Err(einval!("Rafs mode should be 'direct' or 'cached'"));
             }
         }
 
@@ -197,7 +195,7 @@ impl RafsSuper {
                 self.meta.blob_table_offset = sb.blob_table_offset();
                 self.meta.blob_table_size = sb.blob_table_size();
             }
-            _ => return Err(ebadf()),
+            _ => return Err(ebadf!("invalid superblock version number")),
         }
 
         match sb.version() {
@@ -221,7 +219,7 @@ impl RafsSuper {
                     self.inodes = inodes;
                 }
             },
-            _ => return Err(einval()),
+            _ => return Err(einval!("invalid superblock version number")),
         }
 
         Ok(())
@@ -244,7 +242,7 @@ impl RafsSuper {
                 sb.set_inode_table_entries(self.meta.inode_table_entries);
                 sb.set_inode_table_offset(self.meta.inode_table_offset);
             }
-            _ => return Err(einval()),
+            _ => return Err(einval!("invalid superblock version number")),
         }
 
         sb.validate()?;

@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::prelude::*;
-use std::io::{Error, ErrorKind, Result, SeekFrom};
+use std::io::{Result, SeekFrom};
 use std::os::linux::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::str;
@@ -15,7 +15,9 @@ use std::str;
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 
+use nydus_error::einval;
 use nydus_utils::div_round_up;
+
 use rafs::metadata::layout::*;
 use rafs::metadata::*;
 use rafs::storage::compress;
@@ -107,10 +109,7 @@ impl Node {
 
         let mut xattrs = XAttrs::default();
         for (count, key) in file_xattrs.enumerate() {
-            let key = key
-                .to_str()
-                .ok_or_else(|| Error::from(ErrorKind::InvalidData))?
-                .to_string();
+            let key = key.to_str().ok_or_else(|| einval!())?.to_string();
             let value = xattr::get(&self.path, &key)?;
             xattrs.pairs.insert(key, value.unwrap_or_default());
         }

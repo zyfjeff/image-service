@@ -43,7 +43,7 @@ use vmm_sys_util::eventfd::EventFd;
 
 use nydus_api::http::start_http_thread;
 use nydus_api::http_endpoint::{ApiError, ApiRequest, ApiResponsePayload, DaemonInfo, MountInfo};
-use nydus_utils::{backtrace_enable, log_level_to_verbosity};
+use nydus_utils::log_level_to_verbosity;
 #[cfg(feature = "fusedev")]
 use nydus_utils::{FuseChannel, FuseSession};
 use rafs::fs::{Rafs, RafsConfig};
@@ -599,7 +599,7 @@ fn create_nydus_daemon(mountpoint: &str, fs: Arc<Vfs>) -> Result<Box<dyn NydusDa
     }))
 }
 
-fn run() -> Result<()> {
+fn main() -> Result<()> {
     let cmd_arguments = App::new("vhost-user-fs backend")
         .version(crate_version!())
         .author(crate_authors!())
@@ -830,12 +830,4 @@ fn run() -> Result<()> {
 
     info!("nydusd quits");
     Ok(())
-}
-
-fn main() -> Result<()> {
-    if backtrace_enable() {
-        run().unwrap();
-        return Ok(());
-    }
-    run()
 }

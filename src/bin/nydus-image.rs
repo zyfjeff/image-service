@@ -16,13 +16,14 @@ use mktemp::Temp;
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Error, ErrorKind, Result, Write};
+use std::io::{self, Result, Write};
 use std::os::linux::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use nydus_builder::builder;
 use nydus_builder::node::Node;
-use nydus_utils::{backtrace_enable, log_level_to_verbosity};
+use nydus_error::einval;
+use nydus_utils::log_level_to_verbosity;
 use rafs::storage::{backend, factory};
 
 fn upload_blob(
@@ -89,7 +90,7 @@ fn get_readahead_files() -> Result<BTreeMap<PathBuf, Option<Node>>> {
     Ok(files)
 }
 
-fn build() -> Result<()> {
+fn main() -> Result<()> {
     let cmd = App::new("nydus image builder")
         .version(crate_version!())
         .author(crate_authors!())
@@ -190,10 +191,10 @@ fn build() -> Result<()> {
         if let Some(p_blob_id) = matches.value_of("blob_id") {
             blob_id = String::from(p_blob_id);
             if blob_id.len() > BLOB_ID_MAXIMUM_LENGTH {
-                return Err(Error::new(
-                    ErrorKind::InvalidInput,
-                    format!("blob id is limited to length {}", BLOB_ID_MAXIMUM_LENGTH),
-                ));
+                return Err(einval!(format!(
+                    "blob id is limited to length {}",
+                    BLOB_ID_MAXIMUM_LENGTH
+                )));
             }
         }
 
@@ -255,15 +256,4 @@ fn build() -> Result<()> {
     }
 
     Ok(())
-}
-
-fn main() -> Result<()> {
-    if backtrace_enable() {
-        build().unwrap();
-        return Ok(());
-    }
-    build().map_err(|err| {
-        error!("Build image failed");
-        err
-    })
 }

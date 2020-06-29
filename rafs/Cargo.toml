@@ -28,6 +28,7 @@ fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git
 vm-memory = ">=0.2.0"
 
 nydus-utils = { path = "../utils" }
+nydus-error = { path = "../error" }
 
 [features]
 fusedev = ["fuse-rs/fusedev"]

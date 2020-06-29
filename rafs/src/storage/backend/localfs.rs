@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::fs::{self, remove_file, File, OpenOptions};
-use std::io::{self, Error, Result};
+use std::io::{self, Result};
 use std::mem::{size_of, ManuallyDrop};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
@@ -15,10 +15,10 @@ use nix::sys::uio;
 use vm_memory::VolatileSlice;
 
 use crate::metadata::layout::OndiskBlobTableEntry;
-use crate::storage::backend::ReqErr;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 use crate::storage::utils::{readahead, readv};
-use crate::{ebadf, einval};
+
+use nydus_error::{ebadf, einval, eio, last_error};
 use nydus_utils::{round_down_4k, round_up_4k};
 
 const BLOB_ACCESSED_SUFFIX: &str = ".access";
@@ -73,7 +73,7 @@ pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Re
             ..Default::default()
         }),
 
-        _ => Err(ReqErr::inv_input("blob file or dir is required")),
+        _ => Err(einval!("blob file or dir is required")),
     }
 }
 
@@ -121,16 +121,16 @@ impl LocalFsAccessLog {
             || self.blob_fd > 0
             || self.records.lock().unwrap().len() > 0
         {
-            return Err(einval());
+            return Err(einval!("invalid access log info"));
         }
 
         self.log_fd = unsafe { libc::dup(log_file.as_raw_fd()) };
         if self.log_fd < 0 {
-            return Err(Error::last_os_error());
+            return Err(last_error!("failed to dup log fd"));
         }
         self.blob_fd = unsafe { libc::dup(blob_fd) };
         if self.blob_fd < 0 {
-            return Err(Error::last_os_error());
+            return Err(last_error!("failed to dup blob fd"));
         }
         self.log_path = log_path;
         self.blob_size = blob_size;
@@ -157,10 +157,10 @@ impl LocalFsAccessLog {
             )
         } as *const AccessLogEntry;
         if base as *mut core::ffi::c_void == libc::MAP_FAILED {
-            return Err(Error::last_os_error());
+            return Err(last_error!("failed to mmap access log file"));
         }
         if base.is_null() {
-            return Err(ebadf());
+            return Err(ebadf!("failed to mmap access log file"));
         }
         // safe because we have validated size
         self.records = unsafe {
@@ -178,13 +178,14 @@ impl LocalFsAccessLog {
     fn do_readahead(&self) -> Result<()> {
         info!("starting localfs blob readahead");
         for &(offset, len, zero) in self.records.lock().unwrap().iter() {
-            let end: u64 = offset.checked_add(len as u64).ok_or_else(einval)?;
+            let end: u64 = offset
+                .checked_add(len as u64)
+                .ok_or_else(|| einval!("invalid length"))?;
             if offset > self.blob_size as u64 || end > self.blob_size as u64 || zero != 0 {
-                warn!(
+                return Err(einval!(format!(
                     "invalid readahead entry ({}, {}), blob size {}",
                     offset, len, self.blob_size
-                );
-                return Err(einval());
+                )));
             }
             unsafe { libc::readahead(self.blob_fd, offset as i64, len as usize) };
         }
@@ -246,7 +247,7 @@ impl LocalFsAccessLog {
 
         let _ = nix::unistd::write(self.log_fd, record).map_err(|e| {
             warn!("fail to write access log: {}", e);
-            e
+            eio!(e)
         });
     }
 }
@@ -320,10 +321,7 @@ impl LocalFs {
         let file = OpenOptions::new()
             .read(true)
             .open(&blob_file_path)
-            .map_err(|e| {
-                error!("failed to open blob {}: {}", blob_id, e);
-                e
-            })?;
+            .map_err(|e| last_error!(format!("failed to open blob {}: {}", blob_id, e)))?;
         let fd = file.as_raw_fd();
 
         // Don't expect poisoned lock here.
@@ -353,10 +351,9 @@ impl BlobBackend for LocalFs {
             return Ok(());
         }
 
-        let _ = self.get_blob_fd(blob.blob_id.as_str(), 0, 0).map_err(|e| {
-            warn!("failed to find blob {}: {}", blob.blob_id, e);
-            e
-        })?;
+        let _ = self
+            .get_blob_fd(blob.blob_id.as_str(), 0, 0)
+            .map_err(|e| einval!(format!("failed to find blob {}: {}", blob.blob_id, e)))?;
         // Do not expect get failure as we just added it above in get_blob_fd
         let blob_file = self
             .file_table
@@ -441,7 +438,8 @@ impl BlobBackend for LocalFs {
             offset,
             buf.len()
         );
-        let len = uio::pread(fd, buf, offset as i64).map_err(|_| Error::last_os_error())?;
+        let len = uio::pread(fd, buf, offset as i64)
+            .map_err(|_| last_error!("failed to read blob file"))?;
         debug!("local blob file read {} bytes", len);
 
         Ok(len)
@@ -490,10 +488,7 @@ impl BlobBackendUploader for LocalFs {
             .write(true)
             .create(true)
             .open(&blob)
-            .map_err(|e| {
-                error!("localfs update: open failed {:?}", e);
-                e
-            })?;
+            .map_err(|e| last_error!(format!("localfs update: open failed {:?}", e)))?;
 
         io::copy(&mut reader, &mut w).map(|sz| sz as usize)
     }

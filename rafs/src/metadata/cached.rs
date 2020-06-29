@@ -19,7 +19,9 @@ use crate::fs::Inode;
 use crate::metadata::layout::*;
 use crate::metadata::*;
 use crate::storage::device::{RafsBio, RafsBioDesc};
-use crate::{einval, enoent, RafsIoReader};
+use crate::RafsIoReader;
+
+use nydus_error::{einval, enoent};
 
 pub struct CachedInodes {
     s_blob: Arc<OndiskBlobTable>,
@@ -74,11 +76,17 @@ impl CachedInodes {
     }
 
     fn get_node(&self, ino: Inode) -> Result<Arc<CachedInode>> {
-        Ok(self.s_inodes.get(&ino).ok_or_else(enoent)?.clone())
+        Ok(self
+            .s_inodes
+            .get(&ino)
+            .ok_or_else(|| enoent!("inode not found"))?
+            .clone())
     }
 
     fn get_node_mut(&mut self, ino: Inode) -> Result<&mut Arc<CachedInode>> {
-        self.s_inodes.get_mut(&ino).ok_or_else(enoent)
+        self.s_inodes
+            .get_mut(&ino)
+            .ok_or_else(|| enoent!("inode not found"))
     }
 
     fn hash_inode(&mut self, inode: Arc<CachedInode>) -> Result<Arc<CachedInode>> {
@@ -116,7 +124,7 @@ impl RafsSuperInodes for CachedInodes {
     fn get_inode(&self, ino: Inode) -> Result<Arc<dyn RafsInode>> {
         self.s_inodes
             .get(&ino)
-            .map_or(Err(enoent()), |i| Ok(i.clone()))
+            .map_or(Err(enoent!("inode not found")), |i| Ok(i.clone()))
     }
 
     fn get_max_ino(&self) -> u64 {
@@ -257,7 +265,7 @@ impl RafsInode for CachedInode {
     fn validate(&self) -> Result<()> {
         // TODO: validate
         if self.is_symlink() && self.i_target.is_empty() {
-            return Err(einval());
+            return Err(einval!("invalid inode"));
         }
         Ok(())
     }
@@ -268,7 +276,7 @@ impl RafsInode for CachedInode {
 
     fn get_symlink(&self) -> Result<String> {
         if !self.is_symlink() {
-            Err(einval())
+            Err(einval!("inode is not a symlink"))
         } else {
             Ok(self.i_target.clone())
         }
@@ -278,7 +286,7 @@ impl RafsInode for CachedInode {
         let idx = self
             .i_child
             .binary_search_by(|c| c.i_name.cmp(&name.to_string()))
-            .map_err(|_| enoent())?;
+            .map_err(|_| enoent!("child not found"))?;
         Ok(self.i_child[idx].clone())
     }
 

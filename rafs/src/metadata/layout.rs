@@ -32,11 +32,12 @@
 
 use std::convert::TryFrom;
 use std::convert::TryInto;
-use std::io::{Error, ErrorKind, Result};
+use std::io::{Error, Result};
 use std::mem::size_of;
 
+use nydus_error::{einval, enoent, rafs_invalid_superblock};
+
 use super::*;
-use crate::{einval, enoent};
 
 pub const INO_FLAG_SYMLINK: u64 = 0x1;
 pub const INO_FLAG_HARDLINK: u64 = 0x2;
@@ -63,7 +64,7 @@ macro_rules! impl_metadata_converter {
                 if buf.len() != size_of::<$T>()
                     || ptr as usize & (std::mem::align_of::<$T>() - 1) != 0
                 {
-                    return Err(einval());
+                    return Err(einval!("convert failed"));
                 }
 
                 Ok(unsafe { &*(ptr as *const $T) })
@@ -78,7 +79,7 @@ macro_rules! impl_metadata_converter {
                 if buf.len() != size_of::<$T>()
                     || ptr as usize & (std::mem::align_of::<$T>() - 1) != 0
                 {
-                    return Err(einval());
+                    return Err(einval!("convert failed"));
                 }
 
                 Ok(unsafe { &mut *(ptr as *const $T as *mut $T) })
@@ -174,7 +175,7 @@ impl OndiskSuperBlock {
             || self.version() > RAFS_SUPER_VERSION_V5 as u32
             || self.sb_size() != RAFS_SUPERBLOCK_SIZE as u32
         {
-            return Err(Error::new(ErrorKind::InvalidData, "Invalid superblock"));
+            return Err(rafs_invalid_superblock!());
         }
 
         match self.version() {
@@ -183,7 +184,7 @@ impl OndiskSuperBlock {
                     || self.inode_table_offset() != 0
                     || self.inode_table_entries() != 0
                 {
-                    return Err(Error::new(ErrorKind::InvalidData, "Invalid superblock"));
+                    return Err(rafs_invalid_superblock!());
                 }
             }
             RAFS_SUPER_VERSION_V5 => {
@@ -191,14 +192,11 @@ impl OndiskSuperBlock {
                     || self.inode_table_offset() < RAFS_SUPERBLOCK_SIZE as u64
                     || self.inode_table_offset() & 0x7 != 0
                 {
-                    return Err(Error::new(ErrorKind::InvalidData, "Invalid superblock"));
+                    return Err(rafs_invalid_superblock!());
                 }
             }
             _ => {
-                return Err(Error::new(
-                    ErrorKind::InvalidData,
-                    "Invalid superblock version number",
-                ));
+                return Err(einval!("invalid superblock version number"));
             }
         }
 
@@ -284,7 +282,7 @@ impl OndiskInodeTable {
 
     pub fn set(&mut self, ino: Inode, inode_offset: u32) -> Result<()> {
         if ino > self.data.len() as u64 {
-            return Err(enoent());
+            return Err(einval!("invalid inode number"));
         }
 
         let offset = inode_offset >> 3;
@@ -295,12 +293,12 @@ impl OndiskInodeTable {
 
     pub fn get(&self, ino: Inode) -> Result<u32> {
         if ino > self.data.len() as u64 {
-            return Err(enoent());
+            return Err(enoent!("inode not found"));
         }
 
         let offset = u32::from_le(self.data[(ino - 1) as usize]) as usize;
         if offset <= (RAFS_SUPERBLOCK_SIZE >> 3) || offset >= (1usize << 29) {
-            return Err(enoent());
+            return Err(einval!("invalid inode offset"));
         }
 
         Ok((offset << 3) as u32)
@@ -372,7 +370,7 @@ impl OndiskBlobTable {
     #[inline]
     pub fn get(&self, blob_index: u32) -> Result<OndiskBlobTableEntry> {
         if blob_index > (self.entries.len() - 1) as u32 {
-            return Err(enoent());
+            return Err(enoent!("blob not found"));
         }
         Ok(self.entries[blob_index as usize].clone())
     }
@@ -415,9 +413,9 @@ impl OndiskBlobTable {
             let (readahead_offset, readahead_size) = readahead.split_at(std::mem::size_of::<u32>());
 
             let readahead_offset =
-                u32::from_le_bytes(readahead_offset.try_into().map_err(|_| einval())?);
+                u32::from_le_bytes(readahead_offset.try_into().map_err(|e| einval!(e))?);
             let readahead_size =
-                u32::from_le_bytes(readahead_size.try_into().map_err(|_| einval())?);
+                u32::from_le_bytes(readahead_size.try_into().map_err(|e| einval!(e))?);
 
             let (blob_id, rest) = parse_string(rest)?;
 
@@ -816,7 +814,7 @@ pub fn parse_string(buf: &[u8]) -> Result<(&str, &str)> {
                 (origin, "")
             }
         })
-        .map_err(|_| einval())
+        .map_err(|_| einval!("failed to parse string"))
 }
 
 /// Parse a 'buf' to xattr pair then callback.
@@ -829,13 +827,18 @@ where
 
     while i < size {
         let (pair_size, rest) = rest_data.split_at(size_of::<u32>());
-        let pair_size = u32::from_le_bytes(pair_size.try_into().map_err(|_| einval())?) as usize;
+        let pair_size = u32::from_le_bytes(
+            pair_size
+                .try_into()
+                .map_err(|_| einval!("failed to parse xattr pair size"))?,
+        ) as usize;
         i += size_of::<u32>();
 
         let (pair, rest) = rest.split_at(pair_size);
         if let Some(pos) = pair.iter().position(|&c| c == 0) {
             let (name, value) = pair.split_at(pos);
-            let name = std::str::from_utf8(name).map_err(|_| einval())?;
+            let name =
+                std::str::from_utf8(name).map_err(|_| einval!("failed to convert xattr name"))?;
             let value = value[1..].to_vec();
             if !cb(name, value) {
                 break;

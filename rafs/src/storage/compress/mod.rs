@@ -5,11 +5,13 @@
 use std::borrow::Cow;
 use std::convert::From;
 use std::fmt;
-use std::io::{Error, ErrorKind, Result};
+use std::io::{Error, Result};
 use std::str::FromStr;
 
 mod lz4_standard;
 use self::lz4_standard::*;
+
+use nydus_error::einval;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Algorithm {
@@ -30,10 +32,7 @@ impl FromStr for Algorithm {
         match s {
             "none" => Ok(Self::None),
             "lz4_block" => Ok(Self::LZ4Block),
-            _ => Err(Error::new(
-                ErrorKind::InvalidInput,
-                "compression algorithm should be none or lz4_block",
-            )),
+            _ => Err(einval!("compression algorithm should be none or lz4_block")),
         }
     }
 }

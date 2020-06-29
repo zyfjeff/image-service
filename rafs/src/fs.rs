@@ -7,7 +7,7 @@
 //! RAFS: a readonly FUSE file system designed for Cloud Native.
 
 use std::ffi::CStr;
-use std::io::{Error, ErrorKind, Result};
+use std::io::Result;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -22,6 +22,8 @@ use crate::metadata::RafsSuper;
 use crate::storage::device;
 use crate::storage::*;
 use crate::*;
+
+use nydus_error::{eacces, ealready, ebadf, einval, rafs_is_not_directory};
 
 /// Type of RAFS inode.
 pub type Inode = u64;
@@ -78,8 +80,7 @@ impl Rafs {
     /// Import an rafs metadata to initialize the filesystem instance.
     pub fn import(&mut self, r: &mut RafsIoReader) -> Result<()> {
         if self.initialized {
-            warn! {"Rafs already initialized"}
-            return Err(Error::new(ErrorKind::AlreadyExists, "Already mounted"));
+            return Err(ealready!("rafs already mounted"));
         }
 
         self.sb.load(r).or_else(|e| {
@@ -119,7 +120,7 @@ impl Rafs {
 
         let parent = self.sb.get_inode(ino)?;
         if !parent.is_dir() {
-            return Err(ebadf());
+            return Err(rafs_is_not_directory!());
         }
 
         let mut idx = offset as usize;
@@ -160,14 +161,6 @@ impl Rafs {
     }
 }
 
-fn ebadf() -> Error {
-    Error::from_raw_os_error(libc::EBADF)
-}
-
-fn einval() -> Error {
-    Error::from_raw_os_error(libc::EINVAL)
-}
-
 impl BackendFileSystem for Rafs {
     fn mount(&self) -> Result<(Entry, u64)> {
         let root_inode = self.sb.get_inode(ROOT_ID)?;
@@ -179,10 +172,12 @@ impl BackendFileSystem for Rafs {
 
 impl Rafs {
     fn lookup_wrapped(&self, ino: u64, name: &CStr) -> Result<Entry> {
-        let target = name.to_str().or_else(|_| Err(ebadf()))?;
+        let target = name
+            .to_str()
+            .or_else(|_| Err(ebadf!("failed to get name")))?;
         let parent = self.sb.get_inode(ino)?;
         if !parent.is_dir() {
-            return Err(ebadf());
+            return Err(rafs_is_not_directory!());
         }
 
         if target == DOT || (ino == ROOT_ID && target == DOTDOT) {
@@ -317,7 +312,9 @@ impl FileSystem for Rafs {
     }
 
     fn getxattr(&self, _ctx: Context, inode: u64, name: &CStr, size: u32) -> Result<GetxattrReply> {
-        let name = name.to_str().or_else(|_| Err(einval()))?;
+        let name = name
+            .to_str()
+            .or_else(|_| Err(einval!("invalid xattr name")))?;
         let inode = self.sb.get_inode(inode)?;
 
         let value = inode.get_xattr(name)?;
@@ -401,7 +398,7 @@ impl FileSystem for Rafs {
             && (st.gid != ctx.gid || st.mode & 0o040 == 0)
             && st.mode & 0o004 == 0
         {
-            return Err(eaccess());
+            return Err(eacces!("permission denied"));
         }
 
         if (mode & libc::W_OK) != 0
@@ -410,7 +407,7 @@ impl FileSystem for Rafs {
             && (st.gid != ctx.gid || st.mode & 0o020 == 0)
             && st.mode & 0o002 == 0
         {
-            return Err(eaccess());
+            return Err(eacces!("permission denied"));
         }
 
         // root can only execute something if it is executable by one of the owner, the group, or
@@ -421,7 +418,7 @@ impl FileSystem for Rafs {
             && (st.gid != ctx.gid || st.mode & 0o010 == 0)
             && st.mode & 0o001 == 0
         {
-            return Err(eaccess());
+            return Err(eacces!("permission denied"));
         }
 
         Ok(())

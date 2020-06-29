@@ -1,5 +1,5 @@
 [package]
-name = "nydus-builder"
+name = "nydus-error"
 version = "0.1.0"
 authors = ["The Ant Financial Nydus Developers"]
 edition = "2018"
@@ -7,10 +7,7 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+backtrace = "0.3"
 libc = "0.2"
-log = "0.4"
-rust-crypto = "0.2.36"
-xattr = "0.2.2"
-nydus-error = { path = "../error" }
-rafs = { path = "../rafs" }
-nydus-utils = { path = "../utils" }
+log = "0.4.8"
+stderrlog = "0.4.3"
