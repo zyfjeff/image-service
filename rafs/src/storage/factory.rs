@@ -51,7 +51,7 @@ pub fn new_backend(config: &BackendConfig) -> Result<Box<dyn BlobBackend + Send 
                 as Box<dyn BlobBackend + Send + Sync>)
         }
         _ => Err(einval!(format!(
-            "unsupported backend type {}",
+            "unsupported backend type '{}'",
             config.backend_type
         ))),
     }
@@ -72,7 +72,7 @@ pub fn new_uploader(config: &BackendConfig) -> Result<Box<dyn BlobBackendUploade
             Ok(Box::new(backend) as Box<dyn BlobBackendUploader<Reader = File>>)
         }
         _ => Err(einval!(format!(
-            "unsupported backend type {}",
+            "unsupported backend type '{}'",
             config.backend_type
         ))),
     }

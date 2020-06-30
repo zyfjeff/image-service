@@ -43,7 +43,7 @@ use vmm_sys_util::eventfd::EventFd;
 
 use nydus_api::http::start_http_thread;
 use nydus_api::http_endpoint::{ApiError, ApiRequest, ApiResponsePayload, DaemonInfo, MountInfo};
-use nydus_utils::log_level_to_verbosity;
+use nydus_utils::{einval, epipe, log_level_to_verbosity};
 #[cfg(feature = "fusedev")]
 use nydus_utils::{FuseChannel, FuseSession};
 use rafs::fs::{Rafs, RafsConfig};
@@ -117,7 +117,7 @@ impl error::Error for Error {}
 
 impl convert::From<Error> for io::Error {
     fn from(e: Error) -> Self {
-        io::Error::new(io::ErrorKind::Other, e)
+        einval!(e)
     }
 }
 
@@ -238,10 +238,9 @@ impl ApiServer {
                             self.api_evt.read()?;
 
                             // Read from the API receiver channel
-                            let api_request = api_receiver.recv().map_err(|e| {
-                                error!("receive API channel failed {}", e);
-                                io::Error::from(io::ErrorKind::BrokenPipe)
-                            })?;
+                            let api_request = api_receiver
+                                .recv()
+                                .map_err(|e| epipe!(format!("receive API channel failed {}", e)))?;
 
                             match api_request {
                                 ApiRequest::DaemonInfo(sender) => {
@@ -254,14 +253,12 @@ impl ApiServer {
                                     sender
                                         .send(Ok(response).map(ApiResponsePayload::DaemonInfo))
                                         .map_err(|e| {
-                                            error!("send API response failed {}", e);
-                                            io::Error::from(io::ErrorKind::BrokenPipe)
+                                            epipe!(format!("send API response failed {}", e))
                                         })?;
                                 }
                                 ApiRequest::Mount(info, sender) => {
                                     sender.send(mounter(info)).map_err(|e| {
-                                        error!("send API response failed {}", e);
-                                        io::Error::from(io::ErrorKind::BrokenPipe)
+                                        epipe!(format!("send API response failed {}", e))
                                     })?;
                                 }
                                 ApiRequest::ConfigureDaemon(conf, sender) => {
@@ -476,13 +473,11 @@ impl VhostUserBackend for VhostUserFsBackend {
 #[cfg(feature = "virtiofsd")]
 impl<S: VhostUserBackend> NydusDaemon for VhostUserDaemon<S> {
     fn start(&mut self, _: u32) -> Result<()> {
-        self.start()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))
+        self.start().map_err(|e| einval!(e))
     }
 
     fn wait(&mut self) -> Result<()> {
-        self.wait()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))
+        self.wait().map_err(|e| einval!(e))
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -702,19 +697,17 @@ fn main() -> Result<()> {
 
     // Some basic validation
     if !shared_dir.is_empty() && !metadata.is_empty() {
-        return Err(io::Error::from(Error::InvalidArguments(
-            "shared-dir and metadata cannot be set at the same time".to_string(),
-        )));
+        return Err(einval!(
+            "shared-dir and metadata cannot be set at the same time"
+        ));
     }
     if vu_sock.is_empty() && mountpoint.is_empty() {
-        return Err(io::Error::from(Error::InvalidArguments(
-            "either sock or mountpoint must be set".to_string(),
-        )));
+        return Err(einval!("either sock or mountpoint must be set".to_string()));
     }
     if !vu_sock.is_empty() && !mountpoint.is_empty() {
-        return Err(io::Error::from(Error::InvalidArguments(
-            "sock and mountpoint must not be set at the same time".to_string(),
-        )));
+        return Err(einval!(
+            "sock and mountpoint must not be set at the same time".to_string()
+        ));
     }
 
     let mut settings = config::Config::new();
@@ -763,30 +756,17 @@ fn main() -> Result<()> {
                         let mut settings = config::Config::new();
                         settings
                             .merge(config::File::from(Path::new(config)))
-                            .map_err(|e| {
-                                ApiError::MountFailure(io::Error::new(
-                                    io::ErrorKind::Other,
-                                    e.to_string(),
-                                ))
-                            })?;
+                            .map_err(|e| ApiError::MountFailure(einval!(e)))?;
 
-                        let rafs_conf: RafsConfig = settings.try_into().map_err(|e| {
-                            ApiError::MountFailure(io::Error::new(
-                                io::ErrorKind::Other,
-                                e.to_string(),
-                            ))
-                        })?;
+                        let rafs_conf: RafsConfig = settings
+                            .try_into()
+                            .map_err(|e| ApiError::MountFailure(einval!(e)))?;
 
-                        Rafs::new(rafs_conf, &info.mountpoint).map_err(|e| {
-                            ApiError::MountFailure(io::Error::new(
-                                io::ErrorKind::Other,
-                                e.to_string(),
-                            ))
-                        })?
+                        Rafs::new(rafs_conf, &info.mountpoint)
+                            .map_err(|e| ApiError::MountFailure(einval!(e)))?
                     }
-                    None => Rafs::new(rafs_conf.clone(), &info.mountpoint).map_err(|e| {
-                        ApiError::MountFailure(io::Error::new(io::ErrorKind::Other, e.to_string()))
-                    })?,
+                    None => Rafs::new(rafs_conf.clone(), &info.mountpoint)
+                        .map_err(|e| ApiError::MountFailure(einval!(e)))?,
                 };
                 let mut file = Box::new(File::open(&info.source).map_err(ApiError::MountFailure)?)
                     as Box<dyn rafs::RafsIoRead>;
@@ -795,12 +775,10 @@ fn main() -> Result<()> {
 
                 match vfs.mount(Box::new(rafs), &info.mountpoint) {
                     Ok(()) => Ok(ApiResponsePayload::Mount),
-                    Err(e) => {
-                        error!("mount {:?} failed {}", info, e);
-                        Err(ApiError::MountFailure(io::Error::from(
-                            io::ErrorKind::InvalidData,
-                        )))
-                    }
+                    Err(e) => Err(ApiError::MountFailure(einval!(format!(
+                        "mount {:?} failed {}",
+                        info, e
+                    )))),
                 }
             },
         )?;

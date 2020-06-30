@@ -5,7 +5,6 @@ use std::io::Result;
 
 use lz4_sys::{LZ4_compressBound, LZ4_compress_default, LZ4_decompress_safe};
 
-use crate::err_decompress_failed;
 use nydus_utils::einval;
 
 pub(super) fn lz4_compress(src: &[u8]) -> Result<Vec<u8>> {

@@ -174,7 +174,6 @@ fn main() -> Result<()> {
 
     stderrlog::new()
         .quiet(false)
-        .modules(vec![module_path!(), "nydus_builder", "rafs"])
         .verbosity(log_level_to_verbosity(v))
         .timestamp(stderrlog::Timestamp::Second)
         .init()

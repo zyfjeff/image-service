@@ -23,7 +23,6 @@ use crate::storage::device;
 use crate::storage::*;
 use crate::*;
 
-use crate::err_not_directory;
 use nydus_utils::{eacces, ealready, ebadf, einval};
 
 /// Type of RAFS inode.

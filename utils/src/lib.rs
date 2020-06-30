@@ -2,16 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-#[cfg(feature = "fusedev")]
+#[macro_use]
+pub mod error;
+pub use error::*;
+
 #[macro_use]
 extern crate log;
 #[cfg(feature = "fusedev")]
 pub mod fuse;
 #[cfg(feature = "fusedev")]
 pub use self::fuse::{FuseChannel, FuseSession};
-
-pub mod error;
-pub use error::*;
 
 pub fn log_level_to_verbosity(level: log::LevelFilter) -> usize {
     level as usize - 1

@@ -15,8 +15,6 @@ use crate::storage::compress;
 use crate::storage::device::RafsBio;
 use crate::storage::utils::{alloc_buf, copyv};
 
-use crate::err_decompress_failed;
-
 pub struct DummyCache {
     pub backend: Box<dyn BlobBackend + Sync + Send>,
 }

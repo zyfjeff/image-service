@@ -312,7 +312,7 @@ impl Node {
     }
 
     pub fn meta(&self) -> Result<impl MetadataExt> {
-        self.path.symlink_metadata()
+        self.path.symlink_metadata().map_err(|e| einval!(e))
     }
 
     pub fn rootfs(&self) -> PathBuf {

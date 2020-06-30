@@ -35,7 +35,6 @@ use std::convert::TryInto;
 use std::io::{Error, Result};
 use std::mem::size_of;
 
-use crate::err_invalid_superblock;
 use nydus_utils::{einval, enoent};
 
 use super::*;

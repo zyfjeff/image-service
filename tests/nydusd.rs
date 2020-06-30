@@ -3,12 +3,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::fs::{self, File};
-use std::io::{Error, ErrorKind, Result, Write};
+use std::io::{Result, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread::*;
 use std::time;
 
+use nydus_utils::einval;
 use rafs::metadata::RafsMode;
 
 const NYDUSD: &str = "./target-fusedev/debug/nydusd";
@@ -25,12 +26,10 @@ pub fn exec(cmd: &str) -> Result<()> {
         .spawn()?;
     let status = child.wait()?;
 
-    let status = status
-        .code()
-        .ok_or(Error::new(ErrorKind::Other, "exited with unknown status"))?;
+    let status = status.code().ok_or(einval!("exited with unknown status"))?;
 
     if status != 0 {
-        return Err(Error::new(ErrorKind::Other, "exited with non-zero"));
+        return Err(einval!("exited with non-zero"));
     }
 
     Ok(())

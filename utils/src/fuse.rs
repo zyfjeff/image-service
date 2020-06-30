@@ -16,6 +16,8 @@ use nix::poll::{poll, PollFd, PollFlags};
 use nix::unistd::{close, getgid, getuid, read};
 use nix::Error as nixError;
 
+use crate::error::*;
+
 use fuse_rs::transport::{FuseBuf, Reader, Writer};
 
 /// These follows definition from libfuse
@@ -40,10 +42,10 @@ impl FuseSession {
     pub fn new(mountpoint: &Path, fsname: &str, subtype: &str) -> io::Result<FuseSession> {
         let dest = mountpoint.canonicalize()?;
         if !dest.is_dir() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                format!("{} is not a directory", dest.to_str().unwrap()),
-            ));
+            return Err(einval!(format!(
+                "{} is not a directory",
+                dest.to_str().unwrap()
+            )));
         }
         let file = fuse_kern_mount(
             &dest,
@@ -122,8 +124,7 @@ impl FuseChannel {
             match read(self.fd, buf.as_mut_slice()) {
                 Ok(len) => {
                     return Ok(Some(
-                        Reader::new(FuseBuf::new(&mut buf[..len]))
-                            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?,
+                        Reader::new(FuseBuf::new(&mut buf[..len])).map_err(|e| eother!(e))?,
                     ));
                 }
                 Err(nixError::Sys(e)) => match e {
@@ -143,7 +144,7 @@ impl FuseChannel {
                     }
                 },
                 Err(e) => {
-                    return Err(io::Error::new(io::ErrorKind::Other, e));
+                    return Err(eother!(e));
                 }
             };
         }
@@ -201,10 +202,7 @@ fn fuse_kern_mount(
         flags,
         Some(opts.deref()),
     )
-    .map_err(|e| {
-        error!("mount failed: {:}", e);
-        io::Error::new(io::ErrorKind::Other, e)
-    })?;
+    .map_err(|e| eother!(format!("mount failed: {:}", e)))?;
     Ok(file)
 }
 
@@ -225,5 +223,5 @@ fn fuse_kern_umount(mountpoint: &str, fd: c_int) -> io::Result<()> {
     // Need to close fd, otherwise synchronous umount
     // can recurse into filesystem and deadlock.
     let _ = close(fd);
-    umount2(mountpoint, MntFlags::MNT_DETACH).map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    umount2(mountpoint, MntFlags::MNT_DETACH).map_err(|e| eother!(e))
 }

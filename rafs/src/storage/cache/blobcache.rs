@@ -11,7 +11,6 @@ use std::sync::{Arc, Mutex, RwLock};
 use nix::sys::uio;
 use vm_memory::{VolatileMemory, VolatileSlice};
 
-use crate::err_decompress_failed;
 use crate::metadata::layout::{OndiskBlobTableEntry, OndiskDigest};
 use crate::metadata::{RafsChunkInfo, RafsDigest, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;

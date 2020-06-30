@@ -25,54 +25,46 @@ fn display(err: &std::io::Error, raw: impl Debug, file: &str, line: u32) {
     }
 }
 
-/// Define macro like `einval!()` or `einval!(err)`
-macro_rules! define_macro {
+/// Define function like `einval(...)` and
+/// macro like `einval!()` or `einval!(err)` for custom error codes
+macro_rules! define_error_macro {
     ($fn:ident, $err:expr) => {
+        pub fn $fn(raw: impl Debug, file: &str, line: u32) -> std::io::Error {
+            display(&$err, &raw, file, line);
+            std::io::Error::new($err.kind(), format!("{:?}", raw))
+        }
         #[macro_export]
         macro_rules! $fn {
-            () => {{
+            () => {
                 $err
-            }};
-            ($raw:expr) => {{
-                $fn(&$raw, file!(), line!());
-                std::io::Error::new($err.kind(), format!("{:?}", $raw))
-            }};
+            };
+            ($raw:expr) => {
+                $fn(&$raw, file!(), line!())
+            };
         }
     };
 }
 
-/// Define function and macro
-macro_rules! make {
+/// Define function and macro for libc error codes
+macro_rules! define_libc_error_macro {
     ($fn:ident, $code:ident) => {
-        /// Define function like `einval(...)`
-        pub fn $fn(raw: impl Debug, file: &str, line: u32) {
-            display(
-                &std::io::Error::from_raw_os_error(libc::$code),
-                raw,
-                file,
-                line,
-            );
-        }
-        define_macro!($fn, std::io::Error::from_raw_os_error(libc::$code));
+        define_error_macro!($fn, std::io::Error::from_raw_os_error(libc::$code));
     };
 }
 
-/// Define macro `last_error!(...)`
-pub fn last_error(raw: impl Debug, file: &str, line: u32) -> std::io::Error {
-    let err = std::io::Error::last_os_error();
-    display(&err, &raw, file, line);
-    std::io::Error::new(err.kind(), format!("{:?}", raw))
-}
-define_macro!(last_error, std::io::Error::last_os_error());
+// Add more libc error macro here if necessary
+define_libc_error_macro!(einval, EINVAL);
+define_libc_error_macro!(enoent, ENOENT);
+define_libc_error_macro!(ebadf, EBADF);
+define_libc_error_macro!(eacces, EACCES);
+define_libc_error_macro!(enotdir, ENOTDIR);
+define_libc_error_macro!(eisdir, EISDIR);
+define_libc_error_macro!(ealready, EALREADY);
+define_libc_error_macro!(enosys, ENOSYS);
+define_libc_error_macro!(epipe, EPIPE);
+define_libc_error_macro!(eio, EIO);
 
-// Add more error codes here if necessary
-make!(einval, EINVAL);
-make!(enoent, ENOENT);
-make!(ebadf, EBADF);
-make!(eacces, EACCES);
-make!(enotdir, ENOTDIR);
-make!(eisdir, EISDIR);
-make!(ealready, EALREADY);
-make!(enosys, ENOSYS);
-make!(epipe, EPIPE);
-make!(eio, EIO);
+// Define macro like `last_error!(...)`
+// Add more custom error macro here if necessary
+define_error_macro!(last_error, std::io::Error::last_os_error());
+define_error_macro!(eother, std::io::Error::new(std::io::ErrorKind::Other, ""));

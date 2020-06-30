@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::fs::{self, File};
-use std::io::{Error, ErrorKind, Read, Result, Write};
+use std::io::{Read, Result, Write};
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -13,6 +13,7 @@ use std::process::Command;
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 
+use nydus_utils::einval;
 use rafs::metadata::RafsSuper;
 use rafs::RafsIoRead;
 
@@ -26,15 +27,13 @@ pub fn exec(cmd: &str) -> Result<String> {
         .output()?;
     let status = child.status;
 
-    let status = status
-        .code()
-        .ok_or(Error::new(ErrorKind::Other, "exited with unknown status"))?;
+    let status = status.code().ok_or(einval!("exited with unknown status"))?;
 
-    let stdout = std::str::from_utf8(&child.stdout).map_err(|e| Error::new(ErrorKind::Other, e))?;
-    let stderr = std::str::from_utf8(&child.stderr).map_err(|e| Error::new(ErrorKind::Other, e))?;
+    let stdout = std::str::from_utf8(&child.stdout).map_err(|e| einval!(e))?;
+    let stderr = std::str::from_utf8(&child.stderr).map_err(|e| einval!(e))?;
 
     if status != 0 {
-        return Err(Error::new(ErrorKind::Other, stderr));
+        return Err(einval!(stderr));
     }
 
     Ok(stdout.to_string())

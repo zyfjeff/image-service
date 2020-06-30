@@ -10,7 +10,6 @@ use libc::off64_t;
 use nix::sys::uio::{preadv, IoVec};
 use vm_memory::{Bytes, VolatileSlice};
 
-use crate::err_decompress_failed;
 use nydus_utils::{last_error, round_down_4k};
 
 pub fn readv(fd: RawFd, bufs: &[VolatileSlice], offset: u64, max_size: usize) -> Result<usize> {
