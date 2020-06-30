@@ -13,7 +13,7 @@ use url::Url;
 use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, Request};
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 
-use nydus_error::{einval, epipe};
+use nydus_utils::{einval, epipe};
 
 const HEADER_DATE: &str = "Date";
 const HEADER_AUTHORIZATION: &str = "Authorization";

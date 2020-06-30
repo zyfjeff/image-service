@@ -863,21 +863,10 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "log 0.4.8",
- "nydus-error",
  "nydus-utils",
  "rafs",
  "rust-crypto",
  "xattr",
-]
-
-[[package]]
-name = "nydus-error"
-version = "0.1.0"
-dependencies = [
- "backtrace",
- "libc",
- "log 0.4.8",
- "stderrlog",
 ]
 
 [[package]]
@@ -893,7 +882,6 @@ dependencies = [
  "mktemp",
  "nydus-api",
  "nydus-builder",
- "nydus-error",
  "nydus-utils",
  "rafs",
  "rust-crypto",
@@ -911,6 +899,7 @@ dependencies = [
 name = "nydus-utils"
 version = "0.1.0"
 dependencies = [
+ "backtrace",
  "fuse-rs",
  "libc",
  "log 0.4.8",
@@ -1040,7 +1029,6 @@ dependencies = [
  "lz4-sys",
  "madvise",
  "nix",
- "nydus-error",
  "nydus-utils",
  "reqwest",
  "rust-crypto",

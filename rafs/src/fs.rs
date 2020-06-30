@@ -23,7 +23,8 @@ use crate::storage::device;
 use crate::storage::*;
 use crate::*;
 
-use nydus_error::{eacces, ealready, ebadf, einval, rafs_is_not_directory};
+use crate::err_not_directory;
+use nydus_utils::{eacces, ealready, ebadf, einval};
 
 /// Type of RAFS inode.
 pub type Inode = u64;
@@ -120,7 +121,7 @@ impl Rafs {
 
         let parent = self.sb.get_inode(ino)?;
         if !parent.is_dir() {
-            return Err(rafs_is_not_directory!());
+            return Err(err_not_directory!());
         }
 
         let mut idx = offset as usize;
@@ -177,7 +178,7 @@ impl Rafs {
             .or_else(|_| Err(ebadf!("failed to get name")))?;
         let parent = self.sb.get_inode(ino)?;
         if !parent.is_dir() {
-            return Err(rafs_is_not_directory!());
+            return Err(err_not_directory!());
         }
 
         if target == DOT || (ino == ROOT_ID && target == DOTDOT) {

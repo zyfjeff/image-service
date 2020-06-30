@@ -21,7 +21,7 @@ use crate::metadata::*;
 use crate::storage::device::{RafsBio, RafsBioDesc};
 use crate::RafsIoReader;
 
-use nydus_error::{einval, enoent};
+use nydus_utils::{einval, enoent};
 
 pub struct CachedInodes {
     s_blob: Arc<OndiskBlobTable>,

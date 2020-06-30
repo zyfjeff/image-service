@@ -10,7 +10,7 @@ use url::Url;
 use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, Request};
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 
-use nydus_error::{einval, epipe};
+use nydus_utils::{einval, epipe};
 
 const HEADER_CONTENT_LENGTH: &str = "Content-Length";
 const HEADER_CONTENT_TYPE: &str = "Content-Type";

@@ -27,7 +27,7 @@ use crate::storage::compress;
 use crate::storage::device::{RafsBio, RafsBioDesc};
 use crate::*;
 
-use nydus_error::{ebadf, einval};
+use nydus_utils::{ebadf, einval};
 
 pub mod cached;
 pub mod direct;

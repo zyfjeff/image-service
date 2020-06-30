@@ -15,7 +15,7 @@ use crate::storage::compress;
 use crate::storage::device::RafsBio;
 use crate::storage::utils::{alloc_buf, copyv};
 
-use nydus_error::rafs_decompress_failed;
+use crate::err_decompress_failed;
 
 pub struct DummyCache {
     pub backend: Box<dyn BlobBackend + Sync + Send>,
@@ -37,7 +37,7 @@ impl DummyCache {
         let mut dst_buf = alloc_buf(d_size);
         let sz = compress::decompress(src_buf, dst_buf.as_mut_slice())?;
         if sz != d_size {
-            return Err(rafs_decompress_failed!());
+            return Err(err_decompress_failed!());
         }
         copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
     }
@@ -55,7 +55,7 @@ impl DummyCache {
             let dst_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) };
             let sz = compress::decompress(src_buf, dst_buf)?;
             if sz != dst_buf.len() {
-                return Err(rafs_decompress_failed!());
+                return Err(err_decompress_failed!());
             }
             return Ok(sz);
         }

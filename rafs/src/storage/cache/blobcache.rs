@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use nix::sys::uio;
 use vm_memory::{VolatileMemory, VolatileSlice};
 
+use crate::err_decompress_failed;
 use crate::metadata::layout::{OndiskBlobTableEntry, OndiskDigest};
 use crate::metadata::{RafsChunkInfo, RafsDigest, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
@@ -19,7 +20,7 @@ use crate::storage::compress;
 use crate::storage::device::RafsBio;
 use crate::storage::utils::{alloc_buf, copyv, readv};
 
-use nydus_error::{eio, enoent, enosys, last_error, rafs_decompress_failed};
+use nydus_utils::{eio, enoent, enosys, last_error};
 
 #[derive(Clone, Eq, PartialEq)]
 enum CacheStatus {
@@ -215,7 +216,7 @@ impl BlobCache {
             }
             let sz = compress::decompress(chunk_data.as_mut_slice(), buf)?;
             if sz != d_size {
-                return Err(rafs_decompress_failed!());
+                return Err(err_decompress_failed!());
             }
 
             cache_entry.cache(buf, sz);

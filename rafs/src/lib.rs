@@ -36,3 +36,26 @@ pub type RafsIoReader = Box<dyn RafsIoRead>;
 
 /// Handler to write file system metadata.
 pub type RafsIoWriter = Box<dyn RafsIoWrite>;
+
+/// Rafs related common error code.
+#[macro_export]
+macro_rules! err_decompress_failed {
+    () => {{
+        use nydus_utils::eio;
+        eio!("decompression failed")
+    }};
+}
+#[macro_export]
+macro_rules! err_invalid_superblock {
+    () => {{
+        use nydus_utils::einval;
+        einval!("invalid superblock")
+    }};
+}
+#[macro_export]
+macro_rules! err_not_directory {
+    () => {{
+        use nydus_utils::enotdir;
+        enotdir!("is not a directory")
+    }};
+}

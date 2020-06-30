@@ -35,7 +35,8 @@ use std::convert::TryInto;
 use std::io::{Error, Result};
 use std::mem::size_of;
 
-use nydus_error::{einval, enoent, rafs_invalid_superblock};
+use crate::err_invalid_superblock;
+use nydus_utils::{einval, enoent};
 
 use super::*;
 
@@ -175,7 +176,7 @@ impl OndiskSuperBlock {
             || self.version() > RAFS_SUPER_VERSION_V5 as u32
             || self.sb_size() != RAFS_SUPERBLOCK_SIZE as u32
         {
-            return Err(rafs_invalid_superblock!());
+            return Err(err_invalid_superblock!());
         }
 
         match self.version() {
@@ -184,7 +185,7 @@ impl OndiskSuperBlock {
                     || self.inode_table_offset() != 0
                     || self.inode_table_entries() != 0
                 {
-                    return Err(rafs_invalid_superblock!());
+                    return Err(err_invalid_superblock!());
                 }
             }
             RAFS_SUPER_VERSION_V5 => {
@@ -192,7 +193,7 @@ impl OndiskSuperBlock {
                     || self.inode_table_offset() < RAFS_SUPERBLOCK_SIZE as u64
                     || self.inode_table_offset() & 0x7 != 0
                 {
-                    return Err(rafs_invalid_superblock!());
+                    return Err(err_invalid_superblock!());
                 }
             }
             _ => {

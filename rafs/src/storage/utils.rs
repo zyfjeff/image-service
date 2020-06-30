@@ -10,8 +10,8 @@ use libc::off64_t;
 use nix::sys::uio::{preadv, IoVec};
 use vm_memory::{Bytes, VolatileSlice};
 
-use nydus_error::{last_error, rafs_decompress_failed};
-use nydus_utils::round_down_4k;
+use crate::err_decompress_failed;
+use nydus_utils::{last_error, round_down_4k};
 
 pub fn readv(fd: RawFd, bufs: &[VolatileSlice], offset: u64, max_size: usize) -> Result<usize> {
     if bufs.is_empty() {
@@ -64,7 +64,7 @@ pub fn copyv(src: &[u8], dst: &[VolatileSlice], offset: u64, max_size: usize) ->
             s.len()
         };
         s.write_slice(&src[offset..offset + len], 0)
-            .map_err(|_| rafs_decompress_failed!())?;
+            .map_err(|_| err_decompress_failed!())?;
         offset += len;
         size += len;
     }

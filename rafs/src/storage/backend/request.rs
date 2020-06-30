@@ -8,7 +8,7 @@ use std::io::Result;
 use reqwest::blocking::{Body, Client, Response};
 use reqwest::{self, Method, StatusCode};
 
-use nydus_error::{einval, epipe};
+use nydus_utils::{einval, epipe};
 
 pub use reqwest::header::HeaderMap;
 

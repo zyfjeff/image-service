@@ -11,7 +11,7 @@ use std::str::FromStr;
 mod lz4_standard;
 use self::lz4_standard::*;
 
-use nydus_error::einval;
+use nydus_utils::einval;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Algorithm {

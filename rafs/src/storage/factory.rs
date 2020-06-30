@@ -11,7 +11,7 @@ use serde::Deserialize;
 use crate::storage::backend::*;
 use crate::storage::cache::*;
 
-use nydus_error::einval;
+use nydus_utils::einval;
 
 // storage backend config
 #[derive(Default, Clone, Deserialize)]

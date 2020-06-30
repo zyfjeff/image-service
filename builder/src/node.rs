@@ -15,8 +15,8 @@ use std::str;
 use crypto::digest::Digest;
 use crypto::sha2::Sha256;
 
-use nydus_error::einval;
 use nydus_utils::div_round_up;
+use nydus_utils::einval;
 
 use rafs::metadata::layout::*;
 use rafs::metadata::*;

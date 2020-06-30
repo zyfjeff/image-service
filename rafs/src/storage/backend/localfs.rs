@@ -18,7 +18,7 @@ use crate::metadata::layout::OndiskBlobTableEntry;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 use crate::storage::utils::{readahead, readv};
 
-use nydus_error::{ebadf, einval, eio, last_error};
+use nydus_utils::{ebadf, einval, eio, last_error};
 use nydus_utils::{round_down_4k, round_up_4k};
 
 const BLOB_ACCESSED_SUFFIX: &str = ".access";

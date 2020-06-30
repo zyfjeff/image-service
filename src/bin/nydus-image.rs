@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 
 use nydus_builder::builder;
 use nydus_builder::node::Node;
-use nydus_error::einval;
+use nydus_utils::einval;
 use nydus_utils::log_level_to_verbosity;
 use rafs::storage::{backend, factory};
 

@@ -11,6 +11,5 @@ libc = "0.2"
 log = "0.4"
 rust-crypto = "0.2.36"
 xattr = "0.2.2"
-nydus-error = { path = "../error" }
 rafs = { path = "../rafs" }
 nydus-utils = { path = "../utils" }
