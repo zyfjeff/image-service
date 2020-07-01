@@ -206,7 +206,7 @@ impl GlobalIOStats {
         if self.files_enabled() {
             let counters = self.file_counters.read().unwrap();
             if counters.get(&ino).is_some() {
-                counters.get(&ino).unwrap().stats_fop_inc(fop.clone());
+                counters.get(&ino).unwrap().stats_fop_inc(fop);
                 counters.get(&ino).unwrap().stats_cumulative(fop, bsize);
             } else {
                 warn!("No iostats counter for file {}", ino);
