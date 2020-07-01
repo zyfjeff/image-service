@@ -39,7 +39,7 @@ pub struct Builder {
     readahead_nodes: BTreeMap<PathBuf, Option<Node>>,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
     inode_map: HashMap<u64, Node>,
-    /// mutilple layers build: upper source nodes
+    /// multiple layers build: upper source nodes
     additions: Vec<Node>,
     removals: HashMap<PathBuf, bool>,
     opaques: HashMap<PathBuf, bool>,
