@@ -6,6 +6,7 @@
 
 //! RAFS: a readonly FUSE file system designed for Cloud Native.
 
+use std::any::Any;
 use std::ffi::CStr;
 use std::io::Result;
 use std::sync::Arc;
@@ -167,6 +168,10 @@ impl BackendFileSystem for Rafs {
         self.ios.new_file_counter(root_inode.ino());
         let entry = root_inode.get_entry();
         Ok((entry, self.sb.get_max_ino()))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
