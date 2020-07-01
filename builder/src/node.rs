@@ -21,6 +21,7 @@ use nydus_utils::einval;
 use rafs::metadata::layout::*;
 use rafs::metadata::*;
 use rafs::storage::compress;
+use rafs::storage::utils::digest;
 
 pub type ChunkCache = HashMap<OndiskDigest, OndiskChunkInfo>;
 
@@ -159,7 +160,7 @@ impl Node {
             file.read_exact(&mut chunk_data)?;
 
             // calc chunk digest
-            chunk.block_id = OndiskDigest::from_buf(chunk_data.as_slice());
+            chunk.block_id = digest(chunk_data.as_slice());
             // calc inode digest
             inode_hash.update(&chunk.block_id.data());
 

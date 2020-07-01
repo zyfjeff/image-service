@@ -62,6 +62,10 @@ impl DummyCache {
 }
 
 impl RafsCache for DummyCache {
+    fn backend(&self) -> &Box<dyn BlobBackend + Sync + Send> {
+        &self.backend
+    }
+
     fn has(&self, _blk: Arc<dyn RafsChunkInfo>) -> bool {
         true
     }

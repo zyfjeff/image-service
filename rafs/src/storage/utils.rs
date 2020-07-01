@@ -5,12 +5,16 @@
 use std::io::{ErrorKind, Result};
 use std::os::unix::io::RawFd;
 use std::slice::from_raw_parts_mut;
+use std::sync::Arc;
 
 use libc::off64_t;
 use nix::sys::uio::{preadv, IoVec};
 use vm_memory::{Bytes, VolatileSlice};
 
 use nydus_utils::{last_error, round_down_4k};
+
+use crate::metadata::layout::OndiskDigest;
+use crate::metadata::RafsDigest;
 
 pub fn readv(fd: RawFd, bufs: &[VolatileSlice], offset: u64, max_size: usize) -> Result<usize> {
     if bufs.is_empty() {
@@ -94,4 +98,14 @@ pub fn alloc_buf(size: usize) -> Vec<u8> {
     let mut buf = Vec::with_capacity(size);
     unsafe { buf.set_len(size) };
     buf
+}
+
+/// Calculate hash of data
+pub fn digest(data: &[u8]) -> OndiskDigest {
+    OndiskDigest::from_buf(data)
+}
+
+/// Check hash of data matches provided one
+pub fn digest_check(data: &[u8], digest: Arc<dyn RafsDigest>) -> bool {
+    digest.data() == OndiskDigest::from_buf(data).data()
 }

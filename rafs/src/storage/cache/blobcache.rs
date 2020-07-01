@@ -13,13 +13,12 @@ use nix::sys::uio;
 extern crate spmc;
 use vm_memory::{VolatileMemory, VolatileSlice};
 
-use crate::metadata::layout::{OndiskBlobTableEntry, OndiskDigest};
-use crate::metadata::{RafsChunkInfo, RafsDigest, RafsSuperMeta};
+use crate::metadata::layout::OndiskBlobTableEntry;
+use crate::metadata::{RafsChunkInfo, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::RafsCache;
-use crate::storage::compress;
 use crate::storage::device::RafsBio;
-use crate::storage::utils::{alloc_buf, copyv, readv};
+use crate::storage::utils::{alloc_buf, copyv, digest_check, readv};
 
 use nydus_utils::{eio, enoent, enosys, last_error};
 
@@ -187,8 +186,7 @@ impl BlobCache {
 
             // try to recovery cache from disk
             if let Ok(sz) = cache_entry.read(buf) {
-                if sz == buf.len() && chunk.block_id().data() == OndiskDigest::from_buf(buf).data()
-                {
+                if sz == buf.len() && digest_check(buf, chunk.block_id()) {
                     trace!(
                         "recovery blob cache {} {}",
                         chunk.block_id().to_string(),
@@ -202,19 +200,14 @@ impl BlobCache {
             // Non-compressed source data is easy to handle
             if !chunk.is_compressed() {
                 // read from backend into the destination buffer
-                let sz = self.backend.read(blob_id, buf, c_offset)?;
-                cache_entry.cache(buf, sz);
-                return Ok(sz);
+                self.read_from_backend(blob_id, buf, &mut [], c_offset, false)?;
+                cache_entry.cache(buf, d_size);
+                return Ok(d_size);
             }
 
             let mut chunk_data = alloc_buf(c_size);
-            let sz = self
-                .backend
-                .read(blob_id, chunk_data.as_mut_slice(), c_offset)?;
-            if sz != c_size {
-                return Err(eio!("data read from backend is too small"));
-            }
-            let sz = compress::decompress(chunk_data.as_mut_slice(), buf)?;
+            let sz =
+                self.read_from_backend(blob_id, chunk_data.as_mut_slice(), buf, c_offset, true)?;
             if sz != d_size {
                 return Err(err_decompress_failed!());
             }
@@ -226,9 +219,7 @@ impl BlobCache {
         let mut dst_buf = alloc_buf(d_size as usize);
         // try to recovery cache from disk
         if let Ok(sz) = cache_entry.read(dst_buf.as_mut_slice()) {
-            if sz == d_size
-                && chunk.block_id().data() == OndiskDigest::from_buf(dst_buf.as_mut_slice()).data()
-            {
+            if sz == d_size && digest_check(dst_buf.as_mut_slice(), chunk.block_id()) {
                 trace!(
                     "recovery blob cache {} {}",
                     chunk.block_id().to_string(),
@@ -240,13 +231,22 @@ impl BlobCache {
         }
 
         let mut c_buf = alloc_buf(c_size);
-        let sz = self.backend.read(blob_id, c_buf.as_mut_slice(), c_offset)?;
         if !chunk.is_compressed() {
+            let sz =
+                self.read_from_backend(blob_id, c_buf.as_mut_slice(), &mut [], c_offset, false)?;
             cache_entry.cache(c_buf.as_mut_slice(), sz);
             return copyv(c_buf.as_mut_slice(), bufs, offset, bio.size);
         }
-
-        let sz = compress::decompress(c_buf.as_mut_slice(), dst_buf.as_mut_slice())?;
+        let sz = self.read_from_backend(
+            blob_id,
+            c_buf.as_mut_slice(),
+            dst_buf.as_mut_slice(),
+            c_offset,
+            true,
+        )?;
+        if sz != d_size {
+            return Err(err_decompress_failed!());
+        }
         cache_entry.cache(dst_buf.as_mut_slice(), sz);
         copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
     }
@@ -338,6 +338,10 @@ fn generate_merged_requests(bios: &mut [RafsBio], tx: &mut spmc::Sender<MergedBl
 }
 
 impl RafsCache for BlobCache {
+    fn backend(&self) -> &Box<dyn BlobBackend + Sync + Send> {
+        &self.backend
+    }
+
     /* whether has a block data */
     fn has(&self, blk: Arc<dyn RafsChunkInfo>) -> bool {
         // Doesn't expected poisoned lock here.
