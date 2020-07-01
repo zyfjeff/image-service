@@ -13,7 +13,7 @@ use libc::{c_int, sysconf, _SC_PAGESIZE};
 use nix::errno::Errno;
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::poll::{poll, PollFd, PollFlags};
-use nix::unistd::{close, getgid, getuid, read};
+use nix::unistd::{getgid, getuid, read};
 use nix::Error as nixError;
 
 use crate::error::*;
@@ -32,9 +32,8 @@ pub struct FuseSession {
     mountpoint: PathBuf,
     fsname: String,
     subtype: String,
-    dev: File,
+    file: Option<File>,
     bufsize: usize,
-    exited: bool,
 }
 
 impl FuseSession {
@@ -57,22 +56,18 @@ impl FuseSession {
             mountpoint: dest,
             fsname: fsname.to_owned(),
             subtype: subtype.to_owned(),
-            dev: file,
+            file: Some(file),
             bufsize: FUSE_KERN_BUF_SIZE * pagesize() + FUSE_HEADER_SIZE,
-            exited: false,
         })
     }
 
     /// destroy a fuse session
     pub fn umount(&mut self) -> io::Result<()> {
-        if self.exited {
+        if self.file.is_none() {
             return Ok(());
         }
-        // Safe because no one else is accessing mnt, and fd closing
-        // race is handled inside fuse_kern_umount
-        fuse_kern_umount(self.mountpoint.to_str().unwrap(), self.dev.as_raw_fd())?;
-        self.exited = true;
-        Ok(())
+
+        fuse_kern_umount(self.mountpoint.to_str().unwrap(), self.file.take().unwrap())
     }
 
     /// return the mountpoint
@@ -96,8 +91,12 @@ impl FuseSession {
     }
 
     /// create a new fuse message channel
-    pub fn new_channel(&self) -> FuseChannel {
-        FuseChannel::new(self.dev.as_raw_fd(), self.bufsize)
+    pub fn new_channel(&self) -> io::Result<FuseChannel> {
+        if let Some(file) = &self.file {
+            Ok(FuseChannel::new(file.as_raw_fd(), self.bufsize))
+        } else {
+            Err(einval!("invalid fuse session"))
+        }
     }
 }
 
@@ -189,11 +188,12 @@ fn fuse_kern_mount(
     }
 
     info!(
-        "mount source {} dest {} with fstype {} opts {}",
+        "mount source {} dest {} with fstype {} opts {} fd {}",
         fsname,
         mountpoint.to_str().unwrap(),
         fstype,
-        opts
+        opts,
+        file.as_raw_fd(),
     );
     mount(
         Some(fsname),
@@ -207,21 +207,23 @@ fn fuse_kern_mount(
 }
 
 /// Umount a fuse file system
-fn fuse_kern_umount(mountpoint: &str, fd: c_int) -> io::Result<()> {
-    let pfd = PollFd::new(fd, PollFlags::empty());
-    if poll(&mut [pfd], 0).is_err() {
+fn fuse_kern_umount(mountpoint: &str, file: File) -> io::Result<()> {
+    let mut fds = [PollFd::new(file.as_raw_fd(), PollFlags::empty())];
+    let res = poll(&mut fds, 0);
+
+    // Drop to close fuse session fd, otherwise synchronous umount
+    // can recurse into filesystem and deadlock.
+    drop(file);
+
+    if res.is_ok() {
         // POLLERR means the file system is already umounted,
         // or the connection was severed via /sys/fs/fuse/connections/NNN/abort
-        if let Some(event) = pfd.revents() {
+        if let Some(event) = fds[0].revents() {
             if event == PollFlags::POLLERR {
-                // always ensure fd is closed.
-                let _ = close(fd);
                 return Ok(());
             }
         }
     }
-    // Need to close fd, otherwise synchronous umount
-    // can recurse into filesystem and deadlock.
-    let _ = close(fd);
+
     umount2(mountpoint, MntFlags::MNT_DETACH).map_err(|e| eother!(e))
 }

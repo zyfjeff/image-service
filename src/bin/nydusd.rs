@@ -513,7 +513,7 @@ impl FuseServer {
     fn new(server: Arc<Server<Arc<Vfs>>>, se: &FuseSession) -> Result<FuseServer> {
         Ok(FuseServer {
             server,
-            ch: se.new_channel(),
+            ch: se.new_channel()?,
             buf: Vec::with_capacity(se.bufsize()),
         })
     }
