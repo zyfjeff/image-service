@@ -10,9 +10,13 @@ use crate::metadata::layout::OndiskBlobTableEntry;
 use crate::storage::utils::copyv;
 
 pub mod dummy;
+#[cfg(feature = "backend-localfs")]
 pub mod localfs;
+#[cfg(feature = "backend-oss")]
 pub mod oss;
+#[cfg(feature = "backend-registry")]
 pub mod registry;
+#[cfg(any(feature = "backend-oss", feature = "backend-registry"))]
 pub mod request;
 
 /// Rafs blob backend API

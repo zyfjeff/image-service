@@ -39,13 +39,16 @@ pub struct CacheConfig {
 
 pub fn new_backend(config: &BackendConfig) -> Result<Box<dyn BlobBackend + Send + Sync>> {
     match config.backend_type.as_str() {
+        #[cfg(feature = "backend-oss")]
         "oss" => {
             Ok(Box::new(oss::new(&config.backend_config)?) as Box<dyn BlobBackend + Send + Sync>)
         }
+        #[cfg(feature = "backend-registry")]
         "registry" => {
             Ok(Box::new(registry::new(&config.backend_config)?)
                 as Box<dyn BlobBackend + Send + Sync>)
         }
+        #[cfg(feature = "backend-localfs")]
         "localfs" => {
             Ok(Box::new(localfs::new(&config.backend_config)?)
                 as Box<dyn BlobBackend + Send + Sync>)
@@ -59,14 +62,17 @@ pub fn new_backend(config: &BackendConfig) -> Result<Box<dyn BlobBackend + Send 
 
 pub fn new_uploader(config: &BackendConfig) -> Result<Box<dyn BlobBackendUploader<Reader = File>>> {
     match config.backend_type.as_str() {
+        #[cfg(feature = "backend-oss")]
         "oss" => {
             let backend = oss::new(&config.backend_config)?;
             Ok(Box::new(backend) as Box<dyn BlobBackendUploader<Reader = File>>)
         }
+        #[cfg(feature = "backend-registry")]
         "registry" => {
             let backend = registry::new(&config.backend_config)?;
             Ok(Box::new(backend) as Box<dyn BlobBackendUploader<Reader = File>>)
         }
+        #[cfg(feature = "backend-localfs")]
         "localfs" => {
             let backend = localfs::new(&config.backend_config)?;
             Ok(Box::new(backend) as Box<dyn BlobBackendUploader<Reader = File>>)
