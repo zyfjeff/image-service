@@ -121,6 +121,8 @@ impl BlocCacheState {
 
 pub struct BlobCache {
     cache: Arc<RwLock<BlocCacheState>>,
+    blksize: u32,
+    chunk_validate: bool,
     pub backend: Arc<dyn BlobBackend + Sync + Send>,
 }
 
@@ -166,6 +168,7 @@ impl BlobCache {
         bio: &RafsBio,
         bufs: &[VolatileSlice],
         offset: u64,
+        chunk_validate: bool,
     ) -> Result<usize> {
         let mut cache_entry = entry.lock().unwrap();
         let chunk = &cache_entry.chunk;
@@ -200,14 +203,19 @@ impl BlobCache {
             // Non-compressed source data is easy to handle
             if !chunk.is_compressed() {
                 // read from backend into the destination buffer
-                self.read_from_backend(blob_id, chunk, dst_buf, &mut [])?;
+                self.read_from_backend(blob_id, chunk, dst_buf, &mut [], chunk_validate)?;
                 cache_entry.cache(dst_buf, d_size);
                 return Ok(d_size);
             }
 
             let mut src_buf = alloc_buf(c_size);
-            let dst_size =
-                self.read_from_backend(blob_id, chunk, src_buf.as_mut_slice(), dst_buf)?;
+            let dst_size = self.read_from_backend(
+                blob_id,
+                chunk,
+                src_buf.as_mut_slice(),
+                dst_buf,
+                chunk_validate,
+            )?;
             cache_entry.cache(dst_buf, dst_size);
             return Ok(d_size);
         }
@@ -228,8 +236,13 @@ impl BlobCache {
 
         if !chunk.is_compressed() {
             let mut dst_buf = alloc_buf(c_size);
-            let dst_size =
-                self.read_from_backend(blob_id, chunk, dst_buf.as_mut_slice(), &mut [])?;
+            let dst_size = self.read_from_backend(
+                blob_id,
+                chunk,
+                dst_buf.as_mut_slice(),
+                &mut [],
+                chunk_validate,
+            )?;
             cache_entry.cache(dst_buf.as_mut_slice(), dst_size);
             return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
         }
@@ -240,6 +253,7 @@ impl BlobCache {
             chunk,
             src_buf.as_mut_slice(),
             dst_buf.as_mut_slice(),
+            chunk_validate,
         )?;
         cache_entry.cache(dst_buf.as_mut_slice(), dst_size);
         copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
@@ -376,10 +390,10 @@ impl RafsCache for BlobCache {
         let chunk = &bio.chunkinfo;
 
         if let Some(entry) = self.get(chunk) {
-            self.entry_read(blob_id, &entry, bio, bufs, offset)
+            self.entry_read(blob_id, &entry, bio, bufs, offset, self.chunk_validate)
         } else {
             let entry = self.set(blob_id, chunk)?;
-            self.entry_read(blob_id, &entry, bio, bufs, offset)
+            self.entry_read(blob_id, &entry, bio, bufs, offset, self.chunk_validate)
         }
     }
 
@@ -485,13 +499,22 @@ pub fn new<S: std::hash::BuildHasher>(
                 )))
             }
         })?;
+    let chunk_validate: bool = config
+        .get("chunk_validate")
+        .map(|v| v == "true")
+        .unwrap_or(false);
 
     Ok(BlobCache {
         cache: Arc::new(RwLock::new(BlocCacheState {
             chunk_map: HashMap::new(),
             file_map: HashMap::new(),
             work_dir: String::from(work_dir),
+<<<<<<< HEAD
         })),
+=======
+        }),
+        chunk_validate,
+>>>>>>> blobcache: add chunk validate option
         backend,
     })
 }

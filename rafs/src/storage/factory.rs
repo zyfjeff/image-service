@@ -92,6 +92,9 @@ pub fn new_rw_layer(config: &Config) -> Result<Box<dyn RafsCache + Send + Sync>>
             Box::new(blobcache::new(&config.cache.cache_config, backend)?)
                 as Box<dyn RafsCache + Send + Sync>,
         ),
-        _ => Ok(Box::new(dummycache::new(backend)?) as Box<dyn RafsCache + Send + Sync>),
+        _ => Ok(
+            Box::new(dummycache::new(&config.cache.cache_config, backend)?)
+                as Box<dyn RafsCache + Send + Sync>,
+        ),
     }
 }

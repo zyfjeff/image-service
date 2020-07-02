@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::collections::HashMap;
 use std::io::Result;
 use std::sync::Arc;
 
@@ -15,6 +16,7 @@ use crate::storage::device::RafsBio;
 use crate::storage::utils::{alloc_buf, copyv};
 
 pub struct DummyCache {
+<<<<<<< HEAD
     pub backend: Arc<dyn BlobBackend + Sync + Send>,
 }
 
@@ -22,6 +24,10 @@ impl DummyCache {
     pub fn new(backend: Arc<dyn BlobBackend + Sync + Send>) -> DummyCache {
         DummyCache { backend }
     }
+=======
+    pub backend: Box<dyn BlobBackend + Sync + Send>,
+    chunk_validate: bool,
+>>>>>>> blobcache: add chunk validate option
 }
 
 impl RafsCache for DummyCache {
@@ -70,7 +76,13 @@ impl RafsCache for DummyCache {
                 // Reuse the destination buffer to received the compressed data.
                 let src_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), c_size) };
                 let mut dst_buf = alloc_buf(d_size);
-                self.read_from_backend(blob_id, chunk, src_buf, dst_buf.as_mut_slice())?;
+                self.read_from_backend(
+                    blob_id,
+                    chunk,
+                    src_buf,
+                    dst_buf.as_mut_slice(),
+                    self.chunk_validate,
+                )?;
                 return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
             } else {
                 // Allocate a buffer to received the compressed data without zeroing
@@ -84,6 +96,7 @@ impl RafsCache for DummyCache {
                         chunk,
                         src_buf.as_mut_slice(),
                         dst_buf,
+                        self.chunk_validate,
                     )?);
                 }
                 let mut dst_buf = alloc_buf(d_size);
@@ -92,6 +105,7 @@ impl RafsCache for DummyCache {
                     chunk,
                     src_buf.as_mut_slice(),
                     dst_buf.as_mut_slice(),
+                    self.chunk_validate,
                 )?;
                 return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
             }
@@ -104,6 +118,7 @@ impl RafsCache for DummyCache {
             chunk,
             src_buf.as_mut_slice(),
             dst_buf.as_mut_slice(),
+            self.chunk_validate,
         )?;
         copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
     }
@@ -121,6 +136,16 @@ impl RafsCache for DummyCache {
     fn release(&self) {}
 }
 
-pub fn new(backend: Arc<dyn BlobBackend + Sync + Send>) -> Result<DummyCache> {
-    Ok(DummyCache { backend })
+pub fn new<S: std::hash::BuildHasher>(
+    config: &HashMap<String, String, S>,
+    backend: Arc<dyn BlobBackend + Sync + Send>,
+) -> Result<DummyCache> {
+    let chunk_validate: bool = config
+        .get("chunk_validate")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    Ok(DummyCache {
+        backend,
+        chunk_validate,
+    })
 }
