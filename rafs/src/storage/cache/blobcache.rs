@@ -200,14 +200,13 @@ impl BlobCache {
             // Non-compressed source data is easy to handle
             if !chunk.is_compressed() {
                 // read from backend into the destination buffer
-                self.read_from_backend(blob_id, buf, &mut [], c_offset, false)?;
+                self.read_from_backend(blob_id, buf, &mut [], c_offset)?;
                 cache_entry.cache(buf, d_size);
                 return Ok(d_size);
             }
 
             let mut chunk_data = alloc_buf(c_size);
-            let sz =
-                self.read_from_backend(blob_id, chunk_data.as_mut_slice(), buf, c_offset, true)?;
+            let sz = self.read_from_backend(blob_id, chunk_data.as_mut_slice(), buf, c_offset)?;
             if sz != d_size {
                 return Err(err_decompress_failed!());
             }
@@ -232,8 +231,7 @@ impl BlobCache {
 
         let mut c_buf = alloc_buf(c_size);
         if !chunk.is_compressed() {
-            let sz =
-                self.read_from_backend(blob_id, c_buf.as_mut_slice(), &mut [], c_offset, false)?;
+            let sz = self.read_from_backend(blob_id, c_buf.as_mut_slice(), &mut [], c_offset)?;
             cache_entry.cache(c_buf.as_mut_slice(), sz);
             return copyv(c_buf.as_mut_slice(), bufs, offset, bio.size);
         }
@@ -242,7 +240,6 @@ impl BlobCache {
             c_buf.as_mut_slice(),
             dst_buf.as_mut_slice(),
             c_offset,
-            true,
         )?;
         if sz != d_size {
             return Err(err_decompress_failed!());
