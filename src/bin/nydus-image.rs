@@ -152,7 +152,7 @@ fn main() -> Result<()> {
                 .arg(
                     Arg::with_name("enable_readahead")
                         .long("enable_readahead")
-                        .help("enable blob readahead optimiztion (read file list from stdin)"),
+                        .help("enable blob readahead optimization (read file list from stdin)"),
                 ),
         )
         .arg(

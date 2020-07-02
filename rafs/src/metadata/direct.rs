@@ -513,7 +513,7 @@ impl RafsInode for OndiskInodeWrapper {
         let mut last = (inode.i_child_count - 1) as i32;
 
         // Binary search by child name.
-        // This implemention is more convenient and slightly outperforms than slice::binary_search.
+        // This implementation is more convenient and slightly outperforms than slice::binary_search.
         while first <= last {
             let pivot = first + ((last - first) >> 1);
 

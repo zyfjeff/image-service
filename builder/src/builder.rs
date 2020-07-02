@@ -129,16 +129,16 @@ impl Builder {
 
             for dir_idx in &dirs {
                 let dir_node = self.additions.get_mut(*dir_idx).unwrap();
-                let childs = fs::read_dir(&dir_node.path)?;
+                let children = fs::read_dir(&dir_node.path)?;
                 let dir_ino = dir_node.inode.i_ino;
                 let mut child_count: usize = 0;
 
                 dir_node.inode.i_child_index = (iter_ino + 1) as u32;
 
-                let mut childs = childs.collect::<Result<Vec<DirEntry>>>()?;
-                childs.sort_by_key(|entry| entry.file_name());
+                let mut children = children.collect::<Result<Vec<DirEntry>>>()?;
+                children.sort_by_key(|entry| entry.file_name());
 
-                for entry in childs {
+                for entry in children {
                     let path = entry.path();
                     let mut node = self.new_node(&path);
                     let real_ino = node.get_real_ino()?;
