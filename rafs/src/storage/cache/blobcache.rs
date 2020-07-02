@@ -61,7 +61,7 @@ impl BlobCacheEntry {
 
     fn write(&self, src: &[u8]) -> Result<usize> {
         let nr_write = uio::pwrite(self.fd, src, self.chunk.blob_decompress_offset() as i64)
-            .map_err(|e| last_error!(e))?;
+            .map_err(|_| last_error!())?;
 
         trace!(
             "write {}(offset={}) bytes to cache file",
