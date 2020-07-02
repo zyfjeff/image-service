@@ -61,7 +61,7 @@ impl RafsDevice {
         let mut count: usize = 0;
         for bio in desc.bi_vec.iter() {
             let mut f = RafsBioDevice::new(bio, &self)?;
-            let offset = bio.chunkinfo.blob_compress_offset() + bio.offset as u64;
+            let offset = bio.chunkinfo.compress_offset() + bio.offset as u64;
             count += r.read_to(&mut f, bio.size, offset)?;
         }
         Ok(count)

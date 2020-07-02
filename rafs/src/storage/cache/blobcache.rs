@@ -20,7 +20,7 @@ use crate::storage::cache::RafsCache;
 use crate::storage::device::RafsBio;
 use crate::storage::utils::{alloc_buf, copyv, digest_check, readv};
 
-use nydus_utils::{enoent, enosys, last_error};
+use nydus_utils::{eio, enoent, enosys, last_error};
 
 #[derive(Clone, Eq, PartialEq)]
 enum CacheStatus {
@@ -44,14 +44,26 @@ impl BlobCacheEntry {
     }
 
     fn read(&self, buf: &mut [u8]) -> Result<usize> {
-        let nr_read = uio::pread(self.fd, buf, self.chunk.blob_decompress_offset() as i64)
+        let nr_read = uio::pread(self.fd, buf, self.chunk.decompress_offset() as i64)
             .map_err(|e| last_error!(e))?;
 
         trace!(
             "read {}(offset={}) bytes from cache file",
             nr_read,
-            self.chunk.blob_decompress_offset()
+            self.chunk.decompress_offset()
         );
+
+        // TODO: log improvement
+        if nr_read == 0 {
+            return Err(eio!());
+        }
+        if nr_read != self.chunk.decompress_size() as usize {
+            return Err(eio!("can't read enough data from cache"));
+        }
+
+        if !digest_check(buf, self.chunk.block_id()) {
+            return Err(eio!());
+        }
 
         Ok(nr_read)
     }
@@ -61,13 +73,13 @@ impl BlobCacheEntry {
     }
 
     fn write(&self, src: &[u8]) -> Result<usize> {
-        let nr_write = uio::pwrite(self.fd, src, self.chunk.blob_decompress_offset() as i64)
+        let nr_write = uio::pwrite(self.fd, src, self.chunk.decompress_offset() as i64)
             .map_err(|_| last_error!())?;
 
         trace!(
             "write {}(offset={}) bytes to cache file",
             nr_write,
-            self.chunk.blob_decompress_offset()
+            self.chunk.decompress_offset()
         );
 
         Ok(nr_write)
@@ -179,7 +191,7 @@ impl BlobCache {
         // hit cache if cache ready
         if CacheStatus::Ready == cache_entry.status {
             trace!("hit blob cache {} {}", chunk.block_id().to_string(), c_size);
-            return cache_entry.readv(bufs, offset + chunk.blob_decompress_offset(), bio.size);
+            return cache_entry.readv(bufs, offset + chunk.decompress_offset(), bio.size);
         }
 
         // Optimize for the case where the first VolatileSlice covers the whole chunk.
@@ -188,16 +200,14 @@ impl BlobCache {
             let dst_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) };
 
             // try to recovery cache from disk
-            if let Ok(dst_size) = cache_entry.read(dst_buf) {
-                if dst_size == dst_buf.len() && digest_check(dst_buf, chunk.block_id()) {
-                    trace!(
-                        "recovery blob cache {} {}",
-                        chunk.block_id().to_string(),
-                        c_size
-                    );
-                    cache_entry.status = CacheStatus::Ready;
-                    return Ok(dst_size);
-                }
+            if cache_entry.read(dst_buf).is_ok() {
+                trace!(
+                    "recovery blob cache {} {}",
+                    chunk.block_id().to_string(),
+                    c_size
+                );
+                cache_entry.status = CacheStatus::Ready;
+                return Ok(d_size);
             }
 
             // Non-compressed source data is easy to handle
@@ -209,53 +219,51 @@ impl BlobCache {
             }
 
             let mut src_buf = alloc_buf(c_size);
-            let dst_size = self.read_from_backend(
+            self.read_from_backend(
                 blob_id,
                 chunk,
                 src_buf.as_mut_slice(),
                 dst_buf,
                 chunk_validate,
             )?;
-            cache_entry.cache(dst_buf, dst_size);
+            cache_entry.cache(dst_buf, d_size);
             return Ok(d_size);
         }
 
         // try to recovery cache from disk
         let mut dst_buf = alloc_buf(d_size);
-        if let Ok(dst_size) = cache_entry.read(dst_buf.as_mut_slice()) {
-            if dst_size == d_size && digest_check(dst_buf.as_mut_slice(), chunk.block_id()) {
-                trace!(
-                    "recovery blob cache {} {}",
-                    chunk.block_id().to_string(),
-                    c_size
-                );
-                cache_entry.status = CacheStatus::Ready;
-                return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
-            }
+        if cache_entry.read(dst_buf.as_mut_slice()).is_ok() {
+            trace!(
+                "recovery blob cache {} {}",
+                chunk.block_id().to_string(),
+                c_size
+            );
+            cache_entry.status = CacheStatus::Ready;
+            return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
         }
 
         if !chunk.is_compressed() {
             let mut dst_buf = alloc_buf(c_size);
-            let dst_size = self.read_from_backend(
+            self.read_from_backend(
                 blob_id,
                 chunk,
                 dst_buf.as_mut_slice(),
                 &mut [],
                 chunk_validate,
             )?;
-            cache_entry.cache(dst_buf.as_mut_slice(), dst_size);
+            cache_entry.cache(dst_buf.as_mut_slice(), d_size);
             return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
         }
 
         let mut src_buf = alloc_buf(c_size);
-        let dst_size = self.read_from_backend(
+        self.read_from_backend(
             blob_id,
             chunk,
             src_buf.as_mut_slice(),
             dst_buf.as_mut_slice(),
             chunk_validate,
         )?;
-        cache_entry.cache(dst_buf.as_mut_slice(), dst_size);
+        cache_entry.cache(dst_buf.as_mut_slice(), d_size);
         copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
     }
 }
@@ -583,9 +591,9 @@ mod blob_cache_tests {
         let mut chunk = OndiskChunkInfo::new();
         chunk.block_id = OndiskDigest::from_raw(&block_id);
         chunk.file_offset = 0;
-        chunk.blob_compress_offset = 0;
+        chunk.compress_offset = 0;
         chunk.compress_size = 100;
-        chunk.blob_decompress_offset = 0;
+        chunk.decompress_offset = 0;
         chunk.decompress_size = 100;
         let bio = RafsBio::new(
             Arc::new(chunk),

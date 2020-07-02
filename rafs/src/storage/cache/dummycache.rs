@@ -63,12 +63,9 @@ impl RafsCache for DummyCache {
 
         // TODO: chunk validation
         if !chunk.is_compressed() {
-            return self.backend.readv(
-                blob_id,
-                bufs,
-                offset + chunk.blob_compress_offset(),
-                bio.size,
-            );
+            return self
+                .backend
+                .readv(blob_id, bufs, offset + chunk.compress_offset(), bio.size);
         }
 
         if bufs.len() == 1 && offset == 0 {
@@ -130,7 +127,7 @@ impl RafsCache for DummyCache {
     }
 
     fn write(&self, blob_id: &str, blk: &Arc<dyn RafsChunkInfo>, buf: &[u8]) -> Result<usize> {
-        self.backend.write(blob_id, buf, blk.blob_compress_offset())
+        self.backend.write(blob_id, buf, blk.compress_offset())
     }
 
     fn release(&self) {}

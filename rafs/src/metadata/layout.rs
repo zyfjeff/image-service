@@ -676,9 +676,9 @@ pub struct OndiskChunkInfo {
     /// decompressed size
     pub decompress_size: u32,
     /// blob compressed offset
-    pub blob_compress_offset: u64,
+    pub compress_offset: u64,
     /// blob decompressed offset
-    pub blob_decompress_offset: u64,
+    pub decompress_offset: u64,
 
     /// file position of block, with fixed block length
     pub file_offset: u64,
@@ -720,9 +720,9 @@ impl RafsChunkInfo for OndiskChunkInfo {
     }
 
     impl_getter!(blob_index, blob_index, u32);
-    impl_getter!(blob_compress_offset, blob_compress_offset, u64);
+    impl_getter!(compress_offset, compress_offset, u64);
     impl_getter!(compress_size, compress_size, u32);
-    impl_getter!(blob_decompress_offset, blob_decompress_offset, u64);
+    impl_getter!(decompress_offset, decompress_offset, u64);
     impl_getter!(decompress_size, decompress_size, u32);
     impl_getter!(file_offset, file_offset, u64);
 }
@@ -737,8 +737,8 @@ impl Default for OndiskChunkInfo {
             file_offset: 0,
             compress_size: 0,
             decompress_size: 0,
-            blob_compress_offset: 0,
-            blob_decompress_offset: 0,
+            compress_offset: 0,
+            decompress_offset: 0,
             flags: 0,
             reserved: 0,
         }
@@ -749,11 +749,11 @@ impl fmt::Display for OndiskChunkInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "file_offset {}, blob_compress_offset {}, compress_size {}, blob_decompress_offset {}, decompress_size {}, block_id {}, is_compressed {}",
+            "file_offset {}, compress_offset {}, compress_size {}, decompress_offset {}, decompress_size {}, block_id {}, is_compressed {}",
             self.file_offset,
-            self.blob_compress_offset,
+            self.compress_offset,
             self.compress_size,
-            self.blob_decompress_offset,
+            self.decompress_offset,
             self.decompress_size,
             self.block_id.to_string(),
             self.is_compressed(),

@@ -396,9 +396,9 @@ pub trait RafsChunkInfo: Sync + Send {
     fn block_id(&self) -> Arc<dyn RafsDigest>;
     fn blob_index(&self) -> u32;
 
-    fn blob_compress_offset(&self) -> u64;
+    fn compress_offset(&self) -> u64;
     fn compress_size(&self) -> u32;
-    fn blob_decompress_offset(&self) -> u64;
+    fn decompress_offset(&self) -> u64;
     fn decompress_size(&self) -> u32;
 
     fn file_offset(&self) -> u64;

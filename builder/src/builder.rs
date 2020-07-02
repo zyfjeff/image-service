@@ -279,8 +279,8 @@ impl Builder {
         super_block.set_prefetch_table_size(prefetch_table_size as u32);
 
         // dump blob
-        let mut blob_compress_offset = 0u64;
-        let mut blob_decompress_offset = 0u64;
+        let mut compress_offset = 0u64;
+        let mut decompress_offset = 0u64;
         let mut blob_hash = Sha256::new();
         let mut chunk_cache: ChunkCache = HashMap::new();
         let mut inode_offset =
@@ -343,8 +343,8 @@ impl Builder {
             blob_readahead_size += readahead_node.dump_blob(
                 &mut self.f_blob,
                 &mut blob_hash,
-                &mut blob_compress_offset,
-                &mut blob_decompress_offset,
+                &mut compress_offset,
+                &mut decompress_offset,
                 &mut chunk_cache,
                 self.compressor,
             )? as u32;
@@ -364,8 +364,8 @@ impl Builder {
                 node.dump_blob(
                     &mut self.f_blob,
                     &mut blob_hash,
-                    &mut blob_compress_offset,
-                    &mut blob_decompress_offset,
+                    &mut compress_offset,
+                    &mut decompress_offset,
                     &mut chunk_cache,
                     self.compressor,
                 )?;

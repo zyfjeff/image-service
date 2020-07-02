@@ -126,8 +126,8 @@ impl Node {
         &mut self,
         f_blob: &mut Box<dyn RafsIoWrite>,
         blob_hash: &mut Sha256,
-        blob_compress_offset: &mut u64,
-        blob_decompress_offset: &mut u64,
+        compress_offset: &mut u64,
+        decompress_offset: &mut u64,
         chunk_cache: &mut ChunkCache,
         compressor: compress::Algorithm,
     ) -> Result<usize> {
@@ -184,15 +184,15 @@ impl Node {
             }
 
             chunk.file_offset = file_offset;
-            chunk.blob_compress_offset = *blob_compress_offset;
-            chunk.blob_decompress_offset = *blob_decompress_offset;
+            chunk.compress_offset = *compress_offset;
+            chunk.decompress_offset = *decompress_offset;
             chunk.compress_size = compressed_size as u32;
             chunk.decompress_size = chunk_size as u32;
             blob_size += compressed_size;
 
             // move cursor to offset of next chunk
-            *blob_compress_offset += compressed_size as u64;
-            *blob_decompress_offset += chunk_size as u64;
+            *compress_offset += compressed_size as u64;
+            *decompress_offset += chunk_size as u64;
 
             // calc blob hash
             blob_hash.update(&compressed);

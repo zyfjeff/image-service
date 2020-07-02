@@ -412,8 +412,8 @@ pub struct CachedChunkInfo {
     // position of the block within the file
     c_file_offset: u64,
     // offset of the block within the blob
-    c_blob_compress_offset: u64,
-    c_blob_decompress_offset: u64,
+    c_compress_offset: u64,
+    c_decompress_offset: u64,
     // size of the block, compressed
     c_compr_size: u32,
     c_decompress_size: u32,
@@ -440,8 +440,8 @@ impl CachedChunkInfo {
     fn copy_from_ondisk(&mut self, chunk: &OndiskChunkInfo) {
         self.c_block_id = Arc::new(chunk.block_id);
         self.c_blob_index = chunk.blob_index();
-        self.c_blob_compress_offset = chunk.blob_compress_offset();
-        self.c_blob_decompress_offset = chunk.blob_decompress_offset();
+        self.c_compress_offset = chunk.compress_offset();
+        self.c_decompress_offset = chunk.decompress_offset();
         self.c_decompress_size = chunk.decompress_size();
         self.c_file_offset = chunk.file_offset();
         self.c_compr_size = chunk.compress_size();
@@ -460,9 +460,9 @@ impl RafsChunkInfo for CachedChunkInfo {
     }
 
     impl_getter!(blob_index, c_blob_index, u32);
-    impl_getter!(blob_compress_offset, c_blob_compress_offset, u64);
+    impl_getter!(compress_offset, c_compress_offset, u64);
     impl_getter!(compress_size, c_compr_size, u32);
-    impl_getter!(blob_decompress_offset, c_blob_decompress_offset, u64);
+    impl_getter!(decompress_offset, c_decompress_offset, u64);
     impl_getter!(decompress_size, c_decompress_size, u32);
     impl_getter!(file_offset, c_file_offset, u64);
 
@@ -520,8 +520,8 @@ mod cached_tests {
         ondisk_inode.i_mode = libc::S_IFREG;
         let mut chunk = OndiskChunkInfo::new();
         chunk.decompress_size = 8192;
-        chunk.blob_decompress_offset = 0;
-        chunk.blob_compress_offset = 0;
+        chunk.decompress_offset = 0;
+        chunk.compress_offset = 0;
         chunk.compress_size = 4096;
         let inode = OndiskInodeWrapper {
             name: file_name,
@@ -546,8 +546,8 @@ mod cached_tests {
         let cached_chunk = cached_inode.get_chunk_info(0).unwrap();
         assert_eq!(cached_chunk.compress_size(), 4096);
         assert_eq!(cached_chunk.decompress_size(), 8192);
-        assert_eq!(cached_chunk.blob_compress_offset(), 0);
-        assert_eq!(cached_chunk.blob_decompress_offset(), 0);
+        assert_eq!(cached_chunk.compress_offset(), 0);
+        assert_eq!(cached_chunk.decompress_offset(), 0);
         let c_xattr = cached_inode.get_xattrs().unwrap();
         for k in c_xattr.iter() {
             let k = std::str::from_utf8(k.as_slice()).unwrap();
@@ -627,10 +627,10 @@ mod cached_tests {
         for i in 0..ondisk_inode.i_child_count {
             let mut chunk = OndiskChunkInfo::new();
             chunk.decompress_size = cmp::min(1024 * 1024, size as u32);
-            chunk.blob_decompress_offset = (i * 1024 * 1024) as u64;
+            chunk.decompress_offset = (i * 1024 * 1024) as u64;
             chunk.compress_size = chunk.decompress_size / 2;
-            chunk.blob_compress_offset = ((i * 1024 * 1024) / 2) as u64;
-            chunk.file_offset = chunk.blob_decompress_offset;
+            chunk.compress_offset = ((i * 1024 * 1024) / 2) as u64;
+            chunk.file_offset = chunk.decompress_offset;
             chunk.store(&mut writer).unwrap();
             size -= chunk.decompress_size as u64;
         }

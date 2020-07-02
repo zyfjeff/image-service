@@ -57,7 +57,7 @@ pub trait RafsCache {
         mut dst_buf: &'a mut [u8],
         chunk_validate: bool,
     ) -> Result<usize> {
-        let c_offset = chunk.blob_compress_offset();
+        let c_offset = chunk.compress_offset();
         let d_size = chunk.decompress_size() as usize;
 
         self.backend().read(blob_id, src_buf, c_offset)?;
