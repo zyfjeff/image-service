@@ -51,20 +51,22 @@ pub trait RafsCache {
     fn read_from_backend(
         &self,
         blob_id: &str,
+        chunk: &Arc<dyn RafsChunkInfo>,
         src_buf: &mut [u8],
         dst_buf: &mut [u8],
-        offset: u64,
-        dst_size: usize,
     ) -> Result<usize> {
-        self.backend().read(blob_id, src_buf, offset)?;
+        let c_offset = chunk.blob_compress_offset();
+        let d_size = chunk.decompress_size() as usize;
+
+        self.backend().read(blob_id, src_buf, c_offset)?;
         if !dst_buf.is_empty() {
             compress::decompress(src_buf, dst_buf)?;
-            if dst_buf.len() != dst_size {
+            if dst_buf.len() != d_size {
                 return Err(err_decompress_failed!());
             }
             return Ok(dst_buf.len());
         }
-        if src_buf.len() != dst_size {
+        if src_buf.len() != d_size {
             return Err(eio!("invalid backend data"));
         }
         Ok(src_buf.len())

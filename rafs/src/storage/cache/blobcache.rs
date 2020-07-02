@@ -169,7 +169,7 @@ impl BlobCache {
     ) -> Result<usize> {
         let mut cache_entry = entry.lock().unwrap();
         let chunk = &cache_entry.chunk;
-        let c_offset = chunk.blob_compress_offset();
+
         let c_size = chunk.compress_size() as usize;
         let d_size = chunk.decompress_size() as usize;
 
@@ -200,14 +200,14 @@ impl BlobCache {
             // Non-compressed source data is easy to handle
             if !chunk.is_compressed() {
                 // read from backend into the destination buffer
-                self.read_from_backend(blob_id, dst_buf, &mut [], c_offset, d_size)?;
+                self.read_from_backend(blob_id, chunk, dst_buf, &mut [])?;
                 cache_entry.cache(dst_buf, d_size);
                 return Ok(d_size);
             }
 
             let mut src_buf = alloc_buf(c_size);
             let dst_size =
-                self.read_from_backend(blob_id, src_buf.as_mut_slice(), dst_buf, c_offset, d_size)?;
+                self.read_from_backend(blob_id, chunk, src_buf.as_mut_slice(), dst_buf)?;
             cache_entry.cache(dst_buf, dst_size);
             return Ok(d_size);
         }
@@ -229,7 +229,7 @@ impl BlobCache {
         if !chunk.is_compressed() {
             let mut dst_buf = alloc_buf(c_size);
             let dst_size =
-                self.read_from_backend(blob_id, dst_buf.as_mut_slice(), &mut [], c_offset, d_size)?;
+                self.read_from_backend(blob_id, chunk, dst_buf.as_mut_slice(), &mut [])?;
             cache_entry.cache(dst_buf.as_mut_slice(), dst_size);
             return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
         }
@@ -237,10 +237,9 @@ impl BlobCache {
         let mut src_buf = alloc_buf(c_size);
         let dst_size = self.read_from_backend(
             blob_id,
+            chunk,
             src_buf.as_mut_slice(),
             dst_buf.as_mut_slice(),
-            c_offset,
-            d_size,
         )?;
         cache_entry.cache(dst_buf.as_mut_slice(), dst_size);
         copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
