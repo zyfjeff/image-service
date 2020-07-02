@@ -20,7 +20,7 @@ use crate::storage::cache::RafsCache;
 use crate::storage::device::RafsBio;
 use crate::storage::utils::{alloc_buf, copyv, digest_check, readv};
 
-use nydus_utils::{eio, enoent, enosys, last_error};
+use nydus_utils::{enoent, enosys, last_error};
 
 #[derive(Clone, Eq, PartialEq)]
 enum CacheStatus {
@@ -182,43 +182,40 @@ impl BlobCache {
         // Optimize for the case where the first VolatileSlice covers the whole chunk.
         if bufs.len() == 1 && bufs[0].len() >= d_size as usize && offset == 0 {
             // Reuse the destination data buffer.
-            let buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) };
+            let dst_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) };
 
             // try to recovery cache from disk
-            if let Ok(sz) = cache_entry.read(buf) {
-                if sz == buf.len() && digest_check(buf, chunk.block_id()) {
+            if let Ok(dst_size) = cache_entry.read(dst_buf) {
+                if dst_size == dst_buf.len() && digest_check(dst_buf, chunk.block_id()) {
                     trace!(
                         "recovery blob cache {} {}",
                         chunk.block_id().to_string(),
                         c_size
                     );
                     cache_entry.status = CacheStatus::Ready;
-                    return Ok(sz);
+                    return Ok(dst_size);
                 }
             }
 
             // Non-compressed source data is easy to handle
             if !chunk.is_compressed() {
                 // read from backend into the destination buffer
-                self.read_from_backend(blob_id, buf, &mut [], c_offset)?;
-                cache_entry.cache(buf, d_size);
+                self.read_from_backend(blob_id, dst_buf, &mut [], c_offset, d_size)?;
+                cache_entry.cache(dst_buf, d_size);
                 return Ok(d_size);
             }
 
-            let mut chunk_data = alloc_buf(c_size);
-            let sz = self.read_from_backend(blob_id, chunk_data.as_mut_slice(), buf, c_offset)?;
-            if sz != d_size {
-                return Err(err_decompress_failed!());
-            }
-
-            cache_entry.cache(buf, sz);
+            let mut src_buf = alloc_buf(c_size);
+            let dst_size =
+                self.read_from_backend(blob_id, src_buf.as_mut_slice(), dst_buf, c_offset, d_size)?;
+            cache_entry.cache(dst_buf, dst_size);
             return Ok(d_size);
         }
 
-        let mut dst_buf = alloc_buf(d_size as usize);
         // try to recovery cache from disk
-        if let Ok(sz) = cache_entry.read(dst_buf.as_mut_slice()) {
-            if sz == d_size && digest_check(dst_buf.as_mut_slice(), chunk.block_id()) {
+        let mut dst_buf = alloc_buf(d_size);
+        if let Ok(dst_size) = cache_entry.read(dst_buf.as_mut_slice()) {
+            if dst_size == d_size && digest_check(dst_buf.as_mut_slice(), chunk.block_id()) {
                 trace!(
                     "recovery blob cache {} {}",
                     chunk.block_id().to_string(),
@@ -229,22 +226,23 @@ impl BlobCache {
             }
         }
 
-        let mut c_buf = alloc_buf(c_size);
         if !chunk.is_compressed() {
-            let sz = self.read_from_backend(blob_id, c_buf.as_mut_slice(), &mut [], c_offset)?;
-            cache_entry.cache(c_buf.as_mut_slice(), sz);
-            return copyv(c_buf.as_mut_slice(), bufs, offset, bio.size);
+            let mut dst_buf = alloc_buf(c_size);
+            let dst_size =
+                self.read_from_backend(blob_id, dst_buf.as_mut_slice(), &mut [], c_offset, d_size)?;
+            cache_entry.cache(dst_buf.as_mut_slice(), dst_size);
+            return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
         }
-        let sz = self.read_from_backend(
+
+        let mut src_buf = alloc_buf(c_size);
+        let dst_size = self.read_from_backend(
             blob_id,
-            c_buf.as_mut_slice(),
+            src_buf.as_mut_slice(),
             dst_buf.as_mut_slice(),
             c_offset,
+            d_size,
         )?;
-        if sz != d_size {
-            return Err(err_decompress_failed!());
-        }
-        cache_entry.cache(dst_buf.as_mut_slice(), sz);
+        cache_entry.cache(dst_buf.as_mut_slice(), dst_size);
         copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
     }
 }

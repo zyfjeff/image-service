@@ -13,6 +13,8 @@ use crate::storage::backend::BlobBackend;
 use crate::storage::compress;
 use crate::storage::device::RafsBio;
 
+use nydus_utils::eio;
+
 pub mod blobcache;
 pub mod dummycache;
 
@@ -49,14 +51,22 @@ pub trait RafsCache {
     fn read_from_backend(
         &self,
         blob_id: &str,
-        compressed: &mut [u8],
-        decompressed: &mut [u8],
+        src_buf: &mut [u8],
+        dst_buf: &mut [u8],
         offset: u64,
+        dst_size: usize,
     ) -> Result<usize> {
-        self.backend().read(blob_id, compressed, offset)?;
-        if !decompressed.is_empty() {
-            compress::decompress(compressed, decompressed)?;
+        self.backend().read(blob_id, src_buf, offset)?;
+        if !dst_buf.is_empty() {
+            compress::decompress(src_buf, dst_buf)?;
+            if dst_buf.len() != dst_size {
+                return Err(err_decompress_failed!());
+            }
+            return Ok(dst_buf.len());
         }
-        Ok(decompressed.len())
+        if src_buf.len() != dst_size {
+            return Err(eio!("invalid backend data"));
+        }
+        Ok(src_buf.len())
     }
 }

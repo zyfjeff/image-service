@@ -71,7 +71,7 @@ impl RafsCache for DummyCache {
                 // Reuse the destination buffer to received the compressed data.
                 let src_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), c_size) };
                 let mut dst_buf = alloc_buf(d_size);
-                self.read_from_backend(blob_id, src_buf, dst_buf.as_mut_slice(), c_offset)?;
+                self.read_from_backend(blob_id, src_buf, dst_buf.as_mut_slice(), c_offset, d_size)?;
                 return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
             } else {
                 // Allocate a buffer to received the compressed data without zeroing
@@ -85,6 +85,7 @@ impl RafsCache for DummyCache {
                         src_buf.as_mut_slice(),
                         dst_buf,
                         c_offset,
+                        d_size,
                     )?);
                 }
                 let mut dst_buf = alloc_buf(d_size);
@@ -93,6 +94,7 @@ impl RafsCache for DummyCache {
                     src_buf.as_mut_slice(),
                     dst_buf.as_mut_slice(),
                     c_offset,
+                    d_size,
                 )?;
                 return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
             }
@@ -105,6 +107,7 @@ impl RafsCache for DummyCache {
             src_buf.as_mut_slice(),
             dst_buf.as_mut_slice(),
             c_offset,
+            d_size,
         )?;
         copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
     }
