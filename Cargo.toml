@@ -7,7 +7,6 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dev_dependencies]
-mktemp = "0.4.0"
 rust-crypto = "0.2.36"
 
 [dependencies]
@@ -19,7 +18,6 @@ vmm-sys-util = ">=0.3.1"
 clap = "2.33"
 config = "0.10"
 stderrlog = "0.4"
-mktemp = "0.4.0"
 serde_json = "1.0.51"
 xattr = "0.2.2"
 uuid = { version = "0.8", features = ["serde", "v4"] }

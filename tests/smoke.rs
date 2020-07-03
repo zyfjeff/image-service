@@ -2,14 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use mktemp::Temp;
 use std::io::Result;
+
+use vmm_sys_util::tempdir::TempDir;
 
 mod builder;
 mod nydusd;
 
+use nydus_utils::eother;
+
 fn test(enable_compress: bool, enable_cache: bool, rafs_mode: &str) -> Result<()> {
-    let work_dir = Temp::new_dir()?;
+    let tmp_dir = TempDir::new().map_err(|e| eother!(e))?;
+    let work_dir = tmp_dir.as_path().to_path_buf();
 
     let mut builder = builder::new(&work_dir);
 

@@ -12,7 +12,7 @@ extern crate log;
 const BLOB_ID_MAXIMUM_LENGTH: usize = 1024;
 
 use clap::{App, Arg, SubCommand};
-use mktemp::Temp;
+use vmm_sys_util::tempfile::TempFile;
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -199,12 +199,12 @@ fn main() -> Result<()> {
 
         let compressor = matches.value_of("compressor").unwrap_or_default().parse()?;
 
-        let temp_blob_file = Temp::new_file().unwrap();
+        let temp_blob_file = TempFile::new().unwrap();
 
         let real_blob_path = if let Some(blob_path) = blob_path {
             blob_path
         } else {
-            temp_blob_file.to_str().unwrap()
+            temp_blob_file.as_path().to_str().unwrap()
         };
 
         let mut parent_bootstrap = String::new();
