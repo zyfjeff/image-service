@@ -61,7 +61,7 @@ impl RafsCache for DummyCache {
         let c_size = chunk.compress_size() as usize;
         let d_size = chunk.decompress_size() as usize;
 
-        // TODO: chunk validation
+        // TODO: digest validation
         if !chunk.is_compressed() {
             return self
                 .backend

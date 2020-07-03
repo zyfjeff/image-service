@@ -17,7 +17,7 @@ use sha2::digest::Digest;
 use sha2::Sha256;
 
 use rafs::metadata::layout::*;
-use rafs::metadata::RafsStore;
+use rafs::metadata::*;
 use rafs::storage::compress;
 use rafs::{RafsIoRead, RafsIoWrite};
 
@@ -394,11 +394,43 @@ impl Builder {
         }
         blob_table.store(&mut self.f_bootstrap)?;
 
-        for node in &mut self.additions {
+        for node in &self.additions {
+            let mut node = node.clone();
+            if node.is_dir()? {
+                // TODO: add digest cache
+                node.inode.i_digest = self.digest_node(&node)?;
+            }
             node.dump_bootstrap(&mut self.f_bootstrap, 0)?;
         }
 
         Ok(())
+    }
+
+    fn digest_node(&self, node: &Node) -> Result<OndiskDigest> {
+        if !node.is_dir()? {
+            return Ok(node.inode.i_digest);
+        }
+
+        let mut inode_hash = Sha256::new();
+        let mut inode_digest = OndiskDigest::new();
+        let child_index = node.inode.i_child_index;
+        let child_count = node.inode.i_child_count;
+
+        for idx in child_index..child_index + child_count {
+            let child = &self.additions[(idx - 1) as usize];
+            let child_digest = if child.is_dir()? {
+                self.digest_node(child)?
+            } else {
+                child.inode.i_digest
+            };
+            inode_hash.input(&child_digest.data());
+        }
+
+        let mut inode_hash_buf = [0; RAFS_SHA256_LENGTH];
+        inode_hash.result(&mut inode_hash_buf);
+        inode_digest.data_mut().clone_from_slice(&inode_hash_buf);
+
+        Ok(inode_digest)
     }
 
     pub fn build(&mut self) -> Result<String> {

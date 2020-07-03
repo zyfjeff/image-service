@@ -763,9 +763,18 @@ impl fmt::Display for OndiskChunkInfo {
 
 /// On disk Rafs SHA256 digest data.
 #[repr(C)]
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct OndiskDigest {
     data: [u8; RAFS_SHA256_LENGTH],
+}
+
+impl fmt::Debug for OndiskDigest {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for c in &self.data {
+            write!(f, "{:02x}", c)?;
+        }
+        Ok(())
+    }
 }
 
 impl OndiskDigest {

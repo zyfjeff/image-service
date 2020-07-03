@@ -19,6 +19,7 @@ use nydus_utils::div_round_up;
 use nydus_utils::einval;
 
 use rafs::metadata::layout::*;
+use rafs::metadata::RafsDigest;
 use rafs::metadata::*;
 use rafs::storage::compress;
 use rafs::storage::utils::digest;
@@ -50,7 +51,7 @@ impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "{} {:?}: index {} ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} i_nlink {} has_xattr {}",
+            "{} {:?}: index {} ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} i_nlink {} has_xattr {} i_digest {:?}",
             self.get_type().unwrap(),
             self.rootfs(),
             self.index,
@@ -61,6 +62,7 @@ impl fmt::Display for Node {
             self.inode.i_symlink_size,
             self.inode.i_nlink,
             self.inode.has_xattr(),
+            self.inode.i_digest,
         )
     }
 }

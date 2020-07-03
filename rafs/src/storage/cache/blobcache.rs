@@ -62,6 +62,7 @@ impl BlobCacheEntry {
             return Err(einval!());
         }
 
+        // TODO: why hit here in Smoke test?
         if !digest_check(buf, self.chunk.block_id()) {
             return Err(einval!());
         }
@@ -198,6 +199,7 @@ impl BlobCache {
         // hit cache if cache ready
         if CacheStatus::Ready == cache_entry.status {
             trace!("hit blob cache {} {}", chunk.block_id().to_string(), c_size);
+            // TODO: digest validation
             return cache_entry.readv(bufs, offset + chunk.decompress_offset(), bio.size);
         }
 
