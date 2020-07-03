@@ -11,7 +11,8 @@ use std::io::Result;
 use std::mem::size_of;
 use std::path::PathBuf;
 
-use crypto::sha2::Sha256;
+use sha2::digest::Digest;
+use sha2::Sha256;
 
 use rafs::metadata::layout::*;
 use rafs::storage::compress;
@@ -289,8 +290,7 @@ impl Builder {
 
         // set blob id, blob hash as default
         if self.blob_id == "" {
-            let blob_hash = OndiskDigest::from_digest(&mut blob_hash);
-            self.blob_id = blob_hash.to_string();
+            self.blob_id = OndiskDigest::from_digest(blob_hash).to_string();
         }
         blob_table.add(
             self.blob_id.clone(),

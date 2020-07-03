@@ -10,8 +10,8 @@ use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crypto::digest::Digest;
-use crypto::sha2::Sha256;
+use sha2::digest::Digest;
+use sha2::Sha256;
 
 use nydus_utils::einval;
 use rafs::metadata::RafsSuper;
@@ -41,8 +41,8 @@ pub fn exec(cmd: &str) -> Result<String> {
 
 pub fn hash(data: &[u8]) -> String {
     let mut hash = Sha256::new();
-    hash.input(data);
-    hash.result_str()
+    hash.update(data);
+    String::from_utf8_lossy(&hash.finalize()).to_string()
 }
 
 #[allow(dead_code)]

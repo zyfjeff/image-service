@@ -7,7 +7,8 @@ use std::fs::File;
 use std::io::Result;
 use std::time::SystemTime;
 
-use crypto::{hmac::Hmac, mac::Mac, sha1::Sha1};
+use hmac::{Hmac, Mac, NewMac};
+use sha1::Sha1;
 use url::Url;
 
 use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, Request};
@@ -17,6 +18,8 @@ use nydus_utils::{einval, epipe};
 
 const HEADER_DATE: &str = "Date";
 const HEADER_AUTHORIZATION: &str = "Authorization";
+
+type HmacSha1 = Hmac<Sha1>;
 
 #[derive(Debug)]
 pub struct OSS {
@@ -63,9 +66,10 @@ impl OSS {
             data.insert(4, canonicalized_oss_headers.as_str());
         }
         let data = data.join("\n");
-        let mut mac = Hmac::new(Sha1::new(), self.access_key_secret.as_bytes());
-        mac.input(data.as_bytes());
-        let signature = base64::encode(mac.result().code());
+        let mut mac =
+            HmacSha1::new_varkey(self.access_key_secret.as_bytes()).map_err(|e| einval!(e))?;
+        mac.update(data.as_bytes());
+        let signature = base64::encode(&mac.finalize().into_bytes());
 
         let authorization = format!("OSS {}:{}", self.access_key_id, signature);
 

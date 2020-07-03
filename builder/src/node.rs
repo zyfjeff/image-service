@@ -12,8 +12,8 @@ use std::os::linux::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::str;
 
-use crypto::digest::Digest;
-use crypto::sha2::Sha256;
+use sha2::digest::Digest;
+use sha2::Sha256;
 
 use nydus_utils::div_round_up;
 use nydus_utils::einval;
@@ -140,7 +140,6 @@ impl Node {
 
         let file_size = self.inode.i_size;
         let mut blob_size = 0usize;
-        let mut inode_digest = OndiskDigest::new();
         let mut inode_hash = Sha256::new();
         let mut file = File::open(&self.path)?;
 
@@ -162,7 +161,7 @@ impl Node {
             // calc chunk digest
             chunk.block_id = OndiskDigest::from_buf(chunk_data.as_slice());
             // calc inode digest
-            inode_hash.input(&chunk.block_id.data());
+            inode_hash.update(&chunk.block_id.data());
 
             if let Some(cached_chunk) = chunk_cache.get(&chunk.block_id) {
                 chunk.clone_from(&cached_chunk);
@@ -194,7 +193,7 @@ impl Node {
             *blob_decompress_offset += chunk_size as u64;
 
             // calc blob hash
-            blob_hash.input(&compressed);
+            blob_hash.update(&compressed);
 
             // dump compressed chunk data to blob
             f_blob.write_all(&compressed)?;
@@ -207,11 +206,7 @@ impl Node {
         }
 
         // finish calc inode digest
-        let mut inode_hash_buf = [0; RAFS_SHA256_LENGTH];
-        inode_hash.result(&mut inode_hash_buf);
-        inode_digest.data_mut().clone_from_slice(&inode_hash_buf);
-
-        self.inode.i_digest = inode_digest;
+        self.inode.i_digest = OndiskDigest::from_digest(inode_hash);
 
         Ok(blob_size)
     }

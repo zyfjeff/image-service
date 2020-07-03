@@ -660,22 +660,16 @@ impl OndiskDigest {
         }
     }
 
-    pub fn from_digest(sha: &mut Sha256) -> Self {
-        let mut hash = [0; RAFS_SHA256_LENGTH];
-        sha.result(&mut hash);
+    pub fn from_digest(sha: Sha256) -> Self {
         let mut digest = OndiskDigest::new();
-        digest.data.clone_from_slice(&hash);
+        digest.data.clone_from_slice(&sha.finalize());
         digest
     }
 
     pub fn from_buf(buf: &[u8]) -> Self {
         let mut hash = Sha256::new();
-        let mut hash_buf = [0; RAFS_SHA256_LENGTH];
-        hash.input(buf);
-        hash.result(&mut hash_buf);
-        let mut digest = OndiskDigest::new();
-        digest.data.clone_from_slice(&hash_buf);
-        digest
+        hash.update(buf);
+        Self::from_digest(hash)
     }
 
     pub fn from_raw(data: &[u8; RAFS_SHA256_LENGTH]) -> Self {

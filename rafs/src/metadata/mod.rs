@@ -13,10 +13,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crypto::digest::Digest;
-use crypto::sha2::Sha256;
 use fuse_rs::abi::linux_abi::Attr;
 use fuse_rs::api::filesystem::Entry;
+use sha2::digest::Digest;
+use sha2::Sha256;
 
 use self::direct::DirectMapping;
 use self::layout::*;
@@ -336,9 +336,8 @@ pub trait RafsDigest {
     /// Compute SHA256 message digest in the `buf`.
     fn digest(&mut self, buf: &[u8]) {
         let mut hash = Sha256::new();
-        let data = self.data_mut();
-        hash.input(buf);
-        hash.result(data);
+        hash.update(buf);
+        self.data_mut().clone_from_slice(&hash.finalize());
     }
 
     /// Get a reference to the underlying data.
