@@ -11,6 +11,7 @@ use std::thread;
 
 use nix::sys::uio;
 extern crate spmc;
+use nix::unistd::lseek;
 use vm_memory::{VolatileMemory, VolatileSlice};
 
 use crate::metadata::layout::OndiskBlobTableEntry;
@@ -20,7 +21,7 @@ use crate::storage::cache::RafsCache;
 use crate::storage::device::RafsBio;
 use crate::storage::utils::{alloc_buf, copyv, digest_check, readv};
 
-use nydus_utils::{eio, enoent, enosys, last_error};
+use nydus_utils::{einval, enoent, enosys, last_error};
 
 #[derive(Clone, Eq, PartialEq)]
 enum CacheStatus {
@@ -44,26 +45,32 @@ impl BlobCacheEntry {
     }
 
     fn read(&self, buf: &mut [u8]) -> Result<usize> {
-        let nr_read = uio::pread(self.fd, buf, self.chunk.decompress_offset() as i64)
-            .map_err(|e| last_error!(e))?;
+        let d_offset = self.chunk.decompress_offset() as i64;
+        let d_size = self.chunk.decompress_size();
+
+        let data_offset =
+            lseek(self.fd, d_offset, nix::unistd::Whence::SeekData).map_err(|_| last_error!())?;
+
+        // If we have written cache for the chunk,
+        // the seek data offset should be equal to d_offset
+        if data_offset != d_offset {
+            return Err(einval!());
+        }
+
+        let nr_read = uio::pread(self.fd, buf, d_offset).map_err(|_| last_error!())?;
+        if nr_read == 0 || nr_read != d_size as usize {
+            return Err(einval!());
+        }
+
+        if !digest_check(buf, self.chunk.block_id()) {
+            return Err(einval!());
+        }
 
         trace!(
             "read {}(offset={}) bytes from cache file",
             nr_read,
-            self.chunk.decompress_offset()
+            d_offset
         );
-
-        // TODO: log improvement
-        if nr_read == 0 {
-            return Err(eio!());
-        }
-        if nr_read != self.chunk.decompress_size() as usize {
-            return Err(eio!("can't read enough data from cache"));
-        }
-
-        if !digest_check(buf, self.chunk.block_id()) {
-            return Err(eio!());
-        }
 
         Ok(nr_read)
     }
@@ -517,12 +524,8 @@ pub fn new<S: std::hash::BuildHasher>(
             chunk_map: HashMap::new(),
             file_map: HashMap::new(),
             work_dir: String::from(work_dir),
-<<<<<<< HEAD
         })),
-=======
-        }),
         chunk_validate,
->>>>>>> blobcache: add chunk validate option
         backend,
     })
 }
