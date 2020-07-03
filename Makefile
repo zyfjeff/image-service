@@ -25,7 +25,7 @@ test: build
 
 docker-smoke:
 	docker build -t nydus-rs-smoke misc/smoke
-	docker run -it --rm --privileged -v ${PWD}:/nydus-rs -v ~/.ssh/id_rsa:/root/.ssh/id_rsa -v ~/.cargo:/usr/local/cargo nydus-rs-smoke
+	docker run -it --rm --privileged -v ${PWD}:/nydus-rs -v ~/.ssh/id_rsa:/root/.ssh/id_rsa -v ~/.cargo:/usr/local/cargo -v fuse-targets:/nydus-rs/target-fusedev -v virtiofsd-targets:/nydus-rs/target-virtiofsd nydus-rs-smoke
 
 docker-static:
 	# For static build with musl
