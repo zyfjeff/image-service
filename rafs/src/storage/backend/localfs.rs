@@ -177,14 +177,15 @@ impl LocalFsAccessLog {
 
     fn do_readahead(&self) -> Result<()> {
         info!("starting localfs blob readahead");
+        let blob_end = round_up_4k(self.blob_size as u64).unwrap();
         for &(offset, len, zero) in self.records.lock().unwrap().iter() {
             let end: u64 = offset
                 .checked_add(len as u64)
                 .ok_or_else(|| einval!("invalid length"))?;
-            if offset > self.blob_size as u64 || end > self.blob_size as u64 || zero != 0 {
+            if offset > blob_end as u64 || end > blob_end as u64 || zero != 0 {
                 return Err(einval!(format!(
                     "invalid readahead entry ({}, {}), blob size {}",
-                    offset, len, self.blob_size
+                    offset, len, blob_end
                 )));
             }
             unsafe { libc::readahead(self.blob_fd, offset as i64, len as usize) };
