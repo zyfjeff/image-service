@@ -253,7 +253,6 @@ impl fmt::Display for OndiskSuperBlock {
     }
 }
 
-#[repr(C)]
 #[derive(Clone, Default)]
 pub struct OndiskInodeTable {
     pub(crate) data: Vec<u32>,
