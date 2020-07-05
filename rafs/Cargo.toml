@@ -32,6 +32,6 @@ nydus-utils = { path = "../utils" }
 fusedev = ["fuse-rs/fusedev"]
 virtio-fs = ["fuse-rs/virtiofs"]
 vhost-user-fs = ["fuse-rs/vhost-user-fs"]
-backend-localfs = []
+backend-localfs = ["sha2"]
 backend-oss = ["base64", "httpdate", "reqwest", "sha-1", "sha2", "hmac", "url"]
-backend-registry = ["reqwest", "url"]
+backend-registry = ["reqwest", "sha2", "url"]
