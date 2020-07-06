@@ -379,12 +379,11 @@ pub trait RafsSuperInodes {
                 return Ok(false);
             }
             let child_digest = child.get_digest()?;
-            inode_hash.input(&child_digest.data());
+            inode_hash.update(&child_digest.data());
         }
 
-        let mut inode_hash_buf = [0; RAFS_SHA256_LENGTH];
-        inode_hash.result(&mut inode_hash_buf);
-        actual.data_mut().clone_from_slice(&inode_hash_buf);
+        let inode_hash = inode_hash.finalize();
+        actual.data_mut().clone_from_slice(&inode_hash);
 
         Ok(expected.data() == actual.data())
     }

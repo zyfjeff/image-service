@@ -17,7 +17,6 @@ use sha2::digest::Digest;
 use sha2::Sha256;
 
 use rafs::metadata::layout::*;
-use rafs::metadata::*;
 use rafs::storage::compress;
 use rafs::{RafsIoRead, RafsIoWrite};
 
@@ -415,12 +414,11 @@ impl Builder {
 
         for idx in child_index..child_index + child_count {
             let child = &self.additions[(idx - 1) as usize];
-            inode_hash.input(&child.inode.i_digest.data());
+            inode_hash.update(&child.inode.i_digest.data());
         }
 
-        let mut inode_hash_buf = [0; RAFS_SHA256_LENGTH];
-        inode_hash.result(&mut inode_hash_buf);
-        inode_digest.data_mut().clone_from_slice(&inode_hash_buf);
+        let inode_hash = inode_hash.finalize();
+        inode_digest.data_mut().clone_from_slice(&inode_hash);
 
         Ok(inode_digest)
     }
