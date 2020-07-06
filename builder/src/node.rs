@@ -51,7 +51,7 @@ impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "{} {:?}: index {} ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} i_nlink {} has_xattr {} i_digest {:?}",
+            "{} {:?}: index {} ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} i_nlink {} has_xattr {}",
             self.get_type().unwrap(),
             self.rootfs(),
             self.index,
@@ -62,7 +62,6 @@ impl fmt::Display for Node {
             self.inode.i_symlink_size,
             self.inode.i_nlink,
             self.inode.has_xattr(),
-            self.inode.i_digest,
         )
     }
 }
@@ -134,6 +133,7 @@ impl Node {
         compressor: compress::Algorithm,
     ) -> Result<usize> {
         if self.is_symlink()? {
+            self.inode.i_digest = OndiskDigest::from_buf(self.symlink.as_ref().unwrap().as_bytes());
             return Ok(0);
         }
 

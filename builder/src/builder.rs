@@ -294,21 +294,6 @@ impl Builder {
         for node in &mut self.additions {
             let rootfs_path = node.rootfs();
             let file_type = node.get_type()?;
-            if file_type != "" {
-                debug!(
-                    "upper building {} {:?}: index {} ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} i_nlink {} has_xattr {}",
-                    file_type,
-                    &rootfs_path,
-                    node.index,
-                    node.inode.i_ino,
-                    node.inode.i_child_count,
-                    node.inode.i_child_index,
-                    node.inode.i_name_size,
-                    node.inode.i_symlink_size,
-                    node.inode.i_nlink,
-                    node.inode.has_xattr(),
-                );
-            }
             inode_table.set(node.index, inode_offset)?;
             // add inode size
             inode_offset += node.inode.size() as u32;
@@ -394,13 +379,18 @@ impl Builder {
         }
         blob_table.store(&mut self.f_bootstrap)?;
 
-        for node in &self.additions {
-            let mut node = node.clone();
-            if node.is_dir()? {
-                // TODO: add digest cache
-                node.inode.i_digest = self.digest_node(&node)?;
+        let len = self.additions.len();
+        for i in 0..len {
+            let idx = len - 1 - i;
+            if self.additions[idx].is_dir()? {
+                self.additions[idx].inode.i_digest = self.digest_node(&self.additions[idx])?;
             }
-            node.dump_bootstrap(&mut self.f_bootstrap, 0)?;
+            self.additions[idx].dump_bootstrap(&mut self.f_bootstrap, 0)?;
+            trace!(
+                "inode digest {:?} {:?}",
+                self.additions[idx].rootfs(),
+                self.additions[idx].inode.i_digest
+            );
         }
 
         Ok(())
@@ -418,12 +408,7 @@ impl Builder {
 
         for idx in child_index..child_index + child_count {
             let child = &self.additions[(idx - 1) as usize];
-            let child_digest = if child.is_dir()? {
-                self.digest_node(child)?
-            } else {
-                child.inode.i_digest
-            };
-            inode_hash.input(&child_digest.data());
+            inode_hash.input(&child.inode.i_digest.data());
         }
 
         let mut inode_hash_buf = [0; RAFS_SHA256_LENGTH];
