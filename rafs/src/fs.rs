@@ -8,6 +8,7 @@
 
 use std::any::Any;
 use std::ffi::CStr;
+use std::fmt;
 use std::io::Result;
 use std::sync::Arc;
 use std::time::Duration;
@@ -47,6 +48,8 @@ pub struct RafsConfig {
     pub device: factory::Config,
     pub mode: String,
     #[serde(default)]
+    pub validate_digest: bool,
+    #[serde(default)]
     pub iostats_files: bool,
     #[serde(default)]
     pub fs_prefetch: bool,
@@ -57,6 +60,16 @@ impl RafsConfig {
         RafsConfig {
             ..Default::default()
         }
+    }
+}
+
+impl fmt::Display for RafsConfig {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "mode={} validate_digest={} iostats_files={}",
+            self.mode, self.validate_digest, self.iostats_files
+        )
     }
 }
 
@@ -78,7 +91,7 @@ impl Rafs {
     pub fn new(conf: RafsConfig, id: &str) -> Result<Self> {
         let rafs = Rafs {
             device: device::RafsDevice::new(conf.device.clone())?,
-            sb: RafsSuper::new(conf.mode.as_str())?,
+            sb: RafsSuper::new(conf.mode.as_str(), conf.validate_digest)?,
             initialized: false,
             ios: io_stats::new(id),
             fs_prefetch: conf.fs_prefetch,

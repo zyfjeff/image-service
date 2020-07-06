@@ -793,7 +793,7 @@ fn main() -> Result<()> {
         let mut rafs = Rafs::new(rafs_conf.clone(), &"/".to_string())?;
         let mut file = Box::new(File::open(metadata)?) as Box<dyn rafs::RafsIoRead>;
         rafs.import(&mut file)?;
-        info!("rafs mounted in {} mode", rafs_conf.mode);
+        info!("rafs mounted: {}", rafs_conf);
         vfs.mount(Box::new(rafs), "/")?;
         info!("vfs mounted");
     }
@@ -844,7 +844,6 @@ fn main() -> Result<()> {
                         ))))
                     }
                 }
-
                 "umount" => match vfs.umount(&info.mountpoint) {
                     Ok(()) => Ok(ApiResponsePayload::Mount),
                     Err(e) => Err(ApiError::MountFailure(einval!(format!(

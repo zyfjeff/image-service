@@ -27,14 +27,16 @@ pub struct CachedInodes {
     s_blob: Arc<OndiskBlobTable>,
     s_meta: Arc<RafsSuperMeta>,
     s_inodes: BTreeMap<Inode, Arc<CachedInode>>,
+    validate_digest: bool,
 }
 
 impl CachedInodes {
-    pub fn new(meta: RafsSuperMeta, blobs: OndiskBlobTable) -> Self {
+    pub fn new(meta: RafsSuperMeta, blobs: OndiskBlobTable, validate_digest: bool) -> Self {
         CachedInodes {
             s_blob: Arc::new(blobs),
             s_inodes: BTreeMap::new(),
             s_meta: Arc::new(meta),
+            validate_digest,
         }
     }
 
@@ -108,7 +110,13 @@ impl CachedInodes {
 
 impl RafsSuperInodes for CachedInodes {
     fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
-        self.load_all_inodes(r)
+        self.load_all_inodes(r)?;
+
+        if self.validate_digest && !self.validate_dir_digest(self.get_inode(1)?, true)? {
+            return Err(einval!("invalid inode digest"));
+        }
+
+        Ok(())
     }
 
     fn destroy(&mut self) {
@@ -134,7 +142,7 @@ impl RafsSuperInodes for CachedInodes {
 pub struct CachedInode {
     i_ino: Inode,
     i_name: String,
-    i_data_digest: OndiskDigest,
+    i_digest: OndiskDigest,
     i_parent: u64,
     i_mode: u32,
     i_projid: u32,
@@ -227,7 +235,7 @@ impl CachedInode {
 
     fn copy_from_ondisk(&mut self, inode: &OndiskInode) {
         self.i_ino = inode.i_ino;
-        self.i_data_digest = inode.i_digest;
+        self.i_digest = inode.i_digest;
         self.i_parent = inode.i_parent;
         self.i_mode = inode.i_mode;
         self.i_projid = inode.i_projid;
@@ -276,22 +284,37 @@ impl RafsInode for CachedInode {
         Ok(self.i_child[idx].clone())
     }
 
+    #[inline]
     fn get_child_by_index(&self, index: Inode) -> Result<Arc<dyn RafsInode>> {
         Ok(self.i_child[index as usize].clone())
     }
 
+    #[inline]
+    fn get_digest(&self) -> Result<OndiskDigest> {
+        Ok(self.i_digest)
+    }
+
+    #[inline]
+    fn get_child_index(&self) -> Result<usize> {
+        Ok(self.i_child_idx as usize)
+    }
+
+    #[inline]
     fn get_child_count(&self) -> Result<usize> {
         Ok(self.i_child.len())
     }
 
+    #[inline]
     fn get_chunk_info(&self, idx: u32) -> Result<Arc<dyn RafsChunkInfo>> {
         Ok(self.i_data[idx as usize].clone())
     }
 
+    #[inline]
     fn get_chunk_blob_id(&self, idx: u32) -> Result<String> {
         Ok(self.i_blob_table.get(idx)?.blob_id)
     }
 
+    #[inline]
     fn get_entry(&self) -> Entry {
         Entry {
             attr: self.get_attr().into(),
@@ -302,6 +325,7 @@ impl RafsInode for CachedInode {
         }
     }
 
+    #[inline]
     fn get_attr(&self) -> linux_abi::Attr {
         linux_abi::Attr {
             ino: self.i_ino,
@@ -314,6 +338,7 @@ impl RafsInode for CachedInode {
         }
     }
 
+    #[inline]
     fn get_xattr(&self, name: &str) -> Result<Option<XattrValue>> {
         Ok(self.i_xattr.get(name).cloned())
     }

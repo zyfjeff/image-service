@@ -379,21 +379,25 @@ impl Builder {
         }
         blob_table.store(&mut self.f_bootstrap)?;
 
+        // calculate inode digest
+        // use reverse iteration order to reduce repeated digest calculations
         let len = self.additions.len();
         for i in 0..len {
-            // calculate inode digest
-            // use reverse iteration order to reduce repeated digest calculations
             let idx = len - 1 - i;
             if self.additions[idx].is_dir()? {
                 self.additions[idx].inode.i_digest = self.digest_node(&self.additions[idx])?;
             }
-            // use positive iteration order to dump bootstrap
-            self.additions[i].dump_bootstrap(&mut self.f_bootstrap, 0)?;
             trace!(
                 "inode digest {:?} {:?}",
                 self.additions[idx].rootfs(),
                 self.additions[idx].inode.i_digest
             );
+        }
+
+        // dump bootstrap
+        for node in &mut self.additions {
+            // use positive iteration order to dump bootstrap
+            node.dump_bootstrap(&mut self.f_bootstrap, 0)?;
         }
 
         Ok(())

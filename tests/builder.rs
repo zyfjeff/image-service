@@ -273,7 +273,7 @@ impl<'a> Builder<'a> {
                 .open(self.work_dir.join("parent-bootstrap"))?,
         ) as Box<dyn RafsIoRead>;
 
-        let mut super_block = RafsSuper::new("direct")?;
+        let mut super_block = RafsSuper::new("direct", false)?;
         super_block.load(&mut f_bootstrap)?;
 
         for i in 1..17 {

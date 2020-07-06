@@ -121,6 +121,7 @@ impl fmt::Display for RafsMode {
 /// Cached Rafs super block and inode information.
 pub struct RafsSuper {
     pub mode: RafsMode,
+    pub validate_digest: bool,
     pub meta: RafsSuperMeta,
     pub inodes: Box<dyn RafsSuperInodes + Sync + Send>,
 }
@@ -129,6 +130,7 @@ impl Default for RafsSuper {
     fn default() -> Self {
         Self {
             mode: RafsMode::Direct,
+            validate_digest: false,
             meta: RafsSuperMeta {
                 magic: 0,
                 version: 0,
@@ -154,7 +156,7 @@ impl Default for RafsSuper {
 }
 
 impl RafsSuper {
-    pub fn new(mode: &str) -> Result<Self> {
+    pub fn new(mode: &str, validate_digest: bool) -> Result<Self> {
         let mut rs = Self::default();
 
         match mode {
@@ -168,6 +170,8 @@ impl RafsSuper {
                 return Err(einval!("Rafs mode should be 'direct' or 'cached'"));
             }
         }
+
+        rs.validate_digest = validate_digest;
 
         Ok(rs)
     }
@@ -219,7 +223,7 @@ impl RafsSuper {
             }
             RAFS_SUPER_VERSION_V5 => match self.mode {
                 RafsMode::Direct => {
-                    let mut inodes = Box::new(DirectMapping::new(&self.meta));
+                    let mut inodes = Box::new(DirectMapping::new(&self.meta, self.validate_digest));
                     inodes.load(r)?;
                     self.inodes = inodes;
                 }
@@ -228,7 +232,11 @@ impl RafsSuper {
                     let mut blob_table = OndiskBlobTable::new();
                     blob_table.load(r, sb.blob_table_size() as usize)?;
 
-                    let mut inodes = Box::new(CachedInodes::new(self.meta, blob_table));
+                    let mut inodes = Box::new(CachedInodes::new(
+                        self.meta,
+                        blob_table,
+                        self.validate_digest,
+                    ));
                     inodes.load(r)?;
                     self.inodes = inodes;
                 }
@@ -352,6 +360,34 @@ pub trait RafsSuperInodes {
     }
 
     fn update(&self, r: &mut RafsIoReader) -> Result<()>;
+
+    fn validate_dir_digest(&self, inode: Arc<dyn RafsInode>, recursive: bool) -> Result<bool> {
+        if !inode.is_dir() {
+            return Ok(true);
+        }
+
+        let child_index = inode.get_child_index()?;
+        let child_count = inode.get_child_count()?;
+        let expected = inode.get_digest()?;
+
+        let mut inode_hash = Sha256::new();
+        let mut actual = OndiskDigest::new();
+
+        for idx in child_index..(child_index + child_count) {
+            let child = self.get_inode(idx as u64)?;
+            if recursive && child.is_dir() && !self.validate_dir_digest(child.clone(), recursive)? {
+                return Ok(false);
+            }
+            let child_digest = child.get_digest()?;
+            inode_hash.input(&child_digest.data());
+        }
+
+        let mut inode_hash_buf = [0; RAFS_SHA256_LENGTH];
+        inode_hash.result(&mut inode_hash_buf);
+        actual.data_mut().clone_from_slice(&inode_hash_buf);
+
+        Ok(expected.data() == actual.data())
+    }
 }
 
 /// Trait to access Rafs Inode Information.
@@ -363,8 +399,10 @@ pub trait RafsInode {
 
     fn name(&self) -> Result<String>;
     fn get_symlink(&self) -> Result<String>;
+    fn get_digest(&self) -> Result<OndiskDigest>;
     fn get_child_by_name(&self, name: &str) -> Result<Arc<dyn RafsInode>>;
     fn get_child_by_index(&self, idx: Inode) -> Result<Arc<dyn RafsInode>>;
+    fn get_child_index(&self) -> Result<usize>;
     fn get_child_count(&self) -> Result<usize>;
     fn get_chunk_info(&self, idx: u32) -> Result<Arc<dyn RafsChunkInfo>>;
     fn get_chunk_blob_id(&self, idx: u32) -> Result<String>;

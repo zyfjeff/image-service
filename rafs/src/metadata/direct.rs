@@ -87,10 +87,11 @@ struct DirectMappingState {
     size: usize,
     fd: RawFd,
     mmapped_inode_table: bool,
+    validate_digest: bool,
 }
 
 impl DirectMappingState {
-    fn new(meta: &RafsSuperMeta) -> Self {
+    fn new(meta: &RafsSuperMeta, validate_digest: bool) -> Self {
         DirectMappingState {
             meta: *meta,
             inode_table: ManuallyDrop::new(OndiskInodeTable::default()),
@@ -100,6 +101,7 @@ impl DirectMappingState {
             end: std::ptr::null(),
             size: 0,
             mmapped_inode_table: false,
+            validate_digest,
         }
     }
 
@@ -164,8 +166,8 @@ unsafe impl Send for DirectMapping {}
 unsafe impl Sync for DirectMapping {}
 
 impl DirectMapping {
-    pub fn new(meta: &RafsSuperMeta) -> Self {
-        let state = DirectMappingState::new(meta);
+    pub fn new(meta: &RafsSuperMeta, validate_digest: bool) -> Self {
+        let state = DirectMappingState::new(meta, validate_digest);
 
         Self {
             state: ArcSwap::new(Arc::new(state)),
@@ -297,6 +299,7 @@ impl DirectMapping {
             end,
             size,
             mmapped_inode_table: true,
+            validate_digest: old_state.validate_digest,
         };
 
         // Swap new and old DirectMappingState object, the old object will be destroyed when the
@@ -313,7 +316,7 @@ impl RafsSuperInodes for DirectMapping {
     }
 
     fn destroy(&mut self) {
-        let state = DirectMappingState::new(&RafsSuperMeta::default());
+        let state = DirectMappingState::new(&RafsSuperMeta::default(), false);
 
         self.state.store(Arc::new(state));
     }
@@ -323,8 +326,13 @@ impl RafsSuperInodes for DirectMapping {
     fn get_inode(&self, ino: Inode) -> Result<Arc<dyn RafsInode>> {
         let state = self.state.load();
         let wrapper = self.get_inode_wrapper(ino, state.deref())?;
+        let inode = Arc::new(wrapper) as Arc<dyn RafsInode>;
 
-        Ok(Arc::new(wrapper) as Arc<dyn RafsInode>)
+        if state.validate_digest && !self.validate_dir_digest(inode.clone(), false)? {
+            return Err(einval!("invalid inode digest"));
+        }
+
+        Ok(inode)
     }
 
     fn get_max_ino(&self) -> Inode {
@@ -626,6 +634,22 @@ impl RafsInode for OndiskInodeWrapper {
     fn get_xattrs(&self) -> Result<Vec<XattrName>> {
         let (xattr_data, xattr_size) = self.get_xattr_data()?;
         parse_xattr_names(xattr_data, xattr_size)
+    }
+
+    #[inline]
+    fn get_digest(&self) -> Result<OndiskDigest> {
+        let state = self.state();
+        let inode = self.inode(state.deref());
+
+        Ok(inode.i_digest)
+    }
+
+    #[inline]
+    fn get_child_index(&self) -> Result<usize> {
+        let state = self.state();
+        let inode = self.inode(state.deref());
+
+        Ok(inode.i_child_index as usize)
     }
 
     #[inline]
