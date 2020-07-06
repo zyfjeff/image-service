@@ -381,11 +381,14 @@ impl Builder {
 
         let len = self.additions.len();
         for i in 0..len {
+            // calculate inode digest
+            // use reverse iteration order to reduce repeated digest calculations
             let idx = len - 1 - i;
             if self.additions[idx].is_dir()? {
                 self.additions[idx].inode.i_digest = self.digest_node(&self.additions[idx])?;
             }
-            self.additions[idx].dump_bootstrap(&mut self.f_bootstrap, 0)?;
+            // use positive iteration order to dump bootstrap
+            self.additions[i].dump_bootstrap(&mut self.f_bootstrap, 0)?;
             trace!(
                 "inode digest {:?} {:?}",
                 self.additions[idx].rootfs(),

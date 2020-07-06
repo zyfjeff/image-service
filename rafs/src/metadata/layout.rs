@@ -799,10 +799,6 @@ impl OndiskDigest {
     pub fn from_raw(data: &[u8; RAFS_SHA256_LENGTH]) -> Self {
         OndiskDigest { data: *data }
     }
-
-    pub fn is_empty(&self) -> bool {
-        !self.data().iter().any(|&v| v != 0)
-    }
 }
 
 impl RafsDigest for OndiskDigest {
