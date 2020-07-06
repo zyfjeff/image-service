@@ -259,15 +259,14 @@ pub struct OndiskInodeTable {
 
 impl OndiskInodeTable {
     pub fn new(entries: usize) -> Self {
-        let table_size = align_to_rafs(entries);
         OndiskInodeTable {
-            data: vec![0; table_size],
+            data: vec![0; entries],
         }
     }
 
     #[inline]
     pub fn size(&self) -> usize {
-        self.data.len() * size_of::<u32>()
+        align_to_rafs(self.data.len() * size_of::<u32>())
     }
 
     #[inline]
