@@ -310,6 +310,9 @@ impl Node {
         self.path.symlink_metadata().map_err(|e| einval!(e))
     }
 
+    /// Generate the path relative to original rootfs.
+    /// For example:
+    /// `/absolute/path/to/rootfs/file` after converting `/file`
     pub fn rootfs(&self) -> PathBuf {
         Path::new("/").join(self.path.strip_prefix(&self.root).unwrap())
     }

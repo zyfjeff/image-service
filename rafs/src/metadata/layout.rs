@@ -47,7 +47,7 @@ pub const INO_FLAG_ALL: u64 = INO_FLAG_HARDLINK | INO_FLAG_SYMLINK | INO_FLAG_XA
 pub const CHUNK_FLAG_COMPRESSED: u32 = 0x1;
 
 pub const RAFS_SUPERBLOCK_SIZE: usize = 8192;
-pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 56;
+pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 72;
 pub const RAFS_SUPER_MAGIC: u32 = 0x5241_4653;
 pub const RAFS_SUPER_VERSION_V4: u32 = 0x400;
 pub const RAFS_SUPER_VERSION_V5: u32 = 0x500;
@@ -136,14 +136,21 @@ pub struct OndiskSuperBlock {
     s_inodes_count: u64,
     /// V5: Offset of inode table
     s_inode_table_offset: u64,
+    /// Those inodes which need to prefetch will have there indexes put into this table.
+    /// Then Rafs has a hint to prefetch inodes and doesn't have to load all inodes to page cache
+    /// under *direct* metadata mode. It helps save memory usage.
+    /// [idx1:u32, idx2:u32, idx3:u32 ...]
+    s_prefetch_table_offset: u64,
     /// V5: Offset of blob table
     s_blob_table_offset: u64,
     /// V5: Size of inode table
     s_inode_table_entries: u32,
+    s_prefetch_table_size: u32,
     /// V5: Entries of blob table
     s_blob_table_size: u32,
+    s_reserved: u32,
     /// Unused area
-    s_reserved: [u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
+    s_reserved2: [u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
 }
 
 impl Default for OndiskSuperBlock {
@@ -157,9 +164,12 @@ impl Default for OndiskSuperBlock {
             s_inodes_count: u64::to_le(0),
             s_inode_table_entries: u32::to_le(0),
             s_inode_table_offset: u64::to_le(0),
+            s_prefetch_table_offset: u64::to_le(0),
+            s_prefetch_table_size: u32::to_le(0),
             s_blob_table_size: u32::to_le(0),
             s_blob_table_offset: u64::to_le(0),
-            s_reserved: [0u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
+            s_reserved: u32::to_le(0),
+            s_reserved2: [0u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
         }
     }
 }
@@ -229,6 +239,18 @@ impl OndiskSuperBlock {
         set_blob_table_offset,
         s_blob_table_offset,
         u64
+    );
+    impl_pub_getter_setter!(
+        prefetch_table_offset,
+        set_prefetch_table_offset,
+        s_prefetch_table_offset,
+        u64
+    );
+    impl_pub_getter_setter!(
+        prefetch_table_size,
+        set_prefetch_table_size,
+        s_prefetch_table_size,
+        u32
     );
 
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
@@ -316,7 +338,80 @@ impl RafsStore for OndiskInodeTable {
     fn store_inner(&self, w: &mut RafsIoWriter) -> Result<usize> {
         let (_, data, _) = unsafe { self.data.align_to::<u8>() };
         w.write_all(data)?;
+
         Ok(data.len())
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct PrefetchTable {
+    pub inode_indexes: Vec<u32>,
+}
+
+/// Introduce a prefetch table to rafs v5 disk layout.
+/// From super block disk structure, its start offset can be told.
+/// In order not to load every meta/inode to page cache under rafs Direct
+/// mode, which aims at saving physical memory. This prefetch table is
+/// introduce. Regular files or directories which are specified during image
+/// building will have their inode index persist in this disk table.
+/// For a single directory, only its inode index will be put into the table.
+/// But all of its descendants fils(recursively) will be prefetch(by hint)
+/// when rafs is mounted at the very beginning.
+impl PrefetchTable {
+    pub fn new() -> PrefetchTable {
+        PrefetchTable {
+            inode_indexes: vec![],
+        }
+    }
+
+    pub fn add_entry(&mut self, inode_idx: u32) {
+        debug!("Add index {}", inode_idx);
+        self.inode_indexes.push(inode_idx);
+    }
+
+    pub fn table_aligned_size(&self) -> usize {
+        self.inode_indexes.len() * size_of::<u32>()
+    }
+
+    pub fn store(&mut self, w: &mut RafsIoWriter) -> Result<usize> {
+        // Sort prefetch table by inode index, hopefully, it can save time when mounting rafs
+        // Because file data is dumped in the order of inode index.
+        self.inode_indexes.sort();
+
+        let (_, data, _) = unsafe { self.inode_indexes.align_to::<u8>() };
+        w.write_all(data.as_ref())?;
+
+        // OK. Let's see if we have to align... :-(
+        let cur_len = self.inode_indexes.len() * size_of::<u32>();
+        let padding_bytes = align_to_rafs(cur_len) - cur_len;
+        let padding = [0u8; 8];
+        w.write_all(&padding[0..padding_bytes]).unwrap();
+
+        Ok(data.len() + padding_bytes)
+    }
+
+    /// Note: This method changes file offset.
+    /// `len` as u32 hint entries reside in this prefetch table.
+    pub fn load_from(
+        &mut self,
+        r: &mut RafsIoReader,
+        offset: u64,
+        table_size: usize,
+    ) -> Result<()> {
+        // Map prefetch table in.
+        // TODO: Need to consider about backend switch?
+        r.seek(SeekFrom::Start(offset))?;
+
+        self.inode_indexes = vec![0u32; table_size];
+
+        let (_, data, _) = unsafe { self.inode_indexes.align_to_mut::<u8>() };
+        r.read_exact(data)?;
+
+        Ok(())
+    }
+
+    pub fn entry_size() -> usize {
+        size_of::<u32>() as usize
     }
 }
 

@@ -39,6 +39,9 @@ pub struct Builder {
     compressor: compress::Algorithm,
     /// readahead file list, use BTreeMap to keep stable iteration order
     readahead_nodes: BTreeMap<PathBuf, Option<Node>>,
+    /// Specify files or directories which need to prefetch. Their inode indexes will
+    /// be persist to prefetch table.
+    hint_readahead_files: BTreeMap<PathBuf, Option<u64>>,
     /// node chunks info cache for hardlink, HashMap<i_ino, Node>
     inode_map: HashMap<u64, Node>,
     /// multiple layers build: upper source nodes
@@ -55,7 +58,7 @@ impl Builder {
         parent_bootstrap_path: String,
         blob_id: String,
         compressor: compress::Algorithm,
-        readahead_nodes: BTreeMap<PathBuf, Option<Node>>,
+        hint_readahead_files: BTreeMap<PathBuf, Option<u64>>,
     ) -> Result<Builder> {
         let f_blob = Box::new(
             OpenOptions::new()
@@ -91,7 +94,8 @@ impl Builder {
             blob_id,
             compressor,
             inode_map: HashMap::new(),
-            readahead_nodes,
+            readahead_nodes: BTreeMap::new(),
+            hint_readahead_files,
             additions: Vec::new(),
             removals: HashMap::new(),
             opaques: HashMap::new(),
@@ -105,6 +109,21 @@ impl Builder {
             }
         }
         None
+    }
+
+    /// Gain file or directory inode indexes which will be put into prefetch table.
+    fn need_prefetch(&mut self, path: &PathBuf, index: u64) -> bool {
+        for f in self.hint_readahead_files.keys() {
+            // As path is canonicalized, it should be reliable.
+            if path.as_os_str() == f.as_os_str() {
+                self.hint_readahead_files.insert(path.clone(), Some(index));
+                return true;
+            } else if path.starts_with(f) {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn new_node(&self, path: &PathBuf) -> Node {
@@ -168,7 +187,11 @@ impl Builder {
                     if self.inode_map.get(&real_ino).is_none() {
                         self.inode_map.insert(real_ino, node.clone());
                     }
-                    self.additions.push(node);
+                    self.additions.push(node.clone());
+
+                    if self.need_prefetch(&node.rootfs(), iter_ino) {
+                        self.readahead_nodes.insert(node.rootfs(), Some(node));
+                    }
                 }
 
                 let dir_node = self.additions.get_mut(*dir_idx).unwrap();
@@ -186,6 +209,8 @@ impl Builder {
         let inode_table_entries = self.additions.len() as u32;
         let mut inode_table = OndiskInodeTable::new(inode_table_entries as usize);
         let inode_table_size = inode_table.size();
+        let mut prefetch_table = PrefetchTable::new();
+        let prefetch_table_size = align_to_rafs(self.hint_readahead_files.len() * size_of::<u32>());
 
         // blob table, blob id use sha256 string (length 64) as default
         let blob_id_size = if self.blob_id != "" {
@@ -194,8 +219,9 @@ impl Builder {
             64
         };
         let blob_table_size = OndiskBlobTable::minimum_size(blob_id_size);
+        let prefetch_table_offset = super_block_size + inode_table_size;
         let mut blob_table = OndiskBlobTable::new();
-        let blob_table_offset = (super_block_size + inode_table_size) as u64;
+        let blob_table_offset = (prefetch_table_offset + prefetch_table_size) as u64;
 
         // super block
         let mut super_block = OndiskSuperBlock::new();
@@ -205,23 +231,31 @@ impl Builder {
         super_block.set_inode_table_entries(inode_table_entries);
         super_block.set_blob_table_offset(blob_table_offset);
         super_block.set_blob_table_size(blob_table_size as u32);
+        super_block.set_prefetch_table_offset(prefetch_table_offset as u64);
         super_block.set_flags(super_block.flags() | self.compressor as u64);
+        super_block.set_prefetch_table_size(prefetch_table_size as u32);
 
         // dump blob
         let mut blob_compress_offset = 0u64;
         let mut blob_decompress_offset = 0u64;
         let mut blob_hash = Sha256::new();
         let mut chunk_cache: ChunkCache = HashMap::new();
-        let mut inode_offset = (super_block_size + inode_table_size + blob_table_size) as u32;
+        let mut inode_offset =
+            (super_block_size + inode_table_size + prefetch_table_size + blob_table_size) as u32;
+
+        debug!(
+            "inode table starts at {}, prefetch table starts at {}, blob table starts at {}, inodes starts at {}",
+            super_block_size, prefetch_table_offset, blob_table_offset, inode_offset
+        );
 
         for node in &mut self.additions {
-            let root_path = node.rootfs();
+            let rootfs_path = node.rootfs();
             let file_type = node.get_type()?;
             if file_type != "" {
                 debug!(
                     "upper building {} {:?}: index {} ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} i_nlink {} has_xattr {}",
                     file_type,
-                    &root_path,
+                    &rootfs_path,
                     node.index,
                     node.inode.i_ino,
                     node.inode.i_child_count,
@@ -238,8 +272,9 @@ impl Builder {
             if node.inode.has_xattr() && !node.xattrs.pairs.is_empty() {
                 inode_offset += (size_of::<OndiskXAttrs>() + node.xattrs.aligned_size()) as u32;
             }
-            if self.readahead_nodes.get(&root_path).is_some() {
-                self.readahead_nodes.insert(root_path, Some(node.clone()));
+            // Replace inode because its metadata might be changed somehow.
+            if let Some(n) = self.readahead_nodes.get_mut(&rootfs_path) {
+                *n = Some(node.clone());
             }
             // add chunks size
             if node.is_reg()? {
@@ -256,11 +291,17 @@ impl Builder {
             .collect::<Vec<&mut Node>>();
         readahead_nodes.sort_by_key(|node| node.inode.i_size);
 
+        self.hint_readahead_files
+            .values()
+            .filter(|_| true)
+            .for_each(|idx| prefetch_table.add_entry(idx.unwrap() as u32));
+
         // fist, dump readahead nodes
         let blob_readahead_offset = 0;
         let mut blob_readahead_size = 0;
         for readahead_node in &mut readahead_nodes {
             debug!("upper building readahead {}", readahead_node);
+
             blob_readahead_size += readahead_node.dump_blob(
                 &mut self.f_blob,
                 &mut blob_hash,
@@ -302,6 +343,7 @@ impl Builder {
         // dump bootstrap
         super_block.store(&mut self.f_bootstrap)?;
         inode_table.store(&mut self.f_bootstrap)?;
+        prefetch_table.store(&mut self.f_bootstrap)?;
         blob_table.store(&mut self.f_bootstrap)?;
 
         for node in &mut self.additions {

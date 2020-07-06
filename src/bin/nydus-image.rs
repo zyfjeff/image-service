@@ -21,7 +21,6 @@ use std::os::linux::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use nydus_builder::builder;
-use nydus_builder::node::Node;
 use nydus_utils::einval;
 use nydus_utils::log_level_to_verbosity;
 use rafs::storage::{backend, factory};
@@ -63,7 +62,7 @@ fn upload_blob(
 }
 
 /// Get readahead file paths line by line from stdin
-fn get_readahead_files(source: &str) -> Result<BTreeMap<PathBuf, Option<Node>>> {
+fn get_readahead_files(source: &str) -> Result<BTreeMap<PathBuf, Option<u64>>> {
     let stdin = io::stdin();
     let mut files = BTreeMap::new();
 
@@ -118,6 +117,7 @@ fn get_readahead_files(source: &str) -> Result<BTreeMap<PathBuf, Option<Node>>> 
                     file_name,
                     file_name_trimmed.to_str().unwrap()
                 );
+                // The inode index is not decided yet, but will do during fs-walk.
                 files.insert(file_name_trimmed, None);
             }
             Err(err) => {
@@ -251,7 +251,7 @@ fn main() -> Result<()> {
             parent_bootstrap = _parent_bootstrap.to_owned();
         }
 
-        let readahead_files = if matches.is_present("enable_readahead") {
+        let hint_readahead_files = if matches.is_present("enable_readahead") {
             get_readahead_files(source_path)?
         } else {
             BTreeMap::new()
@@ -264,7 +264,7 @@ fn main() -> Result<()> {
             parent_bootstrap,
             blob_id.clone(),
             compressor,
-            readahead_files,
+            hint_readahead_files,
         )?;
         blob_id = ib.build()?;
 

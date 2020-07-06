@@ -267,6 +267,68 @@ impl RafsSuper {
     pub fn get_max_ino(&self) -> Inode {
         self.inodes.get_max_ino()
     }
+
+    pub fn prefetch_hint_files(&self, r: &mut RafsIoReader) -> Result<RafsBioDesc> {
+        let prefetch_table_size =
+            (self.meta.blob_table_offset - self.meta.prefetch_table_offset) as usize;
+        let hint_entries = prefetch_table_size / size_of::<u32>();
+        let mut prefetch_table = PrefetchTable::new();
+        if prefetch_table
+            .load_from(r, self.meta.prefetch_table_offset, hint_entries)
+            .is_err()
+        {
+            einval!(format!(
+                "Failed in load hint prefetch table at {}",
+                self.meta.prefetch_table_offset
+            ));
+        }
+
+        if prefetch_table.inode_indexes.is_empty() {
+            return Err(enoent!("Prefetch table is empty!"));
+        }
+
+        let mut head_desc = RafsBioDesc {
+            bi_size: 0,
+            bi_flags: 0,
+            bi_vec: Vec::new(),
+        };
+
+        for inode_idx in prefetch_table.inode_indexes.iter() {
+            // index 0 is invalid, it was added because prefetch table has to be aligned.
+            if *inode_idx == 0 {
+                break;
+            }
+
+            debug!("hint prefetch inode {}", inode_idx);
+            match self.inodes.get_inode(*inode_idx as u64) {
+                Ok(inode) => {
+                    if inode.is_dir() {
+                        let mut descendants = Vec::new();
+                        let _ = inode.collect_descendants_inodes(&mut descendants)?;
+
+                        for i in descendants {
+                            let mut desc = i.alloc_bio_desc(0, i.size() as usize)?;
+                            head_desc.bi_vec.append(desc.bi_vec.as_mut());
+                            head_desc.bi_size += desc.bi_size;
+                        }
+
+                        continue;
+                    }
+
+                    // Per as get_child_count() implementation, it can't fail.
+                    let mut desc = inode.alloc_bio_desc(0, inode.size() as usize)?;
+                    head_desc.bi_vec.append(desc.bi_vec.as_mut());
+                    head_desc.bi_size += desc.bi_size;
+                }
+                Err(_) => {
+                    enoent!("Can't find inode");
+                    continue;
+                }
+            }
+        }
+
+        Ok(head_desc)
+    }
 }
 
 /// Trait to manage all inodes of a file system.
