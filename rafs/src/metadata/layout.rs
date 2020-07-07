@@ -438,7 +438,7 @@ impl RafsStore for OndiskBlobTable {
                 Ok(())
             })
             .collect::<Result<()>>()?;
-        w.write_all(&vec![0u8; align_to_rafs(size) - size])?;
+        w.seek_offset((align_to_rafs(size) - size) as u64)?;
 
         Ok(size)
     }
@@ -536,31 +536,27 @@ pub struct OndiskInodeWrapper<'a> {
 
 impl<'a> RafsStore for OndiskInodeWrapper<'a> {
     fn store_inner(&self, w: &mut RafsIoWriter) -> Result<usize> {
-        let name = self.name.as_bytes();
-
-        let mut symlink_path: &[u8] = &[];
-        if let Some(symlink) = &self.symlink {
-            symlink_path = symlink.as_bytes();
-        }
-
         let mut size: usize = 0;
 
         let inode_data = self.inode.as_ref();
         w.write_all(inode_data)?;
         size += inode_data.len();
 
+        let name = self.name.as_bytes();
         w.write_all(name)?;
         size += name.len();
-        let padding = vec![0u8; self.inode.i_name_size as usize - name.len()];
-        w.write_all(&padding)?;
-        size += padding.len();
 
-        if !symlink_path.is_empty() {
+        let padding = self.inode.i_name_size as usize - name.len();
+        w.seek_offset(padding as u64)?;
+        size += padding;
+
+        if let Some(symlink) = self.symlink {
+            let symlink_path = symlink.as_bytes();
             w.write_all(symlink_path)?;
             size += symlink_path.len();
-            let padding = vec![0u8; self.inode.i_symlink_size as usize - symlink_path.len()];
-            w.write_all(&padding)?;
-            size += padding.len();
+            let padding = self.inode.i_symlink_size as usize - symlink_path.len();
+            w.seek_offset(padding as u64)?;
+            size += padding;
         }
 
         Ok(size)
@@ -806,10 +802,9 @@ impl RafsStore for XAttrs {
             }
         }
 
-        let final_size = align_to_rafs(size);
-        let padding = vec![0u8; final_size - size];
-        w.write_all(&padding)?;
-        size += padding.len();
+        let padding = align_to_rafs(size) - size;
+        w.seek_offset(padding as u64)?;
+        size += padding;
 
         Ok(size)
     }
