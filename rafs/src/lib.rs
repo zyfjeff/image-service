@@ -12,11 +12,10 @@ extern crate serde;
 use std::any::Any;
 use std::fs::File;
 use std::io::Result;
-use std::io::SeekFrom;
 use std::io::{Read, Seek, Write};
 use std::os::unix::io::AsRawFd;
 
-use crate::metadata::layout::align_to_rafs;
+use crate::metadata::layout::RAFS_ALIGNMENT;
 use nydus_utils::einval;
 
 #[macro_use]
@@ -46,17 +45,13 @@ impl RafsIoWrite for File {
 }
 
 impl dyn RafsIoWrite {
-    /// seek to current + offset position, it's thread unsafe.
-    fn seek_offset(&mut self, off: u64) -> Result<u64> {
-        self.seek(SeekFrom::Current(off as i64))
-    }
-    /// align file size to RAFS_ALIGNMENT.
-    pub fn seal(&mut self) -> Result<()> {
-        let file = self
-            .as_any()
-            .downcast_ref::<File>()
-            .ok_or_else(|| einval!("invalid File type"))?;
-        file.set_len(align_to_rafs(file.metadata()?.len() as usize) as u64)
+    /// write padding to align to RAFS_ALIGNMENT.
+    pub fn write_padding(&mut self, size: usize) -> Result<()> {
+        if size > RAFS_ALIGNMENT {
+            return Err(einval!("invalid padding size"));
+        }
+        let padding = [0u8; RAFS_ALIGNMENT];
+        self.write_all(&padding[0..size])
     }
 }
 

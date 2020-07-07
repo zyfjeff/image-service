@@ -438,7 +438,8 @@ impl RafsStore for OndiskBlobTable {
                 Ok(())
             })
             .collect::<Result<()>>()?;
-        w.seek_offset((align_to_rafs(size) - size) as u64)?;
+        let padding = align_to_rafs(size) - size;
+        w.write_padding(padding)?;
 
         Ok(size)
     }
@@ -547,7 +548,7 @@ impl<'a> RafsStore for OndiskInodeWrapper<'a> {
         size += name.len();
 
         let padding = self.inode.i_name_size as usize - name.len();
-        w.seek_offset(padding as u64)?;
+        w.write_padding(padding)?;
         size += padding;
 
         if let Some(symlink) = self.symlink {
@@ -555,7 +556,7 @@ impl<'a> RafsStore for OndiskInodeWrapper<'a> {
             w.write_all(symlink_path)?;
             size += symlink_path.len();
             let padding = self.inode.i_symlink_size as usize - symlink_path.len();
-            w.seek_offset(padding as u64)?;
+            w.write_padding(padding)?;
             size += padding;
         }
 
@@ -803,7 +804,7 @@ impl RafsStore for XAttrs {
         }
 
         let padding = align_to_rafs(size) - size;
-        w.seek_offset(padding as u64)?;
+        w.write_padding(padding)?;
         size += padding;
 
         Ok(size)

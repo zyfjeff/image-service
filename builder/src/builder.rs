@@ -308,8 +308,6 @@ impl Builder {
             node.dump_bootstrap(&mut self.f_bootstrap, 0)?;
         }
 
-        self.f_bootstrap.seal()?;
-
         Ok(())
     }
 
