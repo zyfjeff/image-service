@@ -92,7 +92,7 @@ impl RafsCache for DummyCache {
             return self.backend.readv(
                 blob_id,
                 bufs,
-                offset + chunk.blob_decompress_offset(),
+                offset + chunk.blob_compress_offset(),
                 bio.size,
             );
         }

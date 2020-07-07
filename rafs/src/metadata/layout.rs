@@ -655,13 +655,14 @@ impl fmt::Display for OndiskChunkInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "file_offset {}, blob_compress_offset {}, compress_size {}, blob_decompress_offset {}, decompress_size {}, block_id {}",
+            "file_offset {}, blob_compress_offset {}, compress_size {}, blob_decompress_offset {}, decompress_size {}, block_id {}, is_compressed {}",
             self.file_offset,
             self.blob_compress_offset,
             self.compress_size,
             self.blob_decompress_offset,
             self.decompress_size,
             self.block_id.to_string(),
+            self.is_compressed(),
         )
     }
 }

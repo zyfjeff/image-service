@@ -177,15 +177,23 @@ impl Node {
 
             // compress chunk data
             let compressed = compress::compress(&chunk_data, compressor)?;
-            let compressed_size = compressed.len();
+            let mut compressed = compressed.as_ref();
+            let mut compressed_size = compressed.len();
+            if !compressor.is_none() {
+                // abandon compressed chunk data when compressed size is bigger than origin size
+                if compressed.len() >= chunk_size {
+                    compressed = &chunk_data;
+                    compressed_size = chunk_size;
+                } else {
+                    chunk.flags |= CHUNK_FLAG_COMPRESSED;
+                }
+            }
+
             chunk.file_offset = file_offset;
             chunk.blob_compress_offset = *blob_compress_offset;
             chunk.blob_decompress_offset = *blob_decompress_offset;
             chunk.compress_size = compressed_size as u32;
             chunk.decompress_size = chunk_size as u32;
-            if !compressor.is_none() {
-                chunk.flags |= CHUNK_FLAG_COMPRESSED;
-            }
             blob_size += compressed_size;
 
             // move cursor to offset of next chunk
