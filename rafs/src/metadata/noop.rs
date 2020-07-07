@@ -32,7 +32,7 @@ impl RafsSuperInodes for NoopInodes {
 
     fn destroy(&mut self) {}
 
-    fn get_inode(&self, _ino: Inode) -> Result<Arc<dyn RafsInode>> {
+    fn get_inode(&self, _ino: Inode, _digest_validate: bool) -> Result<Arc<dyn RafsInode>> {
         unimplemented!()
     }
 

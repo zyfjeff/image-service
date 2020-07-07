@@ -7,7 +7,6 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::fmt::Write;
 use std::io::{Error, Result, Seek, SeekFrom};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -15,13 +14,12 @@ use std::time::Duration;
 
 use fuse_rs::abi::linux_abi::Attr;
 use fuse_rs::api::filesystem::Entry;
-use sha2::digest::Digest;
-use sha2::Sha256;
 
+pub use self::digest::*;
 use self::direct::DirectMapping;
 use self::layout::*;
 use self::noop::NoopInodes;
-use crate::fs::{Inode, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
+use crate::fs::{Inode, RafsConfig, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
 use crate::metadata::cached::CachedInodes;
 use crate::storage::compress;
 use crate::storage::device::{RafsBio, RafsBioDesc};
@@ -31,11 +29,12 @@ use std::mem::size_of;
 use nydus_utils::{ebadf, einval, enoent};
 
 pub mod cached;
+pub mod digest;
 pub mod direct;
 pub mod layout;
 pub mod noop;
 
-pub const RAFS_SHA256_LENGTH: usize = 32;
+pub const RAFS_DIGEST_LENGTH: usize = 32;
 pub const RAFS_BLOB_ID_MAX_LENGTH: usize = 72;
 pub const RAFS_INODE_BLOCKSIZE: u32 = 4096;
 pub const RAFS_MAX_NAME: usize = 255;
@@ -121,7 +120,7 @@ impl fmt::Display for RafsMode {
 /// Cached Rafs super block and inode information.
 pub struct RafsSuper {
     pub mode: RafsMode,
-    pub validate_digest: bool,
+    pub digest_validate: bool,
     pub meta: RafsSuperMeta,
     pub inodes: Box<dyn RafsSuperInodes + Sync + Send>,
 }
@@ -130,7 +129,7 @@ impl Default for RafsSuper {
     fn default() -> Self {
         Self {
             mode: RafsMode::Direct,
-            validate_digest: false,
+            digest_validate: false,
             meta: RafsSuperMeta {
                 magic: 0,
                 version: 0,
@@ -156,7 +155,9 @@ impl Default for RafsSuper {
 }
 
 impl RafsSuper {
-    pub fn new(mode: &str, validate_digest: bool) -> Result<Self> {
+    pub fn new(conf: &RafsConfig) -> Result<Self> {
+        let mode = conf.mode.as_str();
+        let digest_validate = conf.digest_validate;
         let mut rs = Self::default();
 
         match mode {
@@ -171,7 +172,7 @@ impl RafsSuper {
             }
         }
 
-        rs.validate_digest = validate_digest;
+        rs.digest_validate = digest_validate;
 
         Ok(rs)
     }
@@ -223,7 +224,7 @@ impl RafsSuper {
             }
             RAFS_SUPER_VERSION_V5 => match self.mode {
                 RafsMode::Direct => {
-                    let mut inodes = Box::new(DirectMapping::new(&self.meta, self.validate_digest));
+                    let mut inodes = Box::new(DirectMapping::new(&self.meta, self.digest_validate));
                     inodes.load(r)?;
                     self.inodes = inodes;
                 }
@@ -235,7 +236,7 @@ impl RafsSuper {
                     let mut inodes = Box::new(CachedInodes::new(
                         self.meta,
                         blob_table,
-                        self.validate_digest,
+                        self.digest_validate,
                     ));
                     inodes.load(r)?;
                     self.inodes = inodes;
@@ -275,8 +276,8 @@ impl RafsSuper {
         Ok(std::mem::size_of::<OndiskSuperBlock>())
     }
 
-    pub fn get_inode(&self, ino: Inode) -> Result<Arc<dyn RafsInode>> {
-        self.inodes.get_inode(ino)
+    pub fn get_inode(&self, ino: Inode, digest_validate: bool) -> Result<Arc<dyn RafsInode>> {
+        self.inodes.get_inode(ino, digest_validate)
     }
 
     pub fn get_max_ino(&self) -> Inode {
@@ -314,7 +315,10 @@ impl RafsSuper {
             }
 
             debug!("hint prefetch inode {}", inode_idx);
-            match self.inodes.get_inode(*inode_idx as u64) {
+            match self
+                .inodes
+                .get_inode(*inode_idx as u64, self.digest_validate)
+            {
                 Ok(inode) => {
                     if inode.is_dir() {
                         let mut descendants = Vec::new();
@@ -351,7 +355,7 @@ pub trait RafsSuperInodes {
 
     fn destroy(&mut self);
 
-    fn get_inode(&self, ino: Inode) -> Result<Arc<dyn RafsInode>>;
+    fn get_inode(&self, ino: Inode, digest_validate: bool) -> Result<Arc<dyn RafsInode>>;
 
     fn get_max_ino(&self) -> Inode;
 
@@ -361,31 +365,44 @@ pub trait RafsSuperInodes {
 
     fn update(&self, r: &mut RafsIoReader) -> Result<()>;
 
-    fn validate_dir_digest(&self, inode: Arc<dyn RafsInode>, recursive: bool) -> Result<bool> {
-        if !inode.is_dir() {
-            return Ok(true);
-        }
+    /// Validate child, chunk and symlink digest on inode tree.
+    /// The chunk data digest for regular file will only validate on fs read.
+    fn digest_validate(&self, inode: Arc<dyn RafsInode>, recursive: bool) -> Result<bool> {
+        trace!("validate inode digest {}", inode.ino());
 
         let child_index = inode.get_child_index()?;
         let child_count = inode.get_child_count()?;
-        let expected = inode.get_digest()?;
 
-        let mut inode_hash = Sha256::new();
-        let mut actual = OndiskDigest::new();
+        let expected_digest = inode.get_digest()?;
+        let mut hasher = RafsDigest::hasher();
 
-        for idx in child_index..(child_index + child_count) {
-            let child = self.get_inode(idx as u64)?;
-            if recursive && child.is_dir() && !self.validate_dir_digest(child.clone(), recursive)? {
-                return Ok(false);
+        if inode.is_symlink() {
+            trace!("\tdigest symlink {}", inode.get_symlink()?);
+            hasher.update(inode.get_symlink()?.as_bytes());
+        } else {
+            for idx in child_index..(child_index + child_count) {
+                if inode.is_dir() {
+                    trace!("\tdigest child {}", idx);
+                    let child = self.get_inode(idx as u64, false)?;
+                    if (child.is_reg() || child.is_symlink() || (recursive && child.is_dir()))
+                        && !self.digest_validate(child.clone(), recursive)?
+                    {
+                        return Ok(false);
+                    }
+                    let child_digest = child.get_digest()?;
+                    let child_digest = child_digest.as_ref().as_ref();
+                    hasher.update(child_digest);
+                } else {
+                    trace!("\tdigest chunk {}", idx);
+                    let chunk = inode.get_chunk_info(idx as u32)?;
+                    let chunk_digest = chunk.block_id();
+                    let chunk_digest = chunk_digest.as_ref().as_ref();
+                    hasher.update(chunk_digest);
+                }
             }
-            let child_digest = child.get_digest()?;
-            inode_hash.update(&child_digest.data());
         }
 
-        let inode_hash = inode_hash.finalize();
-        actual.data_mut().clone_from_slice(&inode_hash);
-
-        Ok(expected.data() == actual.data())
+        Ok(expected_digest == RafsDigest::finalize(hasher))
     }
 }
 
@@ -398,7 +415,7 @@ pub trait RafsInode {
 
     fn name(&self) -> Result<String>;
     fn get_symlink(&self) -> Result<String>;
-    fn get_digest(&self) -> Result<OndiskDigest>;
+    fn get_digest(&self) -> Result<RafsDigest>;
     fn get_child_by_name(&self, name: &str) -> Result<Arc<dyn RafsInode>>;
     fn get_child_by_index(&self, idx: Inode) -> Result<Arc<dyn RafsInode>>;
     fn get_child_index(&self) -> Result<usize>;
@@ -430,7 +447,7 @@ pub trait RafsInode {
 pub trait RafsChunkInfo: Sync + Send {
     fn validate(&self, sb: &RafsSuperMeta) -> Result<()>;
 
-    fn block_id(&self) -> Arc<dyn RafsDigest>;
+    fn block_id(&self) -> Arc<RafsDigest>;
     fn blob_index(&self) -> u32;
 
     fn compress_offset(&self) -> u64;
@@ -440,31 +457,6 @@ pub trait RafsChunkInfo: Sync + Send {
 
     fn file_offset(&self) -> u64;
     fn is_compressed(&self) -> bool;
-}
-
-/// Trait to access Rafs SHA256 message digest data.
-pub trait RafsDigest {
-    fn validate(&self) -> Result<()>;
-
-    /// Get size of Rafs SHA256 message digest data.
-    fn size(&self) -> usize {
-        RAFS_SHA256_LENGTH
-    }
-
-    /// Compute SHA256 message digest in the `buf`.
-    fn digest(&mut self, buf: &[u8]) {
-        let mut hash = Sha256::new();
-        hash.update(buf);
-        self.data_mut().clone_from_slice(&hash.finalize());
-    }
-
-    /// Get a reference to the underlying data.
-    fn data(&self) -> &[u8];
-
-    /// Get a mutable reference to the underlying data.
-    fn data_mut(&mut self) -> &mut [u8];
-
-    fn to_string(&self) -> String;
 }
 
 /// Trait to store Rafs meta block and validate alignment.

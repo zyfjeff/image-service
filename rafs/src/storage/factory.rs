@@ -32,6 +32,8 @@ pub struct BackendConfig {
 
 #[derive(Default, Clone, Deserialize)]
 pub struct CacheConfig {
+    #[serde(default, rename = "validate")]
+    pub cache_validate: bool,
     #[serde(default, rename = "type")]
     pub cache_type: String,
     #[serde(default, rename = "config")]
@@ -88,13 +90,13 @@ pub fn new_uploader(config: &BackendConfig) -> Result<Arc<dyn BlobBackendUploade
 pub fn new_rw_layer(config: &Config) -> Result<Box<dyn RafsCache + Send + Sync>> {
     let backend = new_backend(&config.backend)?;
     match config.cache.cache_type.as_str() {
-        "blobcache" => Ok(
-            Box::new(blobcache::new(&config.cache.cache_config, backend)?)
-                as Box<dyn RafsCache + Send + Sync>,
-        ),
-        _ => Ok(
-            Box::new(dummycache::new(&config.cache.cache_config, backend)?)
-                as Box<dyn RafsCache + Send + Sync>,
-        ),
+        "blobcache" => {
+            Ok(Box::new(blobcache::new(&config.cache, backend)?)
+                as Box<dyn RafsCache + Send + Sync>)
+        }
+        _ => {
+            Ok(Box::new(dummycache::new(&config.cache, backend)?)
+                as Box<dyn RafsCache + Send + Sync>)
+        }
     }
 }

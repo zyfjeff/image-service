@@ -87,11 +87,11 @@ struct DirectMappingState {
     size: usize,
     fd: RawFd,
     mmapped_inode_table: bool,
-    validate_digest: bool,
+    digest_validate: bool,
 }
 
 impl DirectMappingState {
-    fn new(meta: &RafsSuperMeta, validate_digest: bool) -> Self {
+    fn new(meta: &RafsSuperMeta, digest_validate: bool) -> Self {
         DirectMappingState {
             meta: *meta,
             inode_table: ManuallyDrop::new(OndiskInodeTable::default()),
@@ -101,7 +101,7 @@ impl DirectMappingState {
             end: std::ptr::null(),
             size: 0,
             mmapped_inode_table: false,
-            validate_digest,
+            digest_validate,
         }
     }
 
@@ -166,8 +166,8 @@ unsafe impl Send for DirectMapping {}
 unsafe impl Sync for DirectMapping {}
 
 impl DirectMapping {
-    pub fn new(meta: &RafsSuperMeta, validate_digest: bool) -> Self {
-        let state = DirectMappingState::new(meta, validate_digest);
+    pub fn new(meta: &RafsSuperMeta, digest_validate: bool) -> Self {
+        let state = DirectMappingState::new(meta, digest_validate);
 
         Self {
             state: ArcSwap::new(Arc::new(state)),
@@ -241,10 +241,10 @@ impl DirectMapping {
             return Err(ebadf!("invalid blob table"));
         }
 
-        // prefetch the metadata file
+        // Prefetch the metadata file
         readahead(fd, 0, len);
 
-        // mmap the metadata file into current process for direct access
+        // Mmap the metadata file into current process for direct access
         let base = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -290,6 +290,8 @@ impl DirectMapping {
             }
         };
 
+        let digest_validate = old_state.digest_validate;
+
         let state = DirectMappingState {
             meta: old_state.meta,
             inode_table: ManuallyDrop::new(inode_table),
@@ -299,7 +301,7 @@ impl DirectMapping {
             end,
             size,
             mmapped_inode_table: true,
-            validate_digest: old_state.validate_digest,
+            digest_validate,
         };
 
         // Swap new and old DirectMappingState object, the old object will be destroyed when the
@@ -323,12 +325,13 @@ impl RafsSuperInodes for DirectMapping {
 
     /// Find inode offset by ino from inode table and mmap to OndiskInode.
     #[inline]
-    fn get_inode(&self, ino: Inode) -> Result<Arc<dyn RafsInode>> {
+    fn get_inode(&self, ino: Inode, digest_validate: bool) -> Result<Arc<dyn RafsInode>> {
         let state = self.state.load();
         let wrapper = self.get_inode_wrapper(ino, state.deref())?;
         let inode = Arc::new(wrapper) as Arc<dyn RafsInode>;
 
-        if state.validate_digest && !self.validate_dir_digest(inode.clone(), false)? {
+        // Validate inode digest tree
+        if digest_validate && !self.digest_validate(inode.clone(), false)? {
             return Err(einval!("invalid inode digest"));
         }
 
@@ -561,7 +564,7 @@ impl RafsInode for OndiskInodeWrapper {
             return Err(enoent!("invalid child index"));
         }
 
-        self.mapping.get_inode(idx + child_index)
+        self.mapping.get_inode(idx + child_index, false)
     }
 
     /// Get chunk information with index `idx`
@@ -637,11 +640,11 @@ impl RafsInode for OndiskInodeWrapper {
     }
 
     #[inline]
-    fn get_digest(&self) -> Result<OndiskDigest> {
+    fn get_digest(&self) -> Result<RafsDigest> {
         let state = self.state();
         let inode = self.inode(state.deref());
 
-        Ok(inode.i_digest)
+        Ok(inode.i_digest.into())
     }
 
     #[inline]
@@ -719,7 +722,7 @@ impl RafsInode for OndiskInodeWrapper {
         let child_index = inode.i_child_index as u64;
 
         for idx in child_index..(child_index + child_count) {
-            let child_inode = self.mapping.get_inode(idx).unwrap();
+            let child_inode = self.mapping.get_inode(idx, false).unwrap();
             if child_inode.is_dir() {
                 trace!("Got dir {}", child_inode.name().unwrap());
                 child_inode.collect_descendants_inodes(descendants)?;
@@ -791,8 +794,8 @@ impl RafsChunkInfo for OndiskChunkInfoWrapper {
     }
 
     #[inline]
-    fn block_id(&self) -> Arc<dyn RafsDigest> {
-        self.digest.clone()
+    fn block_id(&self) -> Arc<RafsDigest> {
+        Arc::new((*self.digest.as_ref()).into())
     }
 
     impl_chunkinfo_getter!(blob_index, u32);

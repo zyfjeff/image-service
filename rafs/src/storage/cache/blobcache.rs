@@ -12,13 +12,15 @@ use std::thread;
 use nix::sys::uio;
 extern crate spmc;
 use nix::unistd::lseek;
-use vm_memory::{VolatileMemory, VolatileSlice};
+use vm_memory::VolatileSlice;
 
 use crate::metadata::layout::OndiskBlobTableEntry;
-use crate::metadata::{RafsChunkInfo, RafsSuperMeta};
+use crate::metadata::{RafsChunkInfo, RafsDigest, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::RafsCache;
+use crate::storage::compress;
 use crate::storage::device::RafsBio;
+use crate::storage::factory::CacheConfig;
 use crate::storage::utils::{alloc_buf, copyv, digest_check, readv};
 
 use nydus_utils::{einval, enoent, enosys, last_error};
@@ -51,8 +53,7 @@ impl BlobCacheEntry {
         let data_offset =
             lseek(self.fd, d_offset, nix::unistd::Whence::SeekData).map_err(|_| last_error!())?;
 
-        // If we have written cache for the chunk,
-        // the seek data offset should be equal to d_offset
+        // The seek data offset should be equal to d_offset if the cache ready.
         if data_offset != d_offset {
             return Err(einval!());
         }
@@ -62,8 +63,7 @@ impl BlobCacheEntry {
             return Err(einval!());
         }
 
-        // TODO: why hit here in Smoke test?
-        if !digest_check(buf, self.chunk.block_id()) {
+        if !digest_check(buf, &self.chunk.block_id()) {
             return Err(einval!());
         }
 
@@ -114,7 +114,7 @@ impl BlobCacheEntry {
 
 #[derive(Default)]
 struct BlocCacheState {
-    chunk_map: HashMap<Vec<u8>, Arc<Mutex<BlobCacheEntry>>>,
+    chunk_map: HashMap<RafsDigest, Arc<Mutex<BlobCacheEntry>>>,
     file_map: HashMap<String, File>,
     work_dir: String,
 }
@@ -141,41 +141,40 @@ impl BlocCacheState {
 
 pub struct BlobCache {
     cache: Arc<RwLock<BlocCacheState>>,
-    blksize: u32,
-    chunk_validate: bool,
+    validate: bool,
     pub backend: Arc<dyn BlobBackend + Sync + Send>,
 }
 
 impl BlobCache {
-    fn get(&self, blk: &Arc<dyn RafsChunkInfo>) -> Option<Arc<Mutex<BlobCacheEntry>>> {
+    fn get(&self, blk: Arc<dyn RafsChunkInfo>) -> Option<Arc<Mutex<BlobCacheEntry>>> {
         // Do not expect poisoned lock here.
         self.cache
             .read()
             .unwrap()
             .chunk_map
-            .get(blk.block_id().data())
+            .get(&blk.block_id())
             .cloned()
     }
 
     fn set(
         &self,
         blob_id: &str,
-        blk: &Arc<dyn RafsChunkInfo>,
+        blk: Arc<dyn RafsChunkInfo>,
     ) -> Result<Arc<Mutex<BlobCacheEntry>>> {
         let block_id = blk.block_id();
         // Do not expect poisoned lock here.
         let mut cache = self.cache.write().unwrap();
 
         // Double check if someone else has inserted the blob chunk concurrently.
-        if let Some(entry) = cache.chunk_map.get(block_id.data()) {
+        if let Some(entry) = cache.chunk_map.get(&block_id) {
             Ok(entry.clone())
         } else {
             let fd = cache.get_blob_fd(blob_id)?;
-            let entry = Arc::new(Mutex::new(BlobCacheEntry::new(blk.clone(), fd)));
+            let entry = Arc::new(Mutex::new(BlobCacheEntry::new(blk, fd)));
 
             cache
                 .chunk_map
-                .insert(block_id.data().to_owned(), entry.clone());
+                .insert(block_id.as_ref().clone(), entry.clone());
 
             Ok(entry)
         }
@@ -184,11 +183,11 @@ impl BlobCache {
     fn entry_read(
         &self,
         blob_id: &str,
-        entry: &Arc<Mutex<BlobCacheEntry>>,
+        entry: &Mutex<BlobCacheEntry>,
         bio: &RafsBio,
         bufs: &[VolatileSlice],
         offset: u64,
-        chunk_validate: bool,
+        validate: bool,
     ) -> Result<usize> {
         let mut cache_entry = entry.lock().unwrap();
         let chunk = &cache_entry.chunk;
@@ -196,11 +195,16 @@ impl BlobCache {
         let c_size = chunk.compress_size() as usize;
         let d_size = chunk.decompress_size() as usize;
 
-        // hit cache if cache ready
+        // Hit cache if cache ready
         if CacheStatus::Ready == cache_entry.status {
             trace!("hit blob cache {} {}", chunk.block_id().to_string(), c_size);
-            // TODO: digest validation
-            return cache_entry.readv(bufs, offset + chunk.decompress_offset(), bio.size);
+            if !self.validate {
+                return cache_entry.readv(bufs, offset + chunk.decompress_offset(), bio.size);
+            }
+            // We need read whole chunk to validate digest.
+            let mut src_buf = alloc_buf(d_size);
+            cache_entry.read(&mut src_buf)?;
+            return copyv(&src_buf, bufs, offset, bio.size);
         }
 
         // Optimize for the case where the first VolatileSlice covers the whole chunk.
@@ -208,7 +212,7 @@ impl BlobCache {
             // Reuse the destination data buffer.
             let dst_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) };
 
-            // try to recovery cache from disk
+            // Try to recovery cache from disk
             if cache_entry.read(dst_buf).is_ok() {
                 trace!(
                     "recovery blob cache {} {}",
@@ -222,24 +226,24 @@ impl BlobCache {
             // Non-compressed source data is easy to handle
             if !chunk.is_compressed() {
                 // read from backend into the destination buffer
-                self.read_from_backend(blob_id, chunk, dst_buf, &mut [], chunk_validate)?;
+                self.read_by_chunk(blob_id, chunk.as_ref(), dst_buf, &mut [], validate)?;
                 cache_entry.cache(dst_buf, d_size);
                 return Ok(d_size);
             }
 
             let mut src_buf = alloc_buf(c_size);
-            self.read_from_backend(
+            self.read_by_chunk(
                 blob_id,
-                chunk,
+                chunk.as_ref(),
                 src_buf.as_mut_slice(),
                 dst_buf,
-                chunk_validate,
+                validate,
             )?;
             cache_entry.cache(dst_buf, d_size);
             return Ok(d_size);
         }
 
-        // try to recovery cache from disk
+        // Try to recovery cache from disk
         let mut dst_buf = alloc_buf(d_size);
         if cache_entry.read(dst_buf.as_mut_slice()).is_ok() {
             trace!(
@@ -253,24 +257,24 @@ impl BlobCache {
 
         if !chunk.is_compressed() {
             let mut dst_buf = alloc_buf(c_size);
-            self.read_from_backend(
+            self.read_by_chunk(
                 blob_id,
-                chunk,
+                chunk.as_ref(),
                 dst_buf.as_mut_slice(),
                 &mut [],
-                chunk_validate,
+                validate,
             )?;
             cache_entry.cache(dst_buf.as_mut_slice(), d_size);
             return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
         }
 
         let mut src_buf = alloc_buf(c_size);
-        self.read_from_backend(
+        self.read_by_chunk(
             blob_id,
-            chunk,
+            chunk.as_ref(),
             src_buf.as_mut_slice(),
             dst_buf.as_mut_slice(),
-            chunk_validate,
+            validate,
         )?;
         cache_entry.cache(dst_buf.as_mut_slice(), d_size);
         copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
@@ -295,7 +299,7 @@ impl<'a> MergedBlobRequest {
     }
 
     fn merge_begin(&mut self, first_cki: Arc<dyn RafsChunkInfo>, blob_id: &str) {
-        self.blob_offset = first_cki.blob_compress_offset();
+        self.blob_offset = first_cki.compress_offset();
         self.blob_size = first_cki.compress_size();
         // let thin_cki = Self::digest_chunkinfo(first_cki);
         self.chunks.push(first_cki);
@@ -313,8 +317,8 @@ fn is_chunk_continuous(prior: &RafsBio, cur: &RafsBio) -> bool {
     let prior_cki = &prior.chunkinfo;
     let cur_cki = &cur.chunkinfo;
 
-    let prior_end = prior_cki.blob_compress_offset() + prior_cki.compress_size() as u64;
-    let cur_offset = cur_cki.blob_compress_offset();
+    let prior_end = prior_cki.compress_offset() + prior_cki.compress_size() as u64;
+    let cur_offset = cur_cki.compress_offset();
 
     if prior_end == cur_offset && prior.blob_id == cur.blob_id {
         return true;
@@ -324,7 +328,7 @@ fn is_chunk_continuous(prior: &RafsBio, cur: &RafsBio) -> bool {
 }
 
 fn generate_merged_requests(bios: &mut [RafsBio], tx: &mut spmc::Sender<MergedBlobRequest>) {
-    bios.sort_by_key(|entry| entry.chunkinfo.blob_compress_offset());
+    bios.sort_by_key(|entry| entry.chunkinfo.compress_offset());
     let mut index: usize = 1;
     let first_cki = &bios[0].chunkinfo;
     let mut mr = MergedBlobRequest::default();
@@ -363,18 +367,17 @@ fn generate_merged_requests(bios: &mut [RafsBio], tx: &mut spmc::Sender<MergedBl
 }
 
 impl RafsCache for BlobCache {
-    fn backend(&self) -> &Box<dyn BlobBackend + Sync + Send> {
-        &self.backend
+    fn backend(&self) -> &(dyn BlobBackend + Sync + Send) {
+        self.backend.as_ref()
     }
 
-    /* whether has a block data */
     fn has(&self, blk: Arc<dyn RafsChunkInfo>) -> bool {
         // Doesn't expected poisoned lock here.
         self.cache
             .read()
             .unwrap()
             .chunk_map
-            .contains_key(blk.block_id().data())
+            .contains_key(&blk.block_id())
     }
 
     fn init(&self, _sb_meta: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> Result<()> {
@@ -385,36 +388,34 @@ impl RafsCache for BlobCache {
         Ok(())
     }
 
-    /* evict block data */
     fn evict(&self, blk: Arc<dyn RafsChunkInfo>) -> Result<()> {
         // Doesn't expected poisoned lock here.
         self.cache
             .write()
             .unwrap()
             .chunk_map
-            .remove(blk.block_id().data());
+            .remove(&blk.block_id());
 
         Ok(())
     }
 
-    /* flush cache */
     fn flush(&self) -> Result<()> {
         Err(enosys!())
     }
 
     fn read(&self, bio: &RafsBio, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
         let blob_id = &bio.blob_id;
-        let chunk = &bio.chunkinfo;
+        let chunk = bio.chunkinfo.clone();
 
-        if let Some(entry) = self.get(chunk) {
-            self.entry_read(blob_id, &entry, bio, bufs, offset, self.chunk_validate)
+        if let Some(entry) = self.get(chunk.clone()) {
+            self.entry_read(blob_id, &entry, bio, bufs, offset, self.validate)
         } else {
             let entry = self.set(blob_id, chunk)?;
-            self.entry_read(blob_id, &entry, bio, bufs, offset, self.chunk_validate)
+            self.entry_read(blob_id, &entry, bio, bufs, offset, self.validate)
         }
     }
 
-    fn write(&self, _blob_id: &str, _blk: &Arc<dyn RafsChunkInfo>, _buf: &[u8]) -> Result<usize> {
+    fn write(&self, _blob_id: &str, _blk: &dyn RafsChunkInfo, _buf: &[u8]) -> Result<usize> {
         Err(enosys!())
     }
 
@@ -451,7 +452,7 @@ impl RafsCache for BlobCache {
                         let _ = backend.read(blob_id.as_str(), c_buf.as_mut_slice(), blob_offset);
                         for c in continuous_chunks {
                             // Deal with mixture of compressed and uncompressed chunks.
-                            let offset_merged = c.blob_compress_offset() - blob_offset;
+                            let offset_merged = c.compress_offset() - blob_offset;
                             let fd = cache
                                 .write()
                                 .unwrap()
@@ -466,14 +467,14 @@ impl RafsCache for BlobCache {
                                     d_buf.as_mut_slice(),
                                 )
                                 .unwrap();
-                                let _ = uio::pwrite(fd, &d_buf, c.blob_decompress_offset() as i64)
+                                let _ = uio::pwrite(fd, &d_buf, c.decompress_offset() as i64)
                                     .map_err(|_| last_error!());
                             } else {
                                 let _ = uio::pwrite(
                                     fd,
                                     &c_buf[offset_merged as usize
                                         ..(offset_merged as usize + c.compress_size() as usize)],
-                                    c.blob_decompress_offset() as i64,
+                                    c.decompress_offset() as i64,
                                 )
                                 .map_err(|_| last_error!());
                             }
@@ -497,11 +498,9 @@ impl RafsCache for BlobCache {
     }
 }
 
-pub fn new<S: std::hash::BuildHasher>(
-    config: &HashMap<String, String, S>,
-    backend: Arc<dyn BlobBackend + Sync + Send>,
-) -> Result<BlobCache> {
-    let work_dir = config
+pub fn new(config: &CacheConfig, backend: Arc<dyn BlobBackend + Sync + Send>) -> Result<BlobCache> {
+    let config_map = &config.cache_config;
+    let work_dir = config_map
         .get("work_dir")
         .map_or(Ok("."), |p| -> Result<&str> {
             let path = fs::metadata(p).map_err(|e| {
@@ -516,10 +515,6 @@ pub fn new<S: std::hash::BuildHasher>(
                 )))
             }
         })?;
-    let chunk_validate: bool = config
-        .get("chunk_validate")
-        .map(|v| v == "true")
-        .unwrap_or(false);
 
     Ok(BlobCache {
         cache: Arc::new(RwLock::new(BlocCacheState {
@@ -527,7 +522,7 @@ pub fn new<S: std::hash::BuildHasher>(
             file_map: HashMap::new(),
             work_dir: String::from(work_dir),
         })),
-        chunk_validate,
+        validate: config.cache_validate,
         backend,
     })
 }
@@ -549,6 +544,7 @@ mod blob_cache_tests {
     use crate::storage::cache::RafsCache;
     use crate::storage::compress;
     use crate::storage::device::RafsBio;
+    use crate::storage::factory::CacheConfig;
 
     struct MockBackend {}
 
@@ -567,9 +563,6 @@ mod blob_cache_tests {
         fn write(&self, _blob_id: &str, _buf: &[u8], _offset: u64) -> Result<usize> {
             Ok(0)
         }
-
-        // Close a backend
-        fn close(&self) {}
     }
 
     #[test]
@@ -577,8 +570,13 @@ mod blob_cache_tests {
         // new blob cache
         let mut config = HashMap::new();
         config.insert(String::from("work_dir"), String::from("/tmp"));
+        let cache_config = CacheConfig {
+            cache_validate: true,
+            cache_type: String::from("blobcache"),
+            cache_config: config,
+        };
         let blob_cache = blobcache::new(
-            &config,
+            &cache_config,
             Box::new(MockBackend {}) as Box<dyn BlobBackend + Send + Sync>,
         )
         .unwrap();
@@ -594,7 +592,9 @@ mod blob_cache_tests {
 
         // generate chunk and bio
         let mut chunk = OndiskChunkInfo::new();
-        chunk.block_id = OndiskDigest::from_raw(&block_id);
+        let mut digest = OndiskDigest::new();
+        digest.as_mut().clone_from_slice(&block_id);
+        chunk.block_id = digest;
         chunk.file_offset = 0;
         chunk.compress_offset = 0;
         chunk.compress_size = 100;

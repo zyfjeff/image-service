@@ -14,6 +14,7 @@ use sha2::digest::Digest;
 use sha2::Sha256;
 
 use nydus_utils::einval;
+use rafs::fs::RafsConfig;
 use rafs::metadata::RafsSuper;
 use rafs::RafsIoRead;
 
@@ -273,11 +274,14 @@ impl<'a> Builder<'a> {
                 .open(self.work_dir.join("parent-bootstrap"))?,
         ) as Box<dyn RafsIoRead>;
 
-        let mut super_block = RafsSuper::new("direct", false)?;
+        let mut conf = RafsConfig::new();
+        conf.mode = String::from("direct");
+        conf.digest_validate = true;
+        let mut super_block = RafsSuper::new(&conf)?;
         super_block.load(&mut f_bootstrap)?;
 
         for i in 1..17 {
-            let inode = super_block.get_inode(i)?;
+            let inode = super_block.get_inode(i, true)?;
 
             println!(
                 "----- inode name: {:?} size: {} ino: {} idx: {} has_xattr {}",

@@ -123,12 +123,12 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
             self.dev
                 .rw_layer
                 .load()
-                .write(&self.bio.blob_id, &self.bio.chunkinfo, &wbuf)
+                .write(&self.bio.blob_id, self.bio.chunkinfo.as_ref(), &wbuf)
         } else {
             self.dev
                 .rw_layer
                 .load()
-                .write(&self.bio.blob_id, &self.bio.chunkinfo, buf)
+                .write(&self.bio.blob_id, self.bio.chunkinfo.as_ref(), buf)
         }
     }
 }

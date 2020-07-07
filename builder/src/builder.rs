@@ -2,8 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use nydus_utils::einval;
-use rafs::metadata::RafsDigest;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::fs::DirEntry;
@@ -16,36 +14,39 @@ use std::str::FromStr;
 use sha2::digest::Digest;
 use sha2::Sha256;
 
+use crate::node::*;
+
 use rafs::metadata::layout::*;
+use rafs::metadata::{RafsDigest, RafsStore};
 use rafs::storage::compress;
 use rafs::{RafsIoRead, RafsIoWrite};
 
-use crate::node::*;
+use nydus_utils::einval;
 
 // const OCISPEC_WHITEOUT_PREFIX: &str = ".wh.";
 // const OCISPEC_WHITEOUT_OPAQUE: &str = ".wh..wh..opq";
 
 pub struct Builder {
-    /// source root path
+    /// Source root path.
     root: PathBuf,
-    /// blob file writer
+    /// Blob file writer.
     f_blob: Box<dyn RafsIoWrite>,
-    /// bootstrap file writer
+    /// Bootstrap file writer.
     f_bootstrap: Box<dyn RafsIoWrite>,
-    /// parent bootstrap file reader
+    /// Parent bootstrap file reader.
     f_parent_bootstrap: Option<Box<dyn RafsIoRead>>,
-    /// blob id (user specified or sha256(blob))
+    /// Blob id (user specified or sha256(blob)).
     blob_id: String,
-    /// blob chunk compress flag
+    /// Blob chunk compress flag.
     compressor: compress::Algorithm,
-    /// readahead file list, use BTreeMap to keep stable iteration order
+    /// Readahead file list, use BTreeMap to keep stable iteration order.
     readahead_nodes: BTreeMap<PathBuf, Option<Node>>,
     /// Specify files or directories which need to prefetch. Their inode indexes will
     /// be persist to prefetch table.
     hint_readahead_files: BTreeMap<PathBuf, Option<u64>>,
-    /// node chunks info cache for hardlink, HashMap<i_ino, Node>
+    /// Node chunks info cache for hardlink, HashMap<i_ino, Node>.
     inode_map: HashMap<u64, Node>,
-    /// multiple layers build: upper source nodes
+    /// For multiple layers build.
     additions: Vec<Node>,
     removals: HashMap<PathBuf, bool>,
     opaques: HashMap<PathBuf, bool>,
@@ -172,7 +173,7 @@ impl Builder {
     pub fn walk(&mut self) -> Result<()> {
         let mut dirs = vec![0];
         // Rafs' inode number starts from 1 which belongs to root inode.
-        let mut iter_ino = 1;
+        let mut iter_ino: u64 = RAFS_ROOT_INODE;
         let mut root_node = self.new_node(&self.root);
         root_node.build_inode()?;
         root_node.index = iter_ino;
@@ -201,7 +202,7 @@ impl Builder {
                     let mut node = self.new_node(&path);
                     let real_ino = node.get_real_ino()?;
 
-                    // ignore special file
+                    // Ignore special file
                     if node.get_type()? == "" {
                         continue;
                     }
@@ -243,7 +244,7 @@ impl Builder {
     }
 
     fn dump(&mut self) -> Result<()> {
-        // inode table
+        // Inode table
         let super_block_size = size_of::<OndiskSuperBlock>();
         let inode_table_entries = self.additions.len() as u32;
         let mut inode_table = OndiskInodeTable::new(inode_table_entries as usize);
@@ -254,7 +255,7 @@ impl Builder {
             prefetch_table_size = align_to_rafs(self.hint_readahead_files.len() * size_of::<u32>());
         }
 
-        // blob table, blob id use sha256 string (length 64) as default
+        // Blob table, use sha256 string (length 64) as blob id if not specified.
         let blob_id_size = if self.blob_id != "" {
             self.blob_id.len()
         } else {
@@ -265,7 +266,7 @@ impl Builder {
         let mut blob_table = OndiskBlobTable::new();
         let blob_table_offset = (prefetch_table_offset + prefetch_table_size) as u64;
 
-        // super block
+        // Super block
         let mut super_block = OndiskSuperBlock::new();
         let inodes_count = self.inode_map.len() as u64;
         super_block.set_inodes_count(inodes_count);
@@ -277,7 +278,7 @@ impl Builder {
         super_block.set_flags(super_block.flags() | self.compressor as u64);
         super_block.set_prefetch_table_size(prefetch_table_size as u32);
 
-        // dump blob
+        // Dump blob
         let mut compress_offset = 0u64;
         let mut decompress_offset = 0u64;
         let mut blob_hash = Sha256::new();
@@ -294,7 +295,7 @@ impl Builder {
             let rootfs_path = node.rootfs();
             let file_type = node.get_type()?;
             inode_table.set(node.index, inode_offset)?;
-            // add inode size
+            // Add inode size
             inode_offset += node.inode.size() as u32;
             if node.inode.has_xattr() && !node.xattrs.pairs.is_empty() {
                 inode_offset += (size_of::<OndiskXAttrs>() + node.xattrs.aligned_size()) as u32;
@@ -303,14 +304,14 @@ impl Builder {
             if let Some(n) = self.readahead_nodes.get_mut(&rootfs_path) {
                 *n = Some(node.clone());
             }
-            // add chunks size
+            // Add chunks size
             if node.is_reg()? {
                 inode_offset +=
                     (node.inode.i_child_count as usize * size_of::<OndiskChunkInfo>()) as u32;
             }
         }
 
-        // sort readahead list by file size for better prefetch
+        // Sort readahead list by file size for better prefetch.
         let mut readahead_nodes = self
             .readahead_nodes
             .values_mut()
@@ -318,12 +319,11 @@ impl Builder {
             .collect::<Vec<&mut Node>>();
         readahead_nodes.sort_by_key(|node| node.inode.i_size);
 
-        // fist, dump readahead nodes
+        // Dump readahead nodes
         let blob_readahead_offset = 0;
         let mut blob_readahead_size = 0;
         for readahead_node in &mut readahead_nodes {
-            debug!("upper building readahead {}", readahead_node);
-
+            debug!("upper dumping readahead {}", readahead_node);
             blob_readahead_size += readahead_node.dump_blob(
                 &mut self.f_blob,
                 &mut blob_hash,
@@ -338,13 +338,13 @@ impl Builder {
             blob_readahead_size = 0;
         }
 
-        // then, dump other nodes
+        // Dump other nodes
         for node in &mut self.additions {
             if let Some(Some(readahead_node)) = self.readahead_nodes.get(&node.rootfs()) {
-                // prepare correct readahead node data for bootstrap dump
+                // Prepare readahead node for bootstrap dump.
                 node.clone_from(&readahead_node);
             } else {
-                debug!("upper building {}", node);
+                debug!("upper dumping {}", node);
                 node.dump_blob(
                     &mut self.f_blob,
                     &mut blob_hash,
@@ -356,9 +356,9 @@ impl Builder {
             }
         }
 
-        // set blob id, blob hash as default
+        // Set blob hash as blob id if not specified.
         if self.blob_id == "" {
-            self.blob_id = OndiskDigest::from_digest(blob_hash).to_string();
+            self.blob_id = format!("{:x}", blob_hash.finalize());
         }
         blob_table.add(
             self.blob_id.clone(),
@@ -366,7 +366,12 @@ impl Builder {
             blob_readahead_size,
         );
 
-        // dump bootstrap
+        // Set inode digest, use reverse iteration order to reduce repeated digest calculations.
+        for idx in (0..self.additions.len()).rev() {
+            self.additions[idx].inode.i_digest = self.digest_node(&self.additions[idx])?;
+        }
+
+        // Dump bootstrap
         super_block.store(&mut self.f_bootstrap)?;
         inode_table.store(&mut self.f_bootstrap)?;
         if self.ra_policy == ReadaheadPolicy::Fs {
@@ -378,24 +383,7 @@ impl Builder {
         }
         blob_table.store(&mut self.f_bootstrap)?;
 
-        // calculate inode digest
-        // use reverse iteration order to reduce repeated digest calculations
-        let len = self.additions.len();
-        for i in 0..len {
-            let idx = len - 1 - i;
-            if self.additions[idx].is_dir()? {
-                self.additions[idx].inode.i_digest = self.digest_node(&self.additions[idx])?;
-            }
-            trace!(
-                "inode digest {:?} {:?}",
-                self.additions[idx].rootfs(),
-                self.additions[idx].inode.i_digest
-            );
-        }
-
-        // dump bootstrap
         for node in &mut self.additions {
-            // use positive iteration order to dump bootstrap
             node.dump_bootstrap(&mut self.f_bootstrap, 0)?;
         }
 
@@ -403,24 +391,23 @@ impl Builder {
     }
 
     fn digest_node(&self, node: &Node) -> Result<OndiskDigest> {
+        // We have set digest for non-directory inode in the previous dump_blob workflow, so just return digest here.
         if !node.is_dir()? {
             return Ok(node.inode.i_digest);
         }
 
-        let mut inode_hash = Sha256::new();
-        let mut inode_digest = OndiskDigest::new();
         let child_index = node.inode.i_child_index;
         let child_count = node.inode.i_child_count;
+        let mut inode_hasher = RafsDigest::hasher();
 
         for idx in child_index..child_index + child_count {
             let child = &self.additions[(idx - 1) as usize];
-            inode_hash.update(&child.inode.i_digest.data());
+            inode_hasher.update(child.inode.i_digest.as_ref());
         }
 
-        let inode_hash = inode_hash.finalize();
-        inode_digest.data_mut().clone_from_slice(&inode_hash);
+        let inode_hash = RafsDigest::finalize(inode_hasher);
 
-        Ok(inode_digest)
+        Ok(inode_hash.into())
     }
 
     pub fn build(&mut self) -> Result<String> {

@@ -19,10 +19,8 @@ use nydus_utils::div_round_up;
 use nydus_utils::einval;
 
 use rafs::metadata::layout::*;
-use rafs::metadata::RafsDigest;
 use rafs::metadata::*;
 use rafs::storage::compress;
-use rafs::storage::utils::digest;
 
 pub type ChunkCache = HashMap<OndiskDigest, OndiskChunkInfo>;
 
@@ -69,21 +67,21 @@ impl fmt::Display for Node {
 #[derive(Clone)]
 pub struct Node {
     pub index: u64,
-    /// inode name
+    /// Inode name
     pub name: String,
-    /// type
+    /// Overlay type for multiple layers build
     pub overlay: Overlay,
-    /// source path
+    /// Source path
     pub root: PathBuf,
-    /// file path
+    /// File path
     pub path: PathBuf,
-    /// file inode info
+    /// File inode info
     pub inode: OndiskInode,
-    /// chunks info of file
+    /// Chunks info list of regular file
     pub chunks: Vec<OndiskChunkInfo>,
-    // chunks info of symlink file
+    /// Symlink info of symlink file
     pub symlink: Option<String>,
-    // xattr list of file
+    /// Xattr list of file
     pub xattrs: XAttrs,
 }
 
@@ -133,7 +131,8 @@ impl Node {
         compressor: compress::Algorithm,
     ) -> Result<usize> {
         if self.is_symlink()? {
-            self.inode.i_digest = OndiskDigest::from_buf(self.symlink.as_ref().unwrap().as_bytes());
+            self.inode.i_digest =
+                RafsDigest::from_buf(self.symlink.as_ref().unwrap().as_bytes()).into();
             return Ok(0);
         }
 
@@ -143,7 +142,7 @@ impl Node {
 
         let file_size = self.inode.i_size;
         let mut blob_size = 0usize;
-        let mut inode_hash = Sha256::new();
+        let mut inode_hasher = RafsDigest::hasher();
         let mut file = File::open(&self.path)?;
 
         for i in 0..self.inode.i_child_count {
@@ -162,9 +161,9 @@ impl Node {
             file.read_exact(&mut chunk_data)?;
 
             // calc chunk digest
-            chunk.block_id = digest(chunk_data.as_slice());
+            chunk.block_id = RafsDigest::from_buf(chunk_data.as_slice()).into();
             // calc inode digest
-            inode_hash.update(&chunk.block_id.data());
+            inode_hasher.update(chunk.block_id.as_ref());
 
             if let Some(cached_chunk) = chunk_cache.get(&chunk.block_id) {
                 chunk.clone_from(&cached_chunk);
@@ -210,7 +209,7 @@ impl Node {
         }
 
         // finish calc inode digest
-        self.inode.i_digest = OndiskDigest::from_digest(inode_hash);
+        self.inode.i_digest = RafsDigest::finalize(inode_hasher).into();
 
         Ok(blob_size)
     }

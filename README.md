@@ -33,7 +33,8 @@ oss backend with blobcache:
       }
     }
   },
-  "mode": "direct"
+  "mode": "direct",
+  "digest_validate": false
 }
 ```
 
@@ -49,7 +50,8 @@ registry backend:
       }
     }
   },
-  "mode": "direct"
+  "mode": "direct",
+  "digest_validate": false
 }
 ```
 
@@ -67,7 +69,8 @@ localfs backend:
     },
     "cache": {}
   },
-  "mode": "direct"
+  "mode": "direct",
+  "digest_validate": false
 }
 ```
 

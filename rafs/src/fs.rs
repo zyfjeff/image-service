@@ -48,7 +48,7 @@ pub struct RafsConfig {
     pub device: factory::Config,
     pub mode: String,
     #[serde(default)]
-    pub validate_digest: bool,
+    pub digest_validate: bool,
     #[serde(default)]
     pub iostats_files: bool,
     #[serde(default)]
@@ -67,8 +67,8 @@ impl fmt::Display for RafsConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "mode={} validate_digest={} iostats_files={}",
-            self.mode, self.validate_digest, self.iostats_files
+            "mode={} digest_validate={} iostats_files={}",
+            self.mode, self.digest_validate, self.iostats_files
         )
     }
 }
@@ -77,6 +77,7 @@ impl fmt::Display for RafsConfig {
 pub struct Rafs {
     device: device::RafsDevice,
     sb: RafsSuper,
+    digest_validate: bool,
     fs_prefetch: bool,
     initialized: bool,
     ios: Arc<io_stats::GlobalIOStats>,
@@ -89,11 +90,14 @@ pub struct Rafs {
 
 impl Rafs {
     pub fn new(conf: RafsConfig, id: &str) -> Result<Self> {
+        let mut device_conf = conf.device.clone();
+        device_conf.cache.cache_validate = conf.digest_validate;
         let rafs = Rafs {
-            device: device::RafsDevice::new(conf.device.clone())?,
-            sb: RafsSuper::new(conf.mode.as_str(), conf.validate_digest)?,
+            device: device::RafsDevice::new(device_conf)?,
+            sb: RafsSuper::new(&conf)?,
             initialized: false,
             ios: io_stats::new(id),
+            digest_validate: conf.digest_validate,
             fs_prefetch: conf.fs_prefetch,
             i_uid: geteuid().into(),
             i_gid: getegid().into(),
@@ -183,7 +187,7 @@ impl Rafs {
             return Ok(());
         }
 
-        let parent = self.sb.get_inode(ino)?;
+        let parent = self.sb.get_inode(ino, self.digest_validate)?;
         if !parent.is_dir() {
             return Err(err_not_directory!());
         }
@@ -227,7 +231,7 @@ impl Rafs {
 
     fn lookup_wrapped(&self, ino: u64, name: &CStr) -> Result<Entry> {
         let target = name.to_str().map_err(|_| ebadf!("failed to get name"))?;
-        let parent = self.sb.get_inode(ino)?;
+        let parent = self.sb.get_inode(ino, self.digest_validate)?;
         if !parent.is_dir() {
             return Err(err_not_directory!());
         }
@@ -239,7 +243,7 @@ impl Rafs {
         } else if target == DOTDOT {
             Ok(self
                 .sb
-                .get_inode(parent.parent())
+                .get_inode(parent.parent(), self.digest_validate)
                 .map(|i| self.get_inode_entry(i))
                 .unwrap_or_else(|_| self.negative_entry()))
         } else {
@@ -254,7 +258,7 @@ impl Rafs {
     }
 
     fn get_inode_attr(&self, ino: u64) -> Result<Attr> {
-        let inode = self.sb.get_inode(ino)?;
+        let inode = self.sb.get_inode(ino, false)?;
         let mut attr = inode.get_attr();
         attr.uid = self.i_uid;
         attr.gid = self.i_gid;
@@ -281,7 +285,7 @@ impl Rafs {
 
 impl BackendFileSystem for Rafs {
     fn mount(&self) -> Result<(Entry, u64)> {
-        let root_inode = self.sb.get_inode(ROOT_ID)?;
+        let root_inode = self.sb.get_inode(ROOT_ID, self.digest_validate)?;
         self.ios.new_file_counter(root_inode.ino());
         let entry = self.get_inode_entry(root_inode);
         Ok((entry, self.sb.get_max_ino()))
@@ -344,7 +348,7 @@ impl FileSystem for Rafs {
     }
 
     fn readlink(&self, _ctx: Context, ino: u64) -> Result<Vec<u8>> {
-        let inode = self.sb.get_inode(ino)?;
+        let inode = self.sb.get_inode(ino, self.digest_validate)?;
 
         Ok(inode.get_symlink()?.as_bytes().to_vec())
     }
@@ -361,7 +365,7 @@ impl FileSystem for Rafs {
         _lock_owner: Option<u64>,
         _flags: u32,
     ) -> Result<usize> {
-        let inode = self.sb.get_inode(ino)?;
+        let inode = self.sb.get_inode(ino, false)?;
         if offset >= inode.size() {
             return Ok(0);
         }
@@ -403,7 +407,7 @@ impl FileSystem for Rafs {
 
     fn getxattr(&self, _ctx: Context, inode: u64, name: &CStr, size: u32) -> Result<GetxattrReply> {
         let name = name.to_str().map_err(|_| einval!("invalid xattr name"))?;
-        let inode = self.sb.get_inode(inode)?;
+        let inode = self.sb.get_inode(inode, false)?;
 
         let value = inode.get_xattr(name)?;
         match value {
@@ -419,7 +423,7 @@ impl FileSystem for Rafs {
     }
 
     fn listxattr(&self, _ctx: Context, inode: u64, size: u32) -> Result<ListxattrReply> {
-        let inode = self.sb.get_inode(inode)?;
+        let inode = self.sb.get_inode(inode, false)?;
 
         let mut count = 0;
         let mut buf = Vec::new();
@@ -462,7 +466,7 @@ impl FileSystem for Rafs {
         add_entry: &mut dyn FnMut(DirEntry, Entry) -> Result<usize>,
     ) -> Result<()> {
         self.do_readdir(ino, size, offset, |dir_entry| {
-            let inode = self.sb.get_inode(dir_entry.ino)?;
+            let inode = self.sb.get_inode(dir_entry.ino, self.digest_validate)?;
             add_entry(dir_entry, self.get_inode_entry(inode))
         })
     }

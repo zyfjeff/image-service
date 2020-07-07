@@ -53,6 +53,7 @@ pub const RAFS_SUPER_VERSION_V4: u32 = 0x400;
 pub const RAFS_SUPER_VERSION_V5: u32 = 0x500;
 pub const RAFS_SUPER_MIN_VERSION: u32 = RAFS_SUPER_VERSION_V4;
 pub const RAFS_ALIGNMENT: usize = 8;
+pub const RAFS_ROOT_INODE: u64 = 1;
 
 macro_rules! impl_metadata_converter {
     ($T: ty) => {
@@ -631,27 +632,22 @@ impl<'a> RafsStore for OndiskInodeWrapper<'a> {
         let inode_data = self.inode.as_ref();
         w.write_all(inode_data)?;
         size += inode_data.len();
-        println!("size 1: {}", size);
 
         let name = self.name.as_bytes();
         w.write_all(name)?;
         size += name.len();
-        println!("size 2: {}", size);
 
         let padding = self.inode.i_name_size as usize - name.len();
         w.write_padding(padding)?;
         size += padding;
-        println!("size 3: {}", size);
 
         if let Some(symlink) = self.symlink {
             let symlink_path = symlink.as_bytes();
             w.write_all(symlink_path)?;
             size += symlink_path.len();
-            println!("size 4: {}", size);
             let padding = self.inode.i_symlink_size as usize - symlink_path.len();
             w.write_padding(padding)?;
             size += padding;
-            println!("size 5: {}", size);
         }
 
         Ok(size)
@@ -671,16 +667,16 @@ pub struct OndiskChunkInfo {
     /// CHUNK_FLAG_COMPRESSED
     pub flags: u32,
 
-    /// compressed size
+    /// compressed size in blob
     pub compress_size: u32,
-    /// decompressed size
+    /// decompressed size in blob
     pub decompress_size: u32,
-    /// blob compressed offset
+    /// compressed offset in blob
     pub compress_offset: u64,
-    /// blob decompressed offset
+    /// decompressed offset in blob
     pub decompress_offset: u64,
 
-    /// file position of block, with fixed block length
+    /// offset in file
     pub file_offset: u64,
     /// reserved
     pub reserved: u64,
@@ -705,13 +701,12 @@ impl RafsStore for OndiskChunkInfo {
 
 impl RafsChunkInfo for OndiskChunkInfo {
     fn validate(&self, _sb: &RafsSuperMeta) -> Result<()> {
-        self.block_id.validate()?;
         Ok(())
     }
 
     #[inline]
-    fn block_id(&self) -> Arc<dyn RafsDigest> {
-        Arc::new(self.block_id)
+    fn block_id(&self) -> Arc<RafsDigest> {
+        Arc::new(self.block_id.into())
     }
 
     #[inline]
@@ -749,13 +744,13 @@ impl fmt::Display for OndiskChunkInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "file_offset {}, compress_offset {}, compress_size {}, decompress_offset {}, decompress_size {}, block_id {}, is_compressed {}",
+            "file_offset {}, compress_offset {}, compress_size {}, decompress_offset {}, decompress_size {}, block_id {:?}, is_compressed {}",
             self.file_offset,
             self.compress_offset,
             self.compress_size,
             self.decompress_offset,
             self.decompress_size,
-            self.block_id.to_string(),
+            self.block_id,
             self.is_compressed(),
         )
     }
@@ -765,7 +760,7 @@ impl fmt::Display for OndiskChunkInfo {
 #[repr(C)]
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub struct OndiskDigest {
-    data: [u8; RAFS_SHA256_LENGTH],
+    pub data: [u8; RAFS_DIGEST_LENGTH],
 }
 
 impl fmt::Debug for OndiskDigest {
@@ -783,47 +778,19 @@ impl OndiskDigest {
             ..Default::default()
         }
     }
+}
 
-    pub fn from_digest(sha: Sha256) -> Self {
-        let mut digest = OndiskDigest::new();
-        digest.data.clone_from_slice(&sha.finalize());
-        digest
-    }
-
-    pub fn from_buf(buf: &[u8]) -> Self {
-        let mut hash = Sha256::new();
-        hash.update(buf);
-        Self::from_digest(hash)
-    }
-
-    pub fn from_raw(data: &[u8; RAFS_SHA256_LENGTH]) -> Self {
-        OndiskDigest { data: *data }
+impl From<[u8; RAFS_DIGEST_LENGTH]> for OndiskDigest {
+    fn from(data: [u8; RAFS_DIGEST_LENGTH]) -> Self {
+        Self { data }
     }
 }
 
-impl RafsDigest for OndiskDigest {
-    fn validate(&self) -> Result<()> {
-        Ok(())
-    }
-
-    #[inline]
-    fn data(&self) -> &[u8] {
-        &self.data
-    }
-
-    #[inline]
-    fn data_mut(&mut self) -> &mut [u8] {
-        &mut self.data
-    }
-
-    fn to_string(&self) -> String {
-        let mut ret = String::new();
-
-        for c in &self.data {
-            write!(ret, "{:02x}", c).unwrap();
+impl From<RafsDigest> for OndiskDigest {
+    fn from(digest: RafsDigest) -> Self {
+        Self {
+            data: *digest.result.as_bytes(),
         }
-
-        ret
     }
 }
 
