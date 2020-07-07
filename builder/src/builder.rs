@@ -243,7 +243,7 @@ impl Builder {
         let mut inode_offset =
             (super_block_size + inode_table_size + prefetch_table_size + blob_table_size) as u32;
 
-        debug!(
+        info!(
             "inode table starts at {}, prefetch table starts at {}, blob table starts at {}, inodes starts at {}",
             super_block_size, prefetch_table_offset, blob_table_offset, inode_offset
         );

@@ -379,6 +379,7 @@ impl PrefetchTable {
         self.inode_indexes.sort();
 
         let (_, data, _) = unsafe { self.inode_indexes.align_to::<u8>() };
+
         w.write_all(data.as_ref())?;
 
         // OK. Let's see if we have to align... :-(
@@ -479,7 +480,6 @@ impl OndiskBlobTable {
         r.read_exact(&mut input)?;
         self.load_from_slice(&input)
     }
-
     pub fn load_from_slice(&mut self, input: &[u8]) -> Result<()> {
         let mut input_rest = input;
         loop {

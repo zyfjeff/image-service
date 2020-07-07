@@ -26,6 +26,7 @@ use crate::metadata::cached::CachedInodes;
 use crate::storage::compress;
 use crate::storage::device::{RafsBio, RafsBioDesc};
 use crate::*;
+use std::mem::size_of;
 
 use nydus_utils::{ebadf, einval};
 
@@ -79,6 +80,8 @@ pub struct RafsSuperMeta {
     pub blob_table_offset: u64,
     pub blob_readahead_offset: u32,
     pub blob_readahead_size: u32,
+    pub prefetch_table_offset: u64,
+    pub prefetch_table_size: u32,
     pub attr_timeout: Duration,
     pub entry_timeout: Duration,
 }
@@ -140,6 +143,8 @@ impl Default for RafsSuper {
                 blob_table_offset: 0,
                 blob_readahead_offset: 0,
                 blob_readahead_size: 0,
+                prefetch_table_offset: 0,
+                prefetch_table_size: 0,
                 attr_timeout: Duration::from_secs(RAFS_DEFAULT_ATTR_TIMEOUT),
                 entry_timeout: Duration::from_secs(RAFS_DEFAULT_ENTRY_TIMEOUT),
             },
@@ -190,6 +195,8 @@ impl RafsSuper {
         self.meta.sb_size = sb.sb_size();
         self.meta.block_size = sb.block_size();
         self.meta.flags = sb.flags();
+        self.meta.prefetch_table_offset = sb.prefetch_table_offset();
+        self.meta.prefetch_table_size = sb.prefetch_table_size();
 
         match self.meta.version {
             RAFS_SUPER_VERSION_V4 => {
@@ -269,8 +276,7 @@ impl RafsSuper {
     }
 
     pub fn prefetch_hint_files(&self, r: &mut RafsIoReader) -> Result<RafsBioDesc> {
-        let prefetch_table_size =
-            (self.meta.blob_table_offset - self.meta.prefetch_table_offset) as usize;
+        let prefetch_table_size = self.meta.prefetch_table_size as usize;
         let hint_entries = prefetch_table_size / size_of::<u32>();
         let mut prefetch_table = PrefetchTable::new();
         if prefetch_table

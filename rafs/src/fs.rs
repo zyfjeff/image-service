@@ -116,6 +116,13 @@ impl Rafs {
         self.device
             .init(&self.sb.meta, &self.sb.inodes.get_blobs())?;
 
+        // Device should be ready before any prefetch.
+        if let Some(ref mut desc) = self.sb.prefetch_hint_files(r) {
+            if self.device.prefetch(desc).is_err() {
+                eother!("Prefetch error");
+            }
+        }
+
         self.initialized = true;
         info!("rafs imported");
 
