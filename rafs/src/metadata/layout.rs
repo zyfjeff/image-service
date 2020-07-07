@@ -234,8 +234,10 @@ impl OndiskSuperBlock {
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
         r.read_exact(self.as_mut())
     }
+}
 
-    pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
+impl RafsStore for OndiskSuperBlock {
+    fn store_inner(&self, w: &mut RafsIoWriter) -> Result<usize> {
         w.write_all(self.as_ref())?;
         Ok(self.as_ref().len())
     }
@@ -259,8 +261,9 @@ pub struct OndiskInodeTable {
 
 impl OndiskInodeTable {
     pub fn new(entries: usize) -> Self {
+        let table_size = align_to_rafs(entries * size_of::<u32>()) / size_of::<u32>();
         OndiskInodeTable {
-            data: vec![0; entries],
+            data: vec![0; table_size],
         }
     }
 
@@ -303,16 +306,18 @@ impl OndiskInodeTable {
         Ok((offset << 3) as u32)
     }
 
-    pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
-        let (_, data, _) = unsafe { self.data.align_to::<u8>() };
-        w.write_all(data)?;
-        Ok(data.len())
-    }
-
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
         let (_, data, _) = unsafe { self.data.align_to_mut::<u8>() };
         r.read_exact(data)?;
         Ok(())
+    }
+}
+
+impl RafsStore for OndiskInodeTable {
+    fn store_inner(&self, w: &mut RafsIoWriter) -> Result<usize> {
+        let (_, data, _) = unsafe { self.data.align_to::<u8>() };
+        w.write_all(data)?;
+        Ok(data.len())
     }
 }
 
@@ -374,30 +379,6 @@ impl OndiskBlobTable {
         Ok(self.entries[blob_index as usize].clone())
     }
 
-    pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
-        let mut size = 0;
-
-        self.entries
-            .iter()
-            .enumerate()
-            .map(|(idx, entry)| {
-                w.write_all(&u32::to_le_bytes(entry.readahead_offset))?;
-                w.write_all(&u32::to_le_bytes(entry.readahead_size))?;
-                w.write_all(entry.blob_id.as_bytes())?;
-                if idx != self.entries.len() - 1 {
-                    size += size_of::<u32>() * 2 + entry.blob_id.len() + 1;
-                    w.write_all(&[b'\0'])?;
-                } else {
-                    size += size_of::<u32>() * 2 + entry.blob_id.len();
-                }
-                Ok(())
-            })
-            .collect::<Result<()>>()?;
-        w.write_all(&vec![0u8; align_to_rafs(size) - size])?;
-
-        Ok(size)
-    }
-
     pub fn load(&mut self, r: &mut RafsIoReader, size: usize) -> Result<()> {
         let mut input = vec![0u8; size];
 
@@ -434,6 +415,32 @@ impl OndiskBlobTable {
 
     pub fn get_all(&self) -> Vec<OndiskBlobTableEntry> {
         self.entries.clone()
+    }
+}
+
+impl RafsStore for OndiskBlobTable {
+    fn store_inner(&self, w: &mut RafsIoWriter) -> Result<usize> {
+        let mut size = 0;
+
+        self.entries
+            .iter()
+            .enumerate()
+            .map(|(idx, entry)| {
+                w.write_all(&u32::to_le_bytes(entry.readahead_offset))?;
+                w.write_all(&u32::to_le_bytes(entry.readahead_size))?;
+                w.write_all(entry.blob_id.as_bytes())?;
+                if idx != self.entries.len() - 1 {
+                    size += size_of::<u32>() * 2 + entry.blob_id.len() + 1;
+                    w.write_all(&[b'\0'])?;
+                } else {
+                    size += size_of::<u32>() * 2 + entry.blob_id.len();
+                }
+                Ok(())
+            })
+            .collect::<Result<()>>()?;
+        w.write_all(&vec![0u8; align_to_rafs(size) - size])?;
+
+        Ok(size)
     }
 }
 
@@ -495,30 +502,6 @@ impl OndiskInode {
         r.read_exact(self.as_mut())
     }
 
-    pub fn store(&self, w: &mut RafsIoWriter, name: &[u8], symlink: &[u8]) -> Result<usize> {
-        let mut size: usize = 0;
-
-        let inode_data = self.as_ref();
-        w.write_all(inode_data)?;
-        size += inode_data.len();
-
-        w.write_all(name)?;
-        size += name.len();
-        let padding = vec![0u8; self.i_name_size as usize - name.len()];
-        w.write_all(&padding)?;
-        size += padding.len();
-
-        if !symlink.is_empty() {
-            w.write_all(symlink)?;
-            size += symlink.len();
-            let padding = vec![0u8; self.i_symlink_size as usize - symlink.len()];
-            w.write_all(&padding)?;
-            size += padding.len();
-        }
-
-        Ok(size)
-    }
-
     #[inline]
     pub fn is_dir(&self) -> bool {
         self.i_mode & libc::S_IFMT == libc::S_IFDIR
@@ -542,6 +525,45 @@ impl OndiskInode {
     #[inline]
     pub fn has_xattr(&self) -> bool {
         self.i_flags & INO_FLAG_XATTR == INO_FLAG_XATTR
+    }
+}
+
+pub struct OndiskInodeWrapper<'a> {
+    pub name: &'a String,
+    pub symlink: Option<&'a String>,
+    pub inode: &'a OndiskInode,
+}
+
+impl<'a> RafsStore for OndiskInodeWrapper<'a> {
+    fn store_inner(&self, w: &mut RafsIoWriter) -> Result<usize> {
+        let name = self.name.as_bytes();
+
+        let mut symlink_path: &[u8] = &[];
+        if let Some(symlink) = &self.symlink {
+            symlink_path = symlink.as_bytes();
+        }
+
+        let mut size: usize = 0;
+
+        let inode_data = self.inode.as_ref();
+        w.write_all(inode_data)?;
+        size += inode_data.len();
+
+        w.write_all(name)?;
+        size += name.len();
+        let padding = vec![0u8; self.inode.i_name_size as usize - name.len()];
+        w.write_all(&padding)?;
+        size += padding.len();
+
+        if !symlink_path.is_empty() {
+            w.write_all(symlink_path)?;
+            size += symlink_path.len();
+            let padding = vec![0u8; self.inode.i_symlink_size as usize - symlink_path.len()];
+            w.write_all(&padding)?;
+            size += padding.len();
+        }
+
+        Ok(size)
     }
 }
 
@@ -581,8 +603,10 @@ impl OndiskChunkInfo {
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
         r.read_exact(self.as_mut())
     }
+}
 
-    pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
+impl RafsStore for OndiskChunkInfo {
+    fn store_inner(&self, w: &mut RafsIoWriter) -> Result<usize> {
         w.write_all(self.as_ref())?;
         Ok(self.as_ref().len())
     }
@@ -755,8 +779,10 @@ impl XAttrs {
     pub fn aligned_size(&self) -> usize {
         align_to_rafs(self.size())
     }
+}
 
-    pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
+impl RafsStore for XAttrs {
+    fn store_inner(&self, w: &mut RafsIoWriter) -> Result<usize> {
         let mut size = 0;
 
         if !self.pairs.is_empty() {

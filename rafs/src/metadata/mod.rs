@@ -348,3 +348,15 @@ pub trait RafsDigest {
 
     fn to_string(&self) -> String;
 }
+
+/// Trait to store Rafs meta block and validate alignment.
+pub trait RafsStore {
+    fn store_inner(&self, w: &mut RafsIoWriter) -> Result<usize>;
+    fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
+        let size = self.store_inner(w)?;
+        if size & (RAFS_ALIGNMENT - 1) != 0 {
+            return Err(einval!("unaligned data"));
+        }
+        Ok(size)
+    }
+}

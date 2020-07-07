@@ -15,6 +15,7 @@ use sha2::digest::Digest;
 use sha2::Sha256;
 
 use rafs::metadata::layout::*;
+use rafs::metadata::RafsStore;
 use rafs::storage::compress;
 use rafs::{RafsIoRead, RafsIoWrite};
 

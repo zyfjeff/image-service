@@ -220,13 +220,12 @@ impl Node {
         let mut node_size = 0;
 
         // dump inode info
-        let mut symlink_path: &[u8] = &[];
-        if let Some(symlink) = &self.symlink {
-            symlink_path = symlink.as_bytes();
-        }
-        let inode_size = self
-            .inode
-            .store(f_bootstrap, self.name.as_bytes(), symlink_path)?;
+        let inode = OndiskInodeWrapper {
+            name: &self.name,
+            symlink: self.symlink.as_ref(),
+            inode: &self.inode,
+        };
+        let inode_size = inode.store(f_bootstrap)?;
         node_size += inode_size;
 
         // dump inode xattr

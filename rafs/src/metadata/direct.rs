@@ -210,7 +210,7 @@ impl RafsSuperInodes for DirectMapping {
             || len > RAFS_MAX_METADATA_SIZE as u64
             || len & (RAFS_ALIGNMENT as u64 - 1) != 0
         {
-            return Err(ebadf!("invalid superblock"));
+            return Err(ebadf!("invalid metadata file"));
         }
 
         // Validate inode table layout
