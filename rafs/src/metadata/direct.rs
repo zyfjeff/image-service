@@ -423,7 +423,7 @@ impl RafsInode for OndiskInodeWrapper {
         let state = self.state();
         let inode = self.inode(state.deref());
 
-        // * - parent inode nuber must be less than child inode number unless child is a hardlink.
+        // * - parent inode number must be less than child inode number unless child is a hardlink.
         // * - inode link count must not be zero.
         // * - name_size must be less than 255. Due to alignment, the check is not so strict.
         // * - name_size and symlink_size must be correctly aligned.

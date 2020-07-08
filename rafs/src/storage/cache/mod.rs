@@ -33,6 +33,8 @@ pub trait RafsCache {
     // write a chunk data through cache
     fn write(&self, blob_id: &str, blk: &Arc<dyn RafsChunkInfo>, buf: &[u8]) -> Result<usize>;
 
+    fn prefetch(&self, bio: &mut [RafsBio]) -> Result<usize>;
+
     // release cache
     fn release(&self);
 }

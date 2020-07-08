@@ -66,6 +66,12 @@ impl RafsDevice {
         }
         Ok(count)
     }
+
+    pub fn prefetch(&self, desc: &mut RafsBioDesc) -> io::Result<usize> {
+        self.rw_layer.load().prefetch(desc.bi_vec.as_mut_slice())?;
+
+        Ok(desc.bi_size)
+    }
 }
 
 struct RafsBioDevice<'a> {
@@ -170,6 +176,7 @@ impl RafsBioDesc {
 }
 
 /// Rafs blob IO info
+#[derive(Clone)]
 pub struct RafsBio {
     /// reference to the chunk
     pub chunkinfo: Arc<dyn RafsChunkInfo>,

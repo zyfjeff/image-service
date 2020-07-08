@@ -28,7 +28,7 @@ use crate::storage::device::{RafsBio, RafsBioDesc};
 use crate::*;
 use std::mem::size_of;
 
-use nydus_utils::{ebadf, einval};
+use nydus_utils::{ebadf, einval, enoent};
 
 pub mod cached;
 pub mod direct;

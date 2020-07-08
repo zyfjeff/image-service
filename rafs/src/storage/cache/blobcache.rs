@@ -250,6 +250,87 @@ impl BlobCache {
     }
 }
 
+#[derive(Default, Clone)]
+struct MergedBlobRequest<'a> {
+    // Chunks that are continuous to each other.
+    pub chunks: Vec<&'a dyn RafsChunkInfo>,
+    pub blob_offset: u64,
+    pub blob_size: u32,
+    pub blob_id: String,
+}
+
+impl<'a> MergedBlobRequest<'a> {
+    fn reset(&mut self) {
+        self.blob_offset = 0;
+        self.blob_size = 0;
+        self.blob_id.truncate(0);
+        self.chunks.clear();
+    }
+
+    fn merge_begin(&mut self, first_cki: &'a dyn RafsChunkInfo, blob_id: &str) {
+        self.blob_offset = first_cki.blob_compress_offset();
+        self.blob_size = first_cki.compress_size();
+        self.chunks.push(first_cki);
+        self.blob_id = String::from(blob_id);
+    }
+
+    fn merge_one_chunk(&mut self, cki: &'a dyn RafsChunkInfo) {
+        self.blob_size += cki.compress_size();
+        self.chunks.push(cki);
+    }
+}
+
+fn is_chunk_continuous(prior: &RafsBio, cur: &RafsBio) -> bool {
+    let prior_cki = &prior.chunkinfo;
+    let cur_cki = &cur.chunkinfo;
+
+    let prior_end = prior_cki.blob_compress_offset() + prior_cki.compress_size() as u64;
+    let cur_offset = cur_cki.blob_compress_offset();
+
+    if prior_end == cur_offset && prior.blob_id == cur.blob_id {
+        return true;
+    }
+
+    false
+}
+
+fn generate_merged_requests(bios: &mut [RafsBio]) -> Vec<MergedBlobRequest> {
+    let mut index: usize = 1;
+    let mut v = Vec::new();
+    bios.sort_by_key(|entry| entry.chunkinfo.blob_compress_offset());
+    let first_cki = bios[0].chunkinfo.as_ref();
+    let mut mr = MergedBlobRequest::default();
+    mr.merge_begin(first_cki, &bios[0].blob_id);
+
+    if bios.len() == 1 {
+        v.push(mr.clone());
+        return v;
+    }
+
+    loop {
+        let cki = &bios[index].chunkinfo;
+        let prior_bio = &bios[index - 1];
+        let cur_bio = &bios[index];
+
+        if is_chunk_continuous(prior_bio, cur_bio) {
+            mr.merge_one_chunk(cki.as_ref());
+        } else {
+            // New a MR if a non-continuous chunk is met.
+            mr.reset();
+            mr.merge_begin(cki.as_ref(), &cur_bio.blob_id);
+        }
+
+        index += 1;
+
+        if index >= bios.len() {
+            v.push(mr.clone());
+            break;
+        }
+    }
+
+    v
+}
+
 impl RafsCache for BlobCache {
     /* whether has a block data */
     fn has(&self, blk: Arc<dyn RafsChunkInfo>) -> bool {
@@ -303,6 +384,57 @@ impl RafsCache for BlobCache {
     }
 
     fn release(&self) {}
+    /// Bypass memory blob cache index, fetch blocks from backend and directly
+    /// mirror them into blob cache file.
+    /// Continuous chunks may be compressed or not.
+    fn prefetch(&self, bios: &mut [RafsBio]) -> Result<usize> {
+        // Try to merge bios
+
+        for mr in generate_merged_requests(bios) {
+            let blob_offset = mr.blob_offset;
+            let blob_size = mr.blob_size;
+            let continuous_chunks = &mr.chunks;
+            let blob_id = &mr.blob_id;
+            info!(
+                "Merged req id {} req offset {} size {}",
+                blob_id, blob_offset, blob_size
+            );
+            let mut c_buf = alloc_buf(blob_size as usize);
+            // Blob id must be unique.
+
+            let _ = self
+                .backend
+                .read(blob_id.as_str(), c_buf.as_mut_slice(), blob_offset)?;
+
+            let mut cache = self.cache.write().unwrap();
+            let fd = cache.get_blob_fd(blob_id.as_str()).unwrap();
+            for c in continuous_chunks {
+                // Deal with mixture of compressed and uncompressed chunks.
+                let offset_merged = c.blob_compress_offset() - blob_offset;
+                let mut d_buf = alloc_buf(c.decompress_size() as usize);
+
+                if c.is_compressed() {
+                    let _sz = compress::decompress(
+                        &c_buf[offset_merged as usize
+                            ..(offset_merged as u32 + c.compress_size()) as usize],
+                        d_buf.as_mut_slice(),
+                    )?;
+                    let _ = uio::pwrite(fd, &d_buf, c.blob_decompress_offset() as i64)
+                        .map_err(|_| last_error!())?;
+                } else {
+                    let _ = uio::pwrite(
+                        fd,
+                        &c_buf[offset_merged as usize
+                            ..(offset_merged as u32 + c.compress_size()) as usize],
+                        c.blob_decompress_offset() as i64,
+                    )
+                    .map_err(|_| last_error!())?;
+                }
+            }
+        }
+
+        Ok(0)
+    }
 }
 
 pub fn new<S: std::hash::BuildHasher>(
