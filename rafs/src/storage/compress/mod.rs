@@ -90,7 +90,7 @@ mod tests {
             0x1u8, 0x2u8, 0x3u8, 0x4u8, 0x1u8, 0x2u8, 0x3u8, 0x4u8, 0x1u8, 0x2u8, 0x3u8, 0x4u8,
             0x1u8, 0x2u8, 0x3u8, 0x4u8,
         ];
-        let compressed = compress(&buf, Algorithm::None).unwrap();
+        let (compressed, _) = compress(&buf, Algorithm::None).unwrap();
 
         assert_eq!(buf.to_vec(), compressed.to_vec());
     }
@@ -98,7 +98,7 @@ mod tests {
     #[test]
     fn test_lz4_compress_decompress_0_byte() {
         let buf = Vec::new();
-        let compressed = compress(&buf, Algorithm::LZ4Block).unwrap();
+        let compressed = lz4_compress(&buf).unwrap();
         let mut decompressed = vec![0; buf.len()];
         let sz = decompress(&compressed, decompressed.as_mut_slice()).unwrap();
 
@@ -109,7 +109,7 @@ mod tests {
     #[test]
     fn test_lz4_compress_decompress_1_byte() {
         let buf = vec![0x1u8];
-        let compressed = compress(&buf, Algorithm::LZ4Block).unwrap();
+        let compressed = lz4_compress(&buf).unwrap();
         let mut decompressed = vec![0; buf.len()];
         let sz = decompress(&compressed, decompressed.as_mut_slice()).unwrap();
 
@@ -120,7 +120,7 @@ mod tests {
     #[test]
     fn test_lz4_compress_decompress_2_bytes() {
         let buf = vec![0x2u8, 0x3u8];
-        let compressed = compress(&buf, Algorithm::LZ4Block).unwrap();
+        let compressed = lz4_compress(&buf).unwrap();
         let mut decompressed = vec![0; buf.len()];
         let sz = decompress(&compressed, decompressed.as_mut_slice()).unwrap();
 
@@ -134,7 +134,7 @@ mod tests {
             0x1u8, 0x2u8, 0x3u8, 0x4u8, 0x1u8, 0x2u8, 0x3u8, 0x4u8, 0x1u8, 0x2u8, 0x3u8, 0x4u8,
             0x1u8, 0x2u8, 0x3u8, 0x4u8,
         ];
-        let compressed = compress(&buf, Algorithm::LZ4Block).unwrap();
+        let compressed = lz4_compress(&buf).unwrap();
         let mut decompressed = vec![0; buf.len()];
         let sz = decompress(&compressed, decompressed.as_mut_slice()).unwrap();
 
@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn test_lz4_compress_decompress_4095_bytes() {
         let buf = vec![0x2u8; 4095];
-        let compressed = compress(&buf, Algorithm::LZ4Block).unwrap();
+        let compressed = lz4_compress(&buf).unwrap();
         let mut decompressed = vec![0; buf.len()];
         let sz = decompress(&compressed, decompressed.as_mut_slice()).unwrap();
 
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn test_lz4_compress_decompress_4096_bytes() {
         let buf = vec![0x2u8; 4096];
-        let compressed = compress(&buf, Algorithm::LZ4Block).unwrap();
+        let compressed = lz4_compress(&buf).unwrap();
         let mut decompressed = vec![0; buf.len()];
         let sz = decompress(&compressed, decompressed.as_mut_slice()).unwrap();
 
@@ -167,7 +167,7 @@ mod tests {
     #[test]
     fn test_lz4_compress_decompress_4097_bytes() {
         let buf = vec![0x2u8; 4097];
-        let compressed = compress(&buf, Algorithm::LZ4Block).unwrap();
+        let compressed = lz4_compress(&buf).unwrap();
         let mut decompressed = vec![0; buf.len()];
         let sz = decompress(&compressed, decompressed.as_mut_slice()).unwrap();
 

@@ -480,8 +480,10 @@ impl From<&OndiskChunkInfo> for CachedChunkInfo {
 #[cfg(test)]
 mod cached_tests {
     use crate::metadata::cached::CachedInode;
-    use crate::metadata::layout::{OndiskBlobTable, OndiskChunkInfo, OndiskInode, XAttrs};
-    use crate::metadata::{RafsInode, RafsSuperMeta};
+    use crate::metadata::layout::{
+        OndiskBlobTable, OndiskChunkInfo, OndiskInode, OndiskInodeWrapper, XAttrs,
+    };
+    use crate::metadata::{align_to_rafs, RafsInode, RafsStore, RafsSuperMeta};
     use crate::{RafsIoReader, RafsIoWriter};
     use std::cmp;
     use std::fs::OpenOptions;
@@ -509,7 +511,7 @@ mod cached_tests {
         xattr
             .pairs
             .insert(String::from("k2"), vec![10u8, 11u8, 12u8]);
-        ondisk_inode.i_name_size = file_name.len() as u16;
+        ondisk_inode.i_name_size = align_to_rafs(file_name.len()) as u16;
         ondisk_inode.i_child_count = 1;
         ondisk_inode.i_ino = 3;
         ondisk_inode.i_size = 8192;
@@ -519,9 +521,12 @@ mod cached_tests {
         chunk.blob_decompress_offset = 0;
         chunk.blob_compress_offset = 0;
         chunk.compress_size = 4096;
-        ondisk_inode
-            .store(&mut writer, file_name.as_bytes(), "".as_bytes())
-            .unwrap();
+        let inode = OndiskInodeWrapper {
+            name: file_name,
+            symlink: None,
+            inode: &ondisk_inode,
+        };
+        inode.store(&mut writer).unwrap();
         chunk.store(&mut writer).unwrap();
         xattr.store(&mut writer).unwrap();
 
@@ -567,12 +572,16 @@ mod cached_tests {
         let file_name = "c_inode_2";
         let symlink_name = "c_inode_1";
         let mut ondisk_inode = OndiskInode::new();
-        ondisk_inode.i_name_size = file_name.len() as u16;
-        ondisk_inode.i_symlink_size = symlink_name.len() as u16;
+        ondisk_inode.i_name_size = align_to_rafs(file_name.len()) as u16;
+        ondisk_inode.i_symlink_size = align_to_rafs(symlink_name.len()) as u16;
         ondisk_inode.i_mode = libc::S_IFLNK;
-        ondisk_inode
-            .store(&mut writer, file_name.as_bytes(), symlink_name.as_bytes())
-            .unwrap();
+
+        let inode = OndiskInodeWrapper {
+            name: file_name,
+            symlink: Some(symlink_name),
+            inode: &ondisk_inode,
+        };
+        inode.store(&mut writer).unwrap();
 
         f.seek(Start(0)).unwrap();
         let meta = Arc::new(RafsSuperMeta::default());
@@ -600,13 +609,17 @@ mod cached_tests {
         let mut reader = Box::new(f.try_clone().unwrap()) as RafsIoReader;
         let file_name = "c_inode_3";
         let mut ondisk_inode = OndiskInode::new();
-        ondisk_inode.i_name_size = file_name.len() as u16;
+        ondisk_inode.i_name_size = align_to_rafs(file_name.len()) as u16;
         ondisk_inode.i_child_count = 4;
         ondisk_inode.i_mode = libc::S_IFREG;
         ondisk_inode.i_size = 1024 * 1024 * 3 + 8192;
-        ondisk_inode
-            .store(&mut writer, file_name.as_bytes(), "".as_bytes())
-            .unwrap();
+
+        let inode = OndiskInodeWrapper {
+            name: file_name,
+            symlink: None,
+            inode: &ondisk_inode,
+        };
+        inode.store(&mut writer).unwrap();
 
         let mut size = ondisk_inode.i_size;
         for i in 0..ondisk_inode.i_child_count {

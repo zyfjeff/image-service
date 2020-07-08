@@ -222,8 +222,8 @@ impl Node {
 
         // dump inode info
         let inode = OndiskInodeWrapper {
-            name: &self.name,
-            symlink: self.symlink.as_ref(),
+            name: self.name.as_str(),
+            symlink: self.symlink.as_deref(),
             inode: &self.inode,
         };
         let inode_size = inode.store(f_bootstrap)?;

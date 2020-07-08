@@ -530,8 +530,8 @@ impl OndiskInode {
 }
 
 pub struct OndiskInodeWrapper<'a> {
-    pub name: &'a String,
-    pub symlink: Option<&'a String>,
+    pub name: &'a str,
+    pub symlink: Option<&'a str>,
     pub inode: &'a OndiskInode,
 }
 
