@@ -113,7 +113,7 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
         let buf = unsafe { std::slice::from_raw_parts_mut(slice.as_ptr(), slice.len()) };
 
         if self.bio.chunkinfo.is_compressed() {
-            let wbuf = compress::compress(buf, self.bio.compressor)?;
+            let (wbuf, _) = compress::compress(buf, self.bio.compressor)?;
             self.dev
                 .rw_layer
                 .load()
