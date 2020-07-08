@@ -631,22 +631,27 @@ impl<'a> RafsStore for OndiskInodeWrapper<'a> {
         let inode_data = self.inode.as_ref();
         w.write_all(inode_data)?;
         size += inode_data.len();
+        println!("size 1: {}", size);
 
         let name = self.name.as_bytes();
         w.write_all(name)?;
         size += name.len();
+        println!("size 2: {}", size);
 
         let padding = self.inode.i_name_size as usize - name.len();
         w.write_padding(padding)?;
         size += padding;
+        println!("size 3: {}", size);
 
         if let Some(symlink) = self.symlink {
             let symlink_path = symlink.as_bytes();
             w.write_all(symlink_path)?;
             size += symlink_path.len();
+            println!("size 4: {}", size);
             let padding = self.inode.i_symlink_size as usize - symlink_path.len();
             w.write_padding(padding)?;
             size += padding;
+            println!("size 5: {}", size);
         }
 
         Ok(size)
