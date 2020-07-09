@@ -13,7 +13,7 @@ use self::lz4_standard::*;
 
 use nydus_utils::einval;
 
-const COMPRESSION_MINIMUM_RATIO: f64 = 1.0;
+const COMPRESSION_MINIMUM_RATIO: usize = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Algorithm {
@@ -63,12 +63,17 @@ impl Algorithm {
 // as being done with all these rust lz4 implementations
 pub fn compress(src: &[u8], algorithm: Algorithm) -> Result<(Cow<[u8]>, bool)> {
     let src_size = src.len();
+    if src_size == 0 {
+        return Ok((Cow::Borrowed(src), false));
+    }
     match algorithm {
         Algorithm::None => Ok((Cow::Borrowed(src), false)),
         Algorithm::LZ4Block => {
             let compressed = lz4_compress(src)?;
             // Abandon compressed data when compression ratio greater than COMPRESSION_MINIMUM_RATIO
-            if (compressed.len() as f64 / src_size as f64) >= COMPRESSION_MINIMUM_RATIO {
+            if (COMPRESSION_MINIMUM_RATIO == 100 && compressed.len() >= src_size)
+                || ((100 * compressed.len() / src_size) >= COMPRESSION_MINIMUM_RATIO)
+            {
                 return Ok((Cow::Borrowed(src), false));
             }
             Ok((Cow::Owned(compressed), true))
