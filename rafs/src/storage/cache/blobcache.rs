@@ -7,8 +7,10 @@ use std::fs::{self, File, OpenOptions};
 use std::io::Result;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex, RwLock};
+use std::thread;
 
 use nix::sys::uio;
+extern crate spmc;
 use vm_memory::{VolatileMemory, VolatileSlice};
 
 use crate::metadata::layout::{OndiskBlobTableEntry, OndiskDigest};
@@ -119,8 +121,8 @@ impl BlocCacheState {
 }
 
 pub struct BlobCache {
-    cache: RwLock<BlocCacheState>,
-    pub backend: Box<dyn BlobBackend + Sync + Send>,
+    cache: Arc<RwLock<BlocCacheState>>,
+    pub backend: Arc<dyn BlobBackend + Sync + Send>,
 }
 
 impl BlobCache {
@@ -251,15 +253,15 @@ impl BlobCache {
 }
 
 #[derive(Default, Clone)]
-struct MergedBlobRequest<'a> {
+struct MergedBlobRequest {
     // Chunks that are continuous to each other.
-    pub chunks: Vec<&'a dyn RafsChunkInfo>,
+    pub chunks: Vec<Arc<dyn RafsChunkInfo>>,
     pub blob_offset: u64,
     pub blob_size: u32,
     pub blob_id: String,
 }
 
-impl<'a> MergedBlobRequest<'a> {
+impl<'a> MergedBlobRequest {
     fn reset(&mut self) {
         self.blob_offset = 0;
         self.blob_size = 0;
@@ -267,15 +269,17 @@ impl<'a> MergedBlobRequest<'a> {
         self.chunks.clear();
     }
 
-    fn merge_begin(&mut self, first_cki: &'a dyn RafsChunkInfo, blob_id: &str) {
+    fn merge_begin(&mut self, first_cki: Arc<dyn RafsChunkInfo>, blob_id: &str) {
         self.blob_offset = first_cki.blob_compress_offset();
         self.blob_size = first_cki.compress_size();
+        // let thin_cki = Self::digest_chunkinfo(first_cki);
         self.chunks.push(first_cki);
         self.blob_id = String::from(blob_id);
     }
 
-    fn merge_one_chunk(&mut self, cki: &'a dyn RafsChunkInfo) {
+    fn merge_one_chunk(&mut self, cki: Arc<dyn RafsChunkInfo>) {
         self.blob_size += cki.compress_size();
+        // let thin_cki = Self::digest_chunkinfo(cki);
         self.chunks.push(cki);
     }
 }
@@ -294,17 +298,16 @@ fn is_chunk_continuous(prior: &RafsBio, cur: &RafsBio) -> bool {
     false
 }
 
-fn generate_merged_requests(bios: &mut [RafsBio]) -> Vec<MergedBlobRequest> {
-    let mut index: usize = 1;
-    let mut v = Vec::new();
+fn generate_merged_requests(bios: &mut [RafsBio], tx: &mut spmc::Sender<MergedBlobRequest>) {
     bios.sort_by_key(|entry| entry.chunkinfo.blob_compress_offset());
-    let first_cki = bios[0].chunkinfo.as_ref();
+    let mut index: usize = 1;
+    let first_cki = &bios[0].chunkinfo;
     let mut mr = MergedBlobRequest::default();
-    mr.merge_begin(first_cki, &bios[0].blob_id);
+    mr.merge_begin(Arc::clone(first_cki), &bios[0].blob_id);
 
     if bios.len() == 1 {
-        v.push(mr.clone());
-        return v;
+        tx.send(mr).unwrap();
+        return;
     }
 
     loop {
@@ -312,23 +315,26 @@ fn generate_merged_requests(bios: &mut [RafsBio]) -> Vec<MergedBlobRequest> {
         let prior_bio = &bios[index - 1];
         let cur_bio = &bios[index];
 
-        if is_chunk_continuous(prior_bio, cur_bio) {
-            mr.merge_one_chunk(cki.as_ref());
+        // Even more chunks are continuos, still split them per as certain size.
+        // So that to achieve an appropriate request size to backend.
+        // TODO: Try to make `certain size` configurable?
+        const MERGE_SIZE: u32 = 128 * 1024;
+        if is_chunk_continuous(prior_bio, cur_bio) && mr.blob_size <= MERGE_SIZE {
+            mr.merge_one_chunk(Arc::clone(&cki));
         } else {
             // New a MR if a non-continuous chunk is met.
+            tx.send(mr.clone()).unwrap();
             mr.reset();
-            mr.merge_begin(cki.as_ref(), &cur_bio.blob_id);
+            mr.merge_begin(Arc::clone(&cki), &cur_bio.blob_id);
         }
 
         index += 1;
 
         if index >= bios.len() {
-            v.push(mr.clone());
+            tx.send(mr).unwrap();
             break;
         }
     }
-
-    v
 }
 
 impl RafsCache for BlobCache {
@@ -388,50 +394,75 @@ impl RafsCache for BlobCache {
     /// mirror them into blob cache file.
     /// Continuous chunks may be compressed or not.
     fn prefetch(&self, bios: &mut [RafsBio]) -> Result<usize> {
-        // Try to merge bios
+        let (mut tx, rx) = spmc::channel::<MergedBlobRequest>();
 
-        for mr in generate_merged_requests(bios) {
-            let blob_offset = mr.blob_offset;
-            let blob_size = mr.blob_size;
-            let continuous_chunks = &mr.chunks;
-            let blob_id = &mr.blob_id;
-            info!(
-                "Merged req id {} req offset {} size {}",
-                blob_id, blob_offset, blob_size
-            );
-            let mut c_buf = alloc_buf(blob_size as usize);
-            // Blob id must be unique.
-
-            let _ = self
-                .backend
-                .read(blob_id.as_str(), c_buf.as_mut_slice(), blob_offset)?;
-
-            let mut cache = self.cache.write().unwrap();
-            let fd = cache.get_blob_fd(blob_id.as_str()).unwrap();
-            for c in continuous_chunks {
-                // Deal with mixture of compressed and uncompressed chunks.
-                let offset_merged = c.blob_compress_offset() - blob_offset;
-                let mut d_buf = alloc_buf(c.decompress_size() as usize);
-
-                if c.is_compressed() {
-                    let _sz = compress::decompress(
-                        &c_buf[offset_merged as usize
-                            ..(offset_merged as u32 + c.compress_size()) as usize],
-                        d_buf.as_mut_slice(),
-                    )?;
-                    let _ = uio::pwrite(fd, &d_buf, c.blob_decompress_offset() as i64)
-                        .map_err(|_| last_error!())?;
-                } else {
-                    let _ = uio::pwrite(
-                        fd,
-                        &c_buf[offset_merged as usize
-                            ..(offset_merged as u32 + c.compress_size()) as usize],
-                        c.blob_decompress_offset() as i64,
-                    )
-                    .map_err(|_| last_error!())?;
-                }
-            }
+        // TODO: Make thread count configurable.
+        for num in 0..8 {
+            let backend = Arc::clone(&self.backend);
+            let cache = Arc::clone(&self.cache);
+            let rx = rx.clone();
+            let _thread = thread::Builder::new()
+                .name(format!("prefetch_thread_{}", num))
+                .spawn(move || {
+                    while let Ok(mr) = rx.recv() {
+                        let blob_offset = mr.blob_offset;
+                        let blob_size = mr.blob_size;
+                        let continuous_chunks = &mr.chunks;
+                        let blob_id = &mr.blob_id;
+                        trace!(
+                            "Merged req id {} req offset {} size {}",
+                            blob_id,
+                            blob_offset,
+                            blob_size
+                        );
+                        let mut c_buf = alloc_buf(blob_size as usize);
+                        // Blob id must be unique.
+                        // TODO: Currently, request length to backend may span a whole chunk,
+                        // Do we need to split it into smaller pieces?
+                        let _ = backend.read(blob_id.as_str(), c_buf.as_mut_slice(), blob_offset);
+                        for c in continuous_chunks {
+                            // Deal with mixture of compressed and uncompressed chunks.
+                            let offset_merged = c.blob_compress_offset() - blob_offset;
+                            let fd = cache
+                                .write()
+                                .unwrap()
+                                .get_blob_fd(blob_id.as_str())
+                                .unwrap();
+                            if c.is_compressed() {
+                                // Decompression failure can't be handled, panic helps us note it in the first place.
+                                let mut d_buf = alloc_buf(c.decompress_size() as usize);
+                                compress::decompress(
+                                    &c_buf[offset_merged as usize
+                                        ..(offset_merged as usize + c.compress_size() as usize)],
+                                    d_buf.as_mut_slice(),
+                                )
+                                .unwrap();
+                                let _ = uio::pwrite(fd, &d_buf, c.blob_decompress_offset() as i64)
+                                    .map_err(|_| last_error!());
+                            } else {
+                                let _ = uio::pwrite(
+                                    fd,
+                                    &c_buf[offset_merged as usize
+                                        ..(offset_merged as usize + c.compress_size() as usize)],
+                                    c.decompress_size() as i64,
+                                )
+                                .map_err(|_| last_error!());
+                            }
+                        }
+                    }
+                    info!("Prefetch thread exits.")
+                });
         }
+
+        // Ideally, prefetch task can run within a separated thread from loading prefetch table.
+        // However, due to current implementation, doing so needs modifying key data structure like
+        // `Superblock` on `Rafs`. So let's suspend this action.
+        let mut bios = bios.to_vec();
+        let _thread = thread::Builder::new().spawn({
+            move || {
+                generate_merged_requests(bios.as_mut_slice(), &mut tx);
+            }
+        });
 
         Ok(0)
     }
@@ -439,7 +470,7 @@ impl RafsCache for BlobCache {
 
 pub fn new<S: std::hash::BuildHasher>(
     config: &HashMap<String, String, S>,
-    backend: Box<dyn BlobBackend + Sync + Send>,
+    backend: Arc<dyn BlobBackend + Sync + Send>,
 ) -> Result<BlobCache> {
     let work_dir = config
         .get("work_dir")
@@ -458,11 +489,11 @@ pub fn new<S: std::hash::BuildHasher>(
         })?;
 
     Ok(BlobCache {
-        cache: RwLock::new(BlocCacheState {
+        cache: Arc::new(RwLock::new(BlocCacheState {
             chunk_map: HashMap::new(),
             file_map: HashMap::new(),
             work_dir: String::from(work_dir),
-        }),
+        })),
         backend,
     })
 }

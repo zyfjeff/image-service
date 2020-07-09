@@ -19,6 +19,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Result, Write};
 use std::os::linux::fs::MetadataExt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use nydus_builder::builder;
 use nydus_utils::einval;
@@ -26,7 +27,7 @@ use nydus_utils::log_level_to_verbosity;
 use rafs::storage::{backend, factory};
 
 fn upload_blob(
-    backend: Box<dyn backend::BlobBackendUploader<Reader = File>>,
+    backend: Arc<dyn backend::BlobBackendUploader<Reader = File>>,
     blob_id: &str,
     blob_path: &str,
 ) -> Result<()> {
@@ -112,7 +113,7 @@ fn get_readahead_files(source: &str) -> Result<BTreeMap<PathBuf, Option<u64>>> {
                 );
 
                 // FIXME: Temporarily raise log level up, for devel/debug sake.
-                info!(
+                debug!(
                     "readahead file: {}, trimmed file name {}",
                     file_name,
                     file_name_trimmed.to_str().unwrap()

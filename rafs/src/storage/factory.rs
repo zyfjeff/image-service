@@ -5,6 +5,7 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Result;
+use std::sync::Arc;
 
 use serde::Deserialize;
 
@@ -37,21 +38,21 @@ pub struct CacheConfig {
     pub cache_config: HashMap<String, String>,
 }
 
-pub fn new_backend(config: &BackendConfig) -> Result<Box<dyn BlobBackend + Send + Sync>> {
+pub fn new_backend(config: &BackendConfig) -> Result<Arc<dyn BlobBackend + Send + Sync>> {
     match config.backend_type.as_str() {
         #[cfg(feature = "backend-oss")]
         "oss" => {
-            Ok(Box::new(oss::new(&config.backend_config)?) as Box<dyn BlobBackend + Send + Sync>)
+            Ok(Arc::new(oss::new(&config.backend_config)?) as Arc<dyn BlobBackend + Send + Sync>)
         }
         #[cfg(feature = "backend-registry")]
         "registry" => {
-            Ok(Box::new(registry::new(&config.backend_config)?)
-                as Box<dyn BlobBackend + Send + Sync>)
+            Ok(Arc::new(registry::new(&config.backend_config)?)
+                as Arc<dyn BlobBackend + Send + Sync>)
         }
         #[cfg(feature = "backend-localfs")]
         "localfs" => {
-            Ok(Box::new(localfs::new(&config.backend_config)?)
-                as Box<dyn BlobBackend + Send + Sync>)
+            Ok(Arc::new(localfs::new(&config.backend_config)?)
+                as Arc<dyn BlobBackend + Send + Sync>)
         }
         _ => Err(einval!(format!(
             "unsupported backend type '{}'",
@@ -60,22 +61,22 @@ pub fn new_backend(config: &BackendConfig) -> Result<Box<dyn BlobBackend + Send 
     }
 }
 
-pub fn new_uploader(config: &BackendConfig) -> Result<Box<dyn BlobBackendUploader<Reader = File>>> {
+pub fn new_uploader(config: &BackendConfig) -> Result<Arc<dyn BlobBackendUploader<Reader = File>>> {
     match config.backend_type.as_str() {
         #[cfg(feature = "backend-oss")]
         "oss" => {
             let backend = oss::new(&config.backend_config)?;
-            Ok(Box::new(backend) as Box<dyn BlobBackendUploader<Reader = File>>)
+            Ok(Arc::new(backend) as Arc<dyn BlobBackendUploader<Reader = File>>)
         }
         #[cfg(feature = "backend-registry")]
         "registry" => {
             let backend = registry::new(&config.backend_config)?;
-            Ok(Box::new(backend) as Box<dyn BlobBackendUploader<Reader = File>>)
+            Ok(Arc::new(backend) as Arc<dyn BlobBackendUploader<Reader = File>>)
         }
         #[cfg(feature = "backend-localfs")]
         "localfs" => {
             let backend = localfs::new(&config.backend_config)?;
-            Ok(Box::new(backend) as Box<dyn BlobBackendUploader<Reader = File>>)
+            Ok(Arc::new(backend) as Arc<dyn BlobBackendUploader<Reader = File>>)
         }
         _ => Err(einval!(format!(
             "unsupported backend type '{}'",

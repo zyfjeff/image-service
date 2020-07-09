@@ -16,11 +16,11 @@ use crate::storage::device::RafsBio;
 use crate::storage::utils::{alloc_buf, copyv};
 
 pub struct DummyCache {
-    pub backend: Box<dyn BlobBackend + Sync + Send>,
+    pub backend: Arc<dyn BlobBackend + Sync + Send>,
 }
 
 impl DummyCache {
-    pub fn new(backend: Box<dyn BlobBackend + Sync + Send>) -> DummyCache {
+    pub fn new(backend: Arc<dyn BlobBackend + Sync + Send>) -> DummyCache {
         DummyCache { backend }
     }
 
@@ -139,6 +139,6 @@ impl RafsCache for DummyCache {
     fn release(&self) {}
 }
 
-pub fn new(backend: Box<dyn BlobBackend + Sync + Send>) -> Result<DummyCache> {
+pub fn new(backend: Arc<dyn BlobBackend + Sync + Send>) -> Result<DummyCache> {
     Ok(DummyCache { backend })
 }
