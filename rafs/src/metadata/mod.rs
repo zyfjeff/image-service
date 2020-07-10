@@ -367,6 +367,10 @@ pub trait RafsInode {
     fn get_xattr(&self, name: &str) -> Result<Option<XattrValue>>;
     fn get_xattrs(&self) -> Result<Vec<XattrName>>;
     fn alloc_bio_desc(&self, offset: u64, size: usize) -> Result<RafsBioDesc>;
+    fn collect_descendants_inodes(
+        &self,
+        descendants: &mut Vec<Arc<dyn RafsInode>>,
+    ) -> Result<usize>;
 
     fn is_dir(&self) -> bool;
     fn is_symlink(&self) -> bool;

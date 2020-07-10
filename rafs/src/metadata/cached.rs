@@ -21,7 +21,7 @@ use crate::metadata::*;
 use crate::storage::device::{RafsBio, RafsBioDesc};
 use crate::RafsIoReader;
 
-use nydus_utils::{einval, enoent};
+use nydus_utils::{einval, enoent, enotdir};
 
 pub struct CachedInodes {
     s_blob: Arc<OndiskBlobTable>,
@@ -393,6 +393,26 @@ impl RafsInode for CachedInode {
 
     fn has_xattr(&self) -> bool {
         self.i_flags & INO_FLAG_XATTR == INO_FLAG_XATTR
+    }
+
+    fn collect_descendants_inodes(
+        &self,
+        descendants: &mut Vec<Arc<dyn RafsInode>>,
+    ) -> Result<usize> {
+        if !self.is_dir() {
+            return Err(enotdir!(""));
+        }
+
+        for child_inode in &self.i_child {
+            if child_inode.is_dir() {
+                trace!("Got dir {}", child_inode.name().unwrap());
+                child_inode.collect_descendants_inodes(descendants)?;
+            } else {
+                descendants.push(child_inode.clone());
+            }
+        }
+
+        Ok(0)
     }
 
     impl_getter!(ino, i_ino, u64);

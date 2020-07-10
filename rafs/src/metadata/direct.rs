@@ -31,7 +31,7 @@ use crate::metadata::layout::*;
 use crate::metadata::*;
 use crate::storage::utils::readahead;
 
-use nydus_utils::{ebadf, einval, enoent, last_error};
+use nydus_utils::{ebadf, einval, enoent, enotdir, last_error};
 
 /// Impl get accessor for inode object.
 macro_rules! impl_inode_getter {
@@ -685,6 +685,33 @@ impl RafsInode for OndiskInodeWrapper {
         }
 
         Ok(desc)
+    }
+
+    fn collect_descendants_inodes(
+        &self,
+        descendants: &mut Vec<Arc<dyn RafsInode>>,
+    ) -> Result<usize> {
+        if !self.is_dir() {
+            return Err(enotdir!(""));
+        }
+
+        let state = self.state();
+        let inode = self.inode(state.deref());
+        let child_count = inode.i_child_count as u64;
+        let child_index = inode.i_child_index as u64;
+
+        for idx in child_index..(child_index + child_count) {
+            let child_inode = self.mapping.get_inode(idx).unwrap();
+
+            if child_inode.is_dir() {
+                trace!("Got dir {}", child_inode.name().unwrap());
+                child_inode.collect_descendants_inodes(descendants)?;
+            } else {
+                descendants.push(child_inode);
+            }
+        }
+
+        Ok(0)
     }
 
     impl_inode_wrapper!(is_dir, bool);
