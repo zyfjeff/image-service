@@ -263,7 +263,7 @@ impl Node {
         Ok(())
     }
 
-    pub fn build_inode(&mut self, hardlink_node: Option<Node>) -> Result<()> {
+    pub fn build_inode(&mut self) -> Result<()> {
         if self.rootfs() == PathBuf::from("/") {
             self.name = String::from("/");
             self.inode.set_name_size(self.name.as_bytes().len());
@@ -284,14 +284,6 @@ impl Node {
         self.build_inode_stat()?;
 
         if self.is_reg()? {
-            if self.is_hardlink()? {
-                if let Some(hardlink_node) = hardlink_node {
-                    self.inode.i_flags |= INO_FLAG_HARDLINK as u64;
-                    self.inode.i_digest = hardlink_node.inode.i_digest;
-                    self.inode.i_child_count = 0;
-                    return Ok(());
-                }
-            }
             self.inode.i_child_count = self.chunk_count() as u32;
         } else if self.is_symlink()? {
             self.inode.i_flags |= INO_FLAG_SYMLINK as u64;

@@ -133,9 +133,10 @@ impl Builder {
     /// Directory walk by BFS
     pub fn walk(&mut self) -> Result<()> {
         let mut dirs = vec![0];
-        let mut iter_ino: u64 = 1;
+        // Rafs' inode number starts from 1 which belongs to root inode.
+        let mut iter_ino = 1;
         let mut root_node = self.new_node(&self.root);
-        root_node.build_inode(None)?;
+        root_node.build_inode()?;
         root_node.index = iter_ino;
         root_node.inode.i_ino = iter_ino;
 
@@ -150,8 +151,8 @@ impl Builder {
                 let dir_node = self.additions.get_mut(*dir_idx).unwrap();
                 let children = fs::read_dir(&dir_node.path)?;
                 let dir_ino = dir_node.inode.i_ino;
-                let mut child_count: usize = 0;
-
+                let mut child_count = 0;
+                // Now the first child is given birth.
                 dir_node.inode.i_child_index = (iter_ino + 1) as u32;
 
                 let mut children = children.collect::<Result<Vec<DirEntry>>>()?;
@@ -166,18 +167,18 @@ impl Builder {
                     if node.get_type()? == "" {
                         continue;
                     }
-
+                    // Inode number is not continuous, we may have holes between
+                    // them if hardlink appears.
                     iter_ino += 1;
                     child_count += 1;
-                    let mut hardlink: Option<Node> = None;
-                    if let Some(_hardlink) = self.inode_map.get(&real_ino) {
-                        node.inode.i_ino = _hardlink.inode.i_ino;
-                        hardlink = Some(_hardlink.clone());
+                    if let Some(harklink) = self.inode_map.get(&real_ino) {
+                        node.inode.i_ino = harklink.inode.i_ino;
                     } else {
                         node.inode.i_ino = iter_ino;
                     }
-                    node.build_inode(hardlink)?;
+                    node.build_inode()?;
 
+                    // Inode number always equals to its index within disk inode table.
                     node.index = iter_ino;
                     node.inode.i_parent = dir_ino;
 
@@ -195,7 +196,7 @@ impl Builder {
                 }
 
                 let dir_node = self.additions.get_mut(*dir_idx).unwrap();
-                dir_node.inode.i_child_count = child_count as u32;
+                dir_node.inode.i_child_count = child_count;
             }
             dirs = next_dirs;
         }
