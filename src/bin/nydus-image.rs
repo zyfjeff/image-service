@@ -190,9 +190,12 @@ fn main() -> Result<()> {
                         .takes_value(true),
                 )
                 .arg(
-                    Arg::with_name("enable_readahead")
-                        .long("enable_readahead")
-                        .help("enable blob readahead optimization (read file list from stdin)"),
+                    Arg::with_name("ra_policy")
+                        .long("ra_policy")
+                        .help("Readahead policy: fs(issued from Fs layer), blob(issued from backend/blob layer), none(no readahead is needed)")
+                        .takes_value(true)
+                        .required(false)
+                        .default_value("none"),
                 ),
         )
         .arg(
@@ -252,7 +255,9 @@ fn main() -> Result<()> {
             parent_bootstrap = _parent_bootstrap.to_owned();
         }
 
-        let hint_readahead_files = if matches.is_present("enable_readahead") {
+        let ra_policy = matches.value_of("ra_policy").unwrap_or_default().parse()?;
+
+        let hint_readahead_files = if ra_policy != builder::ReadaheadPolicy::None {
             get_readahead_files(source_path)?
         } else {
             BTreeMap::new()
@@ -266,6 +271,7 @@ fn main() -> Result<()> {
             blob_id.clone(),
             compressor,
             hint_readahead_files,
+            ra_policy,
         )?;
         blob_id = ib.build()?;
 

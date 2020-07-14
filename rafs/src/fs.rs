@@ -117,9 +117,11 @@ impl Rafs {
             .init(&self.sb.meta, &self.sb.inodes.get_blobs())?;
 
         // Device should be ready before any prefetch.
-        if let Some(ref mut desc) = self.sb.prefetch_hint_files(r) {
-            if self.device.prefetch(desc).is_err() {
-                eother!("Prefetch error");
+        if self.fs_prefetch {
+            if let Ok(ref mut desc) = self.sb.prefetch_hint_files(r) {
+                if self.device.prefetch(desc).is_err() {
+                    eother!("Prefetch error");
+                }
             }
         }
 

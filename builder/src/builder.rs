@@ -2,14 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use nydus_utils::einval;
 use rafs::metadata::RafsDigest;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::fs::DirEntry;
 use std::fs::OpenOptions;
-use std::io::Result;
+use std::io::{Error, Result};
 use std::mem::size_of;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use sha2::digest::Digest;
 use sha2::Sha256;
@@ -48,9 +50,36 @@ pub struct Builder {
     additions: Vec<Node>,
     removals: HashMap<PathBuf, bool>,
     opaques: HashMap<PathBuf, bool>,
+    ra_policy: ReadaheadPolicy,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ReadaheadPolicy {
+    None,
+    /// Readahead will be issued from Fs layer, which leverages inode/chunkinfo to prefetch data
+    /// from blob no mather where it resides(OSS/Localfs). Basically, it is willing to cache the
+    /// data into blobcache(if exists). It's more nimble. With this policy applied, image builder
+    /// currently puts readahead files' data into a continuous region within blob which behaves very
+    /// similar to `Blob` policy.
+    Fs,
+    /// Readahead will be issued directly from backend/blob layer
+    Blob,
+}
+
+impl FromStr for ReadaheadPolicy {
+    type Err = Error;
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "none" => Ok(Self::None),
+            "fs" => Ok(Self::Fs),
+            "blob" => Ok(Self::Blob),
+            _ => Err(einval!("Invalid ra-policy string got.")),
+        }
+    }
 }
 
 impl Builder {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         root: String,
         blob_path: String,
@@ -59,6 +88,7 @@ impl Builder {
         blob_id: String,
         compressor: compress::Algorithm,
         hint_readahead_files: BTreeMap<PathBuf, Option<u64>>,
+        ra_policy: ReadaheadPolicy,
     ) -> Result<Builder> {
         let f_blob = Box::new(
             OpenOptions::new()
@@ -99,6 +129,7 @@ impl Builder {
             additions: Vec::new(),
             removals: HashMap::new(),
             opaques: HashMap::new(),
+            ra_policy,
         })
     }
 
@@ -113,10 +144,18 @@ impl Builder {
 
     /// Gain file or directory inode indexes which will be put into prefetch table.
     fn need_prefetch(&mut self, path: &PathBuf, index: u64) -> bool {
+        if self.ra_policy == ReadaheadPolicy::None {
+            return false;
+        }
+
         for f in self.hint_readahead_files.keys() {
             // As path is canonicalized, it should be reliable.
             if path.as_os_str() == f.as_os_str() {
-                self.hint_readahead_files.insert(path.clone(), Some(index));
+                if self.ra_policy == ReadaheadPolicy::Fs {
+                    if let Some(i) = self.hint_readahead_files.get_mut(path) {
+                        *i = Some(index);
+                    }
+                }
                 return true;
             } else if path.starts_with(f) {
                 return true;
@@ -210,8 +249,11 @@ impl Builder {
         let inode_table_entries = self.additions.len() as u32;
         let mut inode_table = OndiskInodeTable::new(inode_table_entries as usize);
         let inode_table_size = inode_table.size();
+        let mut prefetch_table_size = 0;
         let mut prefetch_table = PrefetchTable::new();
-        let prefetch_table_size = align_to_rafs(self.hint_readahead_files.len() * size_of::<u32>());
+        if self.ra_policy == ReadaheadPolicy::Fs {
+            prefetch_table_size = align_to_rafs(self.hint_readahead_files.len() * size_of::<u32>());
+        }
 
         // blob table, blob id use sha256 string (length 64) as default
         let blob_id_size = if self.blob_id != "" {
@@ -292,11 +334,6 @@ impl Builder {
             .collect::<Vec<&mut Node>>();
         readahead_nodes.sort_by_key(|node| node.inode.i_size);
 
-        self.hint_readahead_files
-            .values()
-            .filter(|_| true)
-            .for_each(|idx| prefetch_table.add_entry(idx.unwrap() as u32));
-
         // fist, dump readahead nodes
         let blob_readahead_offset = 0;
         let mut blob_readahead_size = 0;
@@ -311,6 +348,10 @@ impl Builder {
                 &mut chunk_cache,
                 self.compressor,
             )? as u32;
+        }
+
+        if self.ra_policy != ReadaheadPolicy::Blob {
+            blob_readahead_size = 0;
         }
 
         // then, dump other nodes
@@ -344,7 +385,13 @@ impl Builder {
         // dump bootstrap
         super_block.store(&mut self.f_bootstrap)?;
         inode_table.store(&mut self.f_bootstrap)?;
-        prefetch_table.store(&mut self.f_bootstrap)?;
+        if self.ra_policy == ReadaheadPolicy::Fs {
+            self.hint_readahead_files
+                .values()
+                .filter(|_| true)
+                .for_each(|idx| prefetch_table.add_entry(idx.unwrap() as u32));
+            prefetch_table.store(&mut self.f_bootstrap)?;
+        }
         blob_table.store(&mut self.f_bootstrap)?;
 
         for node in &mut self.additions {
