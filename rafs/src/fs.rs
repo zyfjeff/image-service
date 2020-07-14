@@ -24,7 +24,7 @@ use crate::storage::device;
 use crate::storage::*;
 use crate::*;
 
-use nydus_utils::{eacces, ealready, ebadf, einval, enoent};
+use nydus_utils::{eacces, ealready, ebadf, einval, enoent, eother};
 
 /// Type of RAFS inode.
 pub type Inode = u64;
@@ -46,6 +46,8 @@ pub struct RafsConfig {
     pub mode: String,
     #[serde(default)]
     pub iostats_files: bool,
+    #[serde(default)]
+    pub fs_prefetch: bool,
 }
 
 impl RafsConfig {
@@ -60,6 +62,7 @@ impl RafsConfig {
 pub struct Rafs {
     device: device::RafsDevice,
     sb: RafsSuper,
+    fs_prefetch: bool,
     initialized: bool,
     ios: Arc<io_stats::GlobalIOStats>,
 }
@@ -71,6 +74,7 @@ impl Rafs {
             sb: RafsSuper::new(conf.mode.as_str())?,
             initialized: false,
             ios: io_stats::new(id),
+            fs_prefetch: conf.fs_prefetch,
         };
 
         rafs.ios.toggle_files_recording(conf.iostats_files);
