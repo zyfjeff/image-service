@@ -108,9 +108,9 @@ impl Rafs {
             return Err(ealready!("rafs already mounted"));
         }
 
-        self.sb.load(r).or_else(|e| {
+        self.sb.load(r).map_err(|e| {
             self.sb.destroy();
-            Err(e)
+            e
         })?;
 
         self.device
@@ -201,9 +201,7 @@ impl BackendFileSystem for Rafs {
 
 impl Rafs {
     fn lookup_wrapped(&self, ino: u64, name: &CStr) -> Result<Entry> {
-        let target = name
-            .to_str()
-            .or_else(|_| Err(ebadf!("failed to get name")))?;
+        let target = name.to_str().map_err(|_| ebadf!("failed to get name"))?;
         let parent = self.sb.get_inode(ino)?;
         if !parent.is_dir() {
             return Err(err_not_directory!());
@@ -341,9 +339,7 @@ impl FileSystem for Rafs {
     }
 
     fn getxattr(&self, _ctx: Context, inode: u64, name: &CStr, size: u32) -> Result<GetxattrReply> {
-        let name = name
-            .to_str()
-            .or_else(|_| Err(einval!("invalid xattr name")))?;
+        let name = name.to_str().map_err(|_| einval!("invalid xattr name"))?;
         let inode = self.sb.get_inode(inode)?;
 
         let value = inode.get_xattr(name)?;

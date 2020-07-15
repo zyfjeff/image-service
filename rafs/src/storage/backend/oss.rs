@@ -183,10 +183,10 @@ impl BlobBackend for OSS {
         let mut resp = self
             .request
             .call::<&[u8]>(method, url.as_str(), data, headers)
-            .or_else(|e| Err(einval!(format!("oss req failed {:?}", e))))?;
+            .map_err(|e| einval!(format!("oss req failed {:?}", e)))?;
 
         resp.copy_to(&mut buf)
-            .or_else(|err| Err(epipe!(format!("oss read failed {:?}", err))))
+            .map_err(|err| epipe!(format!("oss read failed {:?}", err)))
             .map(|size| size as usize)
     }
 

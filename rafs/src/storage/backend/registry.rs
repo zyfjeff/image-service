@@ -106,13 +106,13 @@ impl BlobBackend for Registry {
         let mut resp = self
             .request
             .call::<&[u8]>(method, url.as_str(), data, headers)
-            .or_else(|e| {
+            .map_err(|e| {
                 error!("registry req failed {:?}", e);
-                Err(e)
+                e
             })?;
 
         resp.copy_to(&mut buf)
-            .or_else(|err| Err(epipe!(format!("registry read failed {:?}", err))))
+            .map_err(|err| epipe!(format!("registry read failed {:?}", err)))
             .map(|size| size as usize)
     }
 
