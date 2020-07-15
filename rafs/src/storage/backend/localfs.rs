@@ -221,7 +221,7 @@ impl LocalFsAccessLog {
                 &self.log_path
             );
             // set record length to max to no new record is saved
-            // safe becasue we have locked records
+            // safe because we have locked records
             unsafe { r.set_len(MAX_ACCESS_RECORD) };
             drop(r);
             if let Err(e) = remove_file(Path::new(&self.log_path)) {
@@ -242,7 +242,7 @@ impl LocalFsAccessLog {
         };
 
         // set record length to max to no new record is saved
-        // safe becasue we have locked records
+        // safe because we have locked records
         unsafe { r.set_len(MAX_ACCESS_RECORD) };
         drop(r);
 

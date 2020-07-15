@@ -78,12 +78,6 @@ impl<'a> RafsBioDevice<'a> {
         // FIXME: make sure bio is valid
         Ok(RafsBioDevice { bio, dev: b })
     }
-
-    /*
-    fn blob_offset(&self) -> u64 {
-        self.bio.chunkinfo.blob_compress_offset() + self.bio.offset as u64
-    }
-     */
 }
 
 impl FileReadWriteVolatile for RafsBioDevice<'_> {
@@ -161,7 +155,7 @@ impl RafsBioDevice<'_> {
 pub struct RafsBioDesc {
     // Blob IO flags
     pub bi_flags: u32,
-    // Totol IO size to be performed
+    // Total IO size to be performed
     pub bi_size: usize,
     // Array of blob IO info. Corresponding data should be read from/write to IO stream sequentially
     pub bi_vec: Vec<RafsBio>,

@@ -113,7 +113,7 @@ impl OSS {
         }
     }
 
-    /*
+    #[allow(dead_code)]
     fn create_bucket(&self) -> Result<()> {
         let method = "PUT";
         let query = &[];
@@ -127,7 +127,6 @@ impl OSS {
 
         Ok(())
     }
-     */
 }
 
 pub fn new<S: ::std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Result<OSS> {
