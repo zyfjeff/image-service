@@ -92,9 +92,9 @@ impl Rafs {
 
         // step 1: update sb.
         // No lock is needed thanks to ArcSwap.
-        self.sb.update(r).or_else(|e| {
+        self.sb.update(r).map_err(|e| {
             error!("update failed due to {:?}", e);
-            Err(e)
+            e
         })?;
 
         info!("update sb is successful");
