@@ -18,6 +18,7 @@ use crate::metadata::layout::OndiskBlobTableEntry;
 use crate::metadata::{RafsChunkInfo, RafsDigest, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::RafsCache;
+use crate::storage::cache::*;
 use crate::storage::compress;
 use crate::storage::device::RafsBio;
 use crate::storage::factory::CacheConfig;
@@ -281,91 +282,6 @@ impl BlobCache {
     }
 }
 
-#[derive(Default, Clone)]
-struct MergedBlobRequest {
-    // Chunks that are continuous to each other.
-    pub chunks: Vec<Arc<dyn RafsChunkInfo>>,
-    pub blob_offset: u64,
-    pub blob_size: u32,
-    pub blob_id: String,
-}
-
-impl<'a> MergedBlobRequest {
-    fn reset(&mut self) {
-        self.blob_offset = 0;
-        self.blob_size = 0;
-        self.blob_id.truncate(0);
-        self.chunks.clear();
-    }
-
-    fn merge_begin(&mut self, first_cki: Arc<dyn RafsChunkInfo>, blob_id: &str) {
-        self.blob_offset = first_cki.compress_offset();
-        self.blob_size = first_cki.compress_size();
-        // let thin_cki = Self::digest_chunkinfo(first_cki);
-        self.chunks.push(first_cki);
-        self.blob_id = String::from(blob_id);
-    }
-
-    fn merge_one_chunk(&mut self, cki: Arc<dyn RafsChunkInfo>) {
-        self.blob_size += cki.compress_size();
-        // let thin_cki = Self::digest_chunkinfo(cki);
-        self.chunks.push(cki);
-    }
-}
-
-fn is_chunk_continuous(prior: &RafsBio, cur: &RafsBio) -> bool {
-    let prior_cki = &prior.chunkinfo;
-    let cur_cki = &cur.chunkinfo;
-
-    let prior_end = prior_cki.compress_offset() + prior_cki.compress_size() as u64;
-    let cur_offset = cur_cki.compress_offset();
-
-    if prior_end == cur_offset && prior.blob_id == cur.blob_id {
-        return true;
-    }
-
-    false
-}
-
-fn generate_merged_requests(bios: &mut [RafsBio], tx: &mut spmc::Sender<MergedBlobRequest>) {
-    bios.sort_by_key(|entry| entry.chunkinfo.compress_offset());
-    let mut index: usize = 1;
-    let first_cki = &bios[0].chunkinfo;
-    let mut mr = MergedBlobRequest::default();
-    mr.merge_begin(Arc::clone(first_cki), &bios[0].blob_id);
-
-    if bios.len() == 1 {
-        tx.send(mr).unwrap();
-        return;
-    }
-
-    loop {
-        let cki = &bios[index].chunkinfo;
-        let prior_bio = &bios[index - 1];
-        let cur_bio = &bios[index];
-
-        // Even more chunks are continuous, still split them per as certain size.
-        // So that to achieve an appropriate request size to backend.
-        // TODO: Try to make `certain size` configurable?
-        const MERGE_SIZE: u32 = 128 * 1024;
-        if is_chunk_continuous(prior_bio, cur_bio) && mr.blob_size <= MERGE_SIZE {
-            mr.merge_one_chunk(Arc::clone(&cki));
-        } else {
-            // New a MR if a non-continuous chunk is met.
-            tx.send(mr.clone()).unwrap();
-            mr.reset();
-            mr.merge_begin(Arc::clone(&cki), &cur_bio.blob_id);
-        }
-
-        index += 1;
-
-        if index >= bios.len() {
-            tx.send(mr).unwrap();
-            break;
-        }
-    }
-}
-
 impl RafsCache for BlobCache {
     fn backend(&self) -> &(dyn BlobBackend + Sync + Send) {
         self.backend.as_ref()
@@ -382,7 +298,11 @@ impl RafsCache for BlobCache {
 
     fn init(&self, _sb_meta: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> Result<()> {
         for b in blobs {
-            let _ = self.backend.prefetch_blob(b);
+            let _ = self.backend.prefetch_blob(
+                b.blob_id.as_str(),
+                b.readahead_offset,
+                b.readahead_size,
+            );
         }
         // TODO start blob cache level prefetch
         Ok(())
@@ -424,7 +344,7 @@ impl RafsCache for BlobCache {
     /// mirror them into blob cache file.
     /// Continuous chunks may be compressed or not.
     fn prefetch(&self, bios: &mut [RafsBio]) -> Result<usize> {
-        let (mut tx, rx) = spmc::channel::<MergedBlobRequest>();
+        let (mut tx, rx) = spmc::channel::<MergedBackendRequest>();
 
         // TODO: Make thread count configurable.
         for num in 0..8 {

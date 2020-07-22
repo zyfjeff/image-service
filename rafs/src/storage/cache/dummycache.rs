@@ -4,13 +4,15 @@
 
 use std::io::Result;
 use std::sync::Arc;
+use std::thread;
 
 use vm_memory::VolatileSlice;
 
 use crate::metadata::layout::OndiskBlobTableEntry;
 use crate::metadata::{RafsChunkInfo, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
-use crate::storage::cache::RafsCache;
+use crate::storage::cache::*;
+use crate::storage::compress;
 use crate::storage::device::RafsBio;
 use crate::storage::factory::CacheConfig;
 use crate::storage::utils::{alloc_buf, copyv};
@@ -31,7 +33,11 @@ impl RafsCache for DummyCache {
 
     fn init(&self, _sb_meta: &RafsSuperMeta, blobs: &[OndiskBlobTableEntry]) -> Result<()> {
         for b in blobs {
-            let _ = self.backend.prefetch_blob(b);
+            let _ = self.backend.prefetch_blob(
+                b.blob_id.as_str(),
+                b.readahead_offset,
+                b.readahead_size,
+            );
         }
         Ok(())
     }
@@ -125,8 +131,48 @@ impl RafsCache for DummyCache {
     }
 
     /// Prefetch works when blobcache is enabled
-    fn prefetch(&self, _bios: &mut [RafsBio]) -> Result<usize> {
-        warn!("Want to prefetch, however no blobcache is enabled!");
+    fn prefetch(&self, bios: &mut [RafsBio]) -> Result<usize> {
+        let (mut tx, rx) = spmc::channel::<MergedBackendRequest>();
+        for num in 0..2 {
+            let backend = Arc::clone(&self.backend);
+            let rx = rx.clone();
+            let _thread = thread::Builder::new()
+                .name(format!("prefetch_thread_{}", num))
+                .spawn(move || {
+                    while let Ok(mr) = rx.recv() {
+                        let blob_offset = mr.blob_offset;
+                        let blob_size = mr.blob_size;
+                        let blob_id = &mr.blob_id;
+                        trace!(
+                            "Merged req id {} req offset {} size {}",
+                            blob_id,
+                            blob_offset,
+                            blob_size
+                        );
+                        // Blob id must be unique.
+                        // TODO: Currently, request length to backend may span a whole chunk,
+                        // Do we need to split it into smaller pieces?
+                        if backend
+                            .prefetch_blob(blob_id, blob_offset as u32, blob_size)
+                            .is_err()
+                        {
+                            error!(
+                                "Readahead from {} for {} bytes failed",
+                                blob_offset, blob_size
+                            )
+                        }
+                    }
+                    info!("Prefetch thread exits.")
+                });
+        }
+
+        let mut bios = bios.to_vec();
+        let _thread = thread::Builder::new().spawn({
+            move || {
+                generate_merged_requests(bios.as_mut_slice(), &mut tx);
+            }
+        });
+
         Ok(0)
     }
 

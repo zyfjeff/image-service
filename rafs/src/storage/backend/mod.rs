@@ -6,7 +6,6 @@ use std::io::{Read, Result};
 
 use vm_memory::VolatileSlice;
 
-use crate::metadata::layout::OndiskBlobTableEntry;
 use crate::storage::utils::copyv;
 
 pub mod dummy;
@@ -22,7 +21,14 @@ pub mod request;
 /// Rafs blob backend API
 pub trait BlobBackend {
     /// prefetch blob if supported
-    fn prefetch_blob(&self, _blob: &OndiskBlobTableEntry) -> Result<()> {
+    /// TODO: Now `blob_readahead_offset` is type of `u32`. Better that we can change
+    /// it to u64 someday.
+    fn prefetch_blob(
+        &self,
+        _blob_id: &str,
+        _blob_readahead_offset: u32,
+        _blob_readahead_size: u32,
+    ) -> Result<()> {
         Ok(())
     }
 

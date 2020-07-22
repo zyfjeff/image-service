@@ -14,7 +14,6 @@ use std::{thread, time};
 use nix::sys::uio;
 use vm_memory::VolatileSlice;
 
-use crate::metadata::layout::OndiskBlobTableEntry;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 use crate::storage::utils::{readahead, readv};
 
@@ -347,26 +346,31 @@ impl LocalFs {
 }
 
 impl BlobBackend for LocalFs {
-    fn prefetch_blob(&self, blob: &OndiskBlobTableEntry) -> Result<()> {
+    fn prefetch_blob(
+        &self,
+        blob_id: &str,
+        blob_readahead_offset: u32,
+        blob_readahead_size: u32,
+    ) -> Result<()> {
         if !self.readahead {
             return Ok(());
         }
 
         let _ = self
-            .get_blob_fd(blob.blob_id.as_str(), 0, 0)
-            .map_err(|e| einval!(format!("failed to find blob {}: {}", blob.blob_id, e)))?;
+            .get_blob_fd(blob_id, 0, 0)
+            .map_err(|e| einval!(format!("failed to find blob {}: {}", blob_id, e)))?;
         // Do not expect get failure as we just added it above in get_blob_fd
         let blob_file = self
             .file_table
             .read()
             .unwrap()
-            .get(&blob.blob_id)
+            .get(blob_id)
             .unwrap()
             .0
             .try_clone()?;
         let blob_size = blob_file.metadata()?.len() as usize;
         let blob_fd = blob_file.as_raw_fd();
-        let blob_path = self.get_blob_path(&blob.blob_id);
+        let blob_path = self.get_blob_path(blob_id);
 
         // try to kick off readahead
         let access_file_path = blob_path.to_str().unwrap().to_owned() + BLOB_ACCESSED_SUFFIX;
@@ -389,17 +393,17 @@ impl BlobBackend for LocalFs {
         }
 
         // kick off hinted blob readahead
-        if blob.readahead_size != 0
-            && ((blob.readahead_offset + blob.readahead_size) as usize) <= blob_size
+        if blob_readahead_size != 0
+            && ((blob_readahead_offset + blob_readahead_size) as usize) <= blob_size
         {
             info!(
                 "kick off hinted blob readahead offset {} len {}",
-                blob.readahead_offset, blob.readahead_size
+                blob_readahead_offset, blob_readahead_size
             );
             readahead(
                 blob_file.as_raw_fd(),
-                blob.readahead_offset as u64,
-                (blob.readahead_offset + blob.readahead_size) as u64,
+                blob_readahead_offset as u64,
+                (blob_readahead_offset + blob_readahead_size) as u64,
             );
         }
 
@@ -413,10 +417,10 @@ impl BlobBackend for LocalFs {
             access_log.init(access_file, access_file_path, blob_fd, blob_size, false)?;
             let access_log = Arc::new(access_log);
             // Do not expect poisoned lock here
-            self.file_table.write().unwrap().insert(
-                blob.blob_id.to_owned(),
-                (blob_file, Some(access_log.clone())),
-            );
+            self.file_table
+                .write()
+                .unwrap()
+                .insert(blob_id.to_owned(), (blob_file, Some(access_log.clone())));
 
             // Split a thread to flush access record
             let wait_sec = self.readahead_sec;
