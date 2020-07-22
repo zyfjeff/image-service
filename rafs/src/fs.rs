@@ -15,7 +15,9 @@ use std::time::Duration;
 use fuse_rs::abi::linux_abi::Attr;
 use fuse_rs::api::filesystem::*;
 use fuse_rs::api::BackendFileSystem;
+use nix::unistd::{getegid, geteuid};
 use serde::Deserialize;
+use std::time::SystemTime;
 
 use crate::io_stats;
 use crate::io_stats::StatsFop;
@@ -65,6 +67,11 @@ pub struct Rafs {
     fs_prefetch: bool,
     initialized: bool,
     ios: Arc<io_stats::GlobalIOStats>,
+    // static inode attributes
+    i_uid: u32,
+    i_gid: u32,
+    i_rdev: u32,
+    i_time: u64,
 }
 
 impl Rafs {
@@ -75,6 +82,13 @@ impl Rafs {
             initialized: false,
             ios: io_stats::new(id),
             fs_prefetch: conf.fs_prefetch,
+            i_uid: geteuid().into(),
+            i_gid: getegid().into(),
+            i_rdev: 0,
+            i_time: SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
         };
 
         rafs.ios.toggle_files_recording(conf.iostats_files);
@@ -197,22 +211,7 @@ impl Rafs {
             entry_timeout: self.sb.meta.entry_timeout,
         }
     }
-}
 
-impl BackendFileSystem for Rafs {
-    fn mount(&self) -> Result<(Entry, u64)> {
-        let root_inode = self.sb.get_inode(ROOT_ID)?;
-        self.ios.new_file_counter(root_inode.ino());
-        let entry = root_inode.get_entry();
-        Ok((entry, self.sb.get_max_ino()))
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-}
-
-impl Rafs {
     fn lookup_wrapped(&self, ino: u64, name: &CStr) -> Result<Entry> {
         let target = name.to_str().map_err(|_| ebadf!("failed to get name"))?;
         let parent = self.sb.get_inode(ino)?;
@@ -239,6 +238,31 @@ impl Rafs {
                 })
                 .unwrap_or_else(|_| self.negative_entry()))
         }
+    }
+
+    fn get_inode_attr(&self, ino: u64) -> Result<Attr> {
+        let inode = self.sb.get_inode(ino)?;
+        let mut attr = inode.get_attr();
+        attr.uid = self.i_uid;
+        attr.gid = self.i_gid;
+        attr.rdev = self.i_rdev;
+        attr.atime = self.i_time;
+        attr.ctime = self.i_time;
+        attr.mtime = self.i_time;
+        Ok(attr)
+    }
+}
+
+impl BackendFileSystem for Rafs {
+    fn mount(&self) -> Result<(Entry, u64)> {
+        let root_inode = self.sb.get_inode(ROOT_ID)?;
+        self.ios.new_file_counter(root_inode.ino());
+        let entry = root_inode.get_entry();
+        Ok((entry, self.sb.get_max_ino()))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 
@@ -287,8 +311,8 @@ impl FileSystem for Rafs {
         ino: u64,
         _handle: Option<u64>,
     ) -> Result<(libc::stat64, Duration)> {
-        let inode = self.sb.get_inode(ino)?;
-        let r = Ok((inode.get_attr().into(), self.sb.meta.attr_timeout));
+        let attr = self.get_inode_attr(ino)?;
+        let r = Ok((attr.into(), self.sb.meta.attr_timeout));
         self.ios.file_stats_update(ino, StatsFop::Stat, 0, &r);
         r
     }
@@ -422,8 +446,7 @@ impl FileSystem for Rafs {
     }
 
     fn access(&self, ctx: Context, ino: u64, mask: u32) -> Result<()> {
-        let inode = self.sb.get_inode(ino)?;
-        let st = inode.get_attr();
+        let st = self.get_inode_attr(ino)?;
         let mode = mask as i32 & (libc::R_OK | libc::W_OK | libc::X_OK);
 
         if mode == libc::F_OK {

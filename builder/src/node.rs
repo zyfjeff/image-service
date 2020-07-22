@@ -249,16 +249,11 @@ impl Node {
         let meta = self.meta()?;
 
         self.inode.i_mode = meta.st_mode();
-        self.inode.i_uid = meta.st_uid();
-        self.inode.i_gid = meta.st_gid();
         self.inode.i_projid = 0;
-        self.inode.i_rdev = meta.st_rdev();
         self.inode.i_size = meta.st_size();
         self.inode.i_nlink = meta.st_nlink();
-        self.inode.i_blocks = meta.st_blocks();
-        self.inode.i_atime = meta.st_atime() as u64;
-        self.inode.i_mtime = meta.st_mtime() as u64;
-        self.inode.i_ctime = meta.st_ctime() as u64;
+        // block count in 512B units per stat(2)
+        self.inode.i_blocks = div_round_up(self.inode.i_size, 512);
 
         Ok(())
     }

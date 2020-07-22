@@ -544,33 +544,28 @@ impl RafsStore for OndiskBlobTable {
 #[derive(Clone, Copy, Default, Debug)]
 pub struct OndiskInode {
     /// sha256(sha256(chunk) + ...), [char; RAFS_SHA256_LENGTH]
-    pub i_digest: OndiskDigest,
+    pub i_digest: OndiskDigest, // 32
     /// parent inode number
     pub i_parent: u64,
     /// from fs stat()
     pub i_ino: u64,
     pub i_projid: u32,
     pub i_mode: u32,
-    pub i_uid: u32,
-    pub i_gid: u32,
-    pub i_rdev: u64,
-    pub i_size: u64,
+    pub i_size: u64, // 64
     pub i_nlink: u64,
     pub i_blocks: u64,
-    pub i_atime: u64,
-    pub i_mtime: u64,
-    pub i_ctime: u64,
     /// HARDLINK | SYMLINK | PREFETCH_HINT
     pub i_flags: u64,
     /// for dir, child start index
     pub i_child_index: u32,
     /// for dir, means child count.
     /// for regular file, means chunk info count.
-    pub i_child_count: u32,
+    pub i_child_count: u32, // 96
     /// file name size, [char; i_name_size]
     pub i_name_size: u16,
     /// symlink path size, [char; i_symlink_size]
-    pub i_symlink_size: u16,
+    pub i_symlink_size: u16, // 100
+    i_reserved: [u8; 28], // 128
 }
 
 impl OndiskInode {

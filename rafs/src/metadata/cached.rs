@@ -138,16 +138,10 @@ pub struct CachedInode {
     i_parent: u64,
     i_mode: u32,
     i_projid: u32,
-    i_uid: u32,
-    i_gid: u32,
     i_flags: u64,
-    i_rdev: u64,
     i_size: u64,
     i_nlink: u64,
     i_blocks: u64,
-    i_atime: u64,
-    i_mtime: u64,
-    i_ctime: u64,
     i_child_cnt: u64,
     i_target: String, // for symbol link
 
@@ -237,16 +231,10 @@ impl CachedInode {
         self.i_parent = inode.i_parent;
         self.i_mode = inode.i_mode;
         self.i_projid = inode.i_projid;
-        self.i_uid = inode.i_uid;
-        self.i_gid = inode.i_gid;
         self.i_flags = inode.i_flags;
-        self.i_rdev = inode.i_rdev;
         self.i_size = inode.i_size;
         self.i_nlink = inode.i_nlink;
         self.i_blocks = inode.i_blocks;
-        self.i_atime = inode.i_atime;
-        self.i_mtime = inode.i_mtime;
-        self.i_ctime = inode.i_ctime;
         self.i_child_cnt = inode.i_child_count as u64;
     }
 
@@ -319,14 +307,8 @@ impl RafsInode for CachedInode {
             ino: self.i_ino,
             size: self.i_size,
             blocks: self.i_blocks,
-            atime: self.i_atime,
-            ctime: self.i_ctime,
-            mtime: self.i_mtime,
             mode: self.i_mode,
             nlink: self.i_nlink as u32,
-            uid: self.i_uid,
-            gid: self.i_gid,
-            rdev: self.i_rdev as u32,
             blksize: RAFS_INODE_BLOCKSIZE,
             ..Default::default()
         }
