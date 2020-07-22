@@ -315,7 +315,7 @@ fn generate_merged_requests(bios: &mut [RafsBio], tx: &mut spmc::Sender<MergedBl
         let prior_bio = &bios[index - 1];
         let cur_bio = &bios[index];
 
-        // Even more chunks are continuos, still split them per as certain size.
+        // Even more chunks are continuous, still split them per as certain size.
         // So that to achieve an appropriate request size to backend.
         // TODO: Try to make `certain size` configurable?
         const MERGE_SIZE: u32 = 128 * 1024;
@@ -444,7 +444,7 @@ impl RafsCache for BlobCache {
                                     fd,
                                     &c_buf[offset_merged as usize
                                         ..(offset_merged as usize + c.compress_size() as usize)],
-                                    c.decompress_size() as i64,
+                                    c.blob_decompress_offset() as i64,
                                 )
                                 .map_err(|_| last_error!());
                             }
