@@ -386,8 +386,7 @@ impl PrefetchTable {
         // OK. Let's see if we have to align... :-(
         let cur_len = self.inode_indexes.len() * size_of::<u32>();
         let padding_bytes = align_to_rafs(cur_len) - cur_len;
-        let padding = [0u8; 8];
-        w.write_all(&padding[0..padding_bytes]).unwrap();
+        w.write_padding(padding_bytes)?;
 
         Ok(data.len() + padding_bytes)
     }
