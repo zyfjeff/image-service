@@ -146,7 +146,7 @@ pub struct OndiskSuperBlock {
     s_blob_table_offset: u64,
     /// V5: Size of inode table
     s_inode_table_entries: u32,
-    s_prefetch_table_size: u32,
+    s_prefetch_table_entries: u32,
     /// V5: Entries of blob table
     s_blob_table_size: u32,
     s_reserved: u32,
@@ -166,7 +166,7 @@ impl Default for OndiskSuperBlock {
             s_inode_table_entries: u32::to_le(0),
             s_inode_table_offset: u64::to_le(0),
             s_prefetch_table_offset: u64::to_le(0),
-            s_prefetch_table_size: u32::to_le(0),
+            s_prefetch_table_entries: u32::to_le(0),
             s_blob_table_size: u32::to_le(0),
             s_blob_table_offset: u64::to_le(0),
             s_reserved: u32::to_le(0),
@@ -248,9 +248,9 @@ impl OndiskSuperBlock {
         u64
     );
     impl_pub_getter_setter!(
-        prefetch_table_size,
-        set_prefetch_table_size,
-        s_prefetch_table_size,
+        prefetch_table_entries,
+        set_prefetch_table_entries,
+        s_prefetch_table_entries,
         u32
     );
 

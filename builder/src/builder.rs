@@ -276,7 +276,7 @@ impl Builder {
         super_block.set_blob_table_size(blob_table_size as u32);
         super_block.set_prefetch_table_offset(prefetch_table_offset as u64);
         super_block.set_flags(super_block.flags() | self.compressor as u64);
-        super_block.set_prefetch_table_size(prefetch_table_size as u32);
+        super_block.set_prefetch_table_entries(self.hint_readahead_files.len() as u32);
 
         // Dump blob
         let mut compress_offset = 0u64;
