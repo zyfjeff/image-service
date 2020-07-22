@@ -1,6 +1,9 @@
 build: build-virtiofsd build-fusedev
 	cargo fmt -- --check
 
+release: build-virtiofsd-release build-fusedev-release
+	cargo fmt -- --check
+
 build-virtiofsd:
 	# TODO: switch to --out-dir when it moves to stable
 	# For now we build with separate target directories
@@ -11,8 +14,10 @@ build-fusedev:
 	cargo build --features=fusedev --target-dir target-fusedev
 	cargo clippy --features=fusedev --target-dir target-fusedev -- -Dclippy::all
 
-release:
+build-virtiofsd-release:
 	cargo build --features=virtiofsd --release --target-dir target-virtiofsd
+
+build-fusedev-release:
 	cargo build --features=fusedev --release --target-dir target-fusedev
 
 static-release:
