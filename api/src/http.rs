@@ -115,7 +115,7 @@ pub fn extract_query_part(req: &Request, key: &str) -> Option<String> {
 
 pub fn start_http_thread(
     path: &str,
-    api_notifier: EventFd,
+    evt_fd: EventFd,
     api_sender: Sender<ApiRequest>,
 ) -> Result<thread::JoinHandle<Result<()>>> {
     std::fs::remove_file(path).unwrap_or_default();
@@ -133,7 +133,7 @@ pub fn start_http_thread(
                         for server_request in request_vec {
                             server
                                 .respond(server_request.process(|request| {
-                                    handle_http_request(request, &api_notifier, &api_sender)
+                                    handle_http_request(request, &evt_fd, &api_sender)
                                 }))
                                 .or_else(|e| -> Result<()> {
                                     error!("HTTP server error on response: {}", e);

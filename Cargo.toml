@@ -16,6 +16,7 @@ clap = "2.33"
 stderrlog = "0.4"
 serde_json = "1.0.51"
 sha2 = "0.9.1"
+lazy_static = "1.4.0"
 xattr = "0.2.2"
 uuid = { version = "0.8", features = ["serde", "v4"] }
 rafs = { path = "rafs", features = ["backend-localfs", "backend-oss", "backend-registry"] }
@@ -26,6 +27,7 @@ vm-memory = { version = ">=0.2.0", features = ["backend-mmap"], optional = true 
 fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git", branch = "nydus", optional = true }
 vhost-rs = { git = "https://github.com/cloud-hypervisor/vhost.git", branch = "dragonball", package = "vhost", features = ["vhost-user-slave"], optional = true }
 vhost-user-backend = { git = "ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git", optional = true }
+event-manager = { git = "https://github.com/rust-vmm/event-manager.git", branch= "master" }
 
 [features]
 fusedev = ["nydus-utils/fusedev", "fuse-rs/fusedev"]
