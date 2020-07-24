@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 #[cfg(feature = "virtiofsd")]
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 #[cfg(feature = "fusedev")]
 use std::thread;
 use std::{convert, error, fmt, io, process};
@@ -44,7 +44,7 @@ use std::path::Path;
 #[cfg(feature = "virtiofsd")]
 use vhost_rs::vhost_user::message::*;
 #[cfg(feature = "virtiofsd")]
-use vhost_rs::vhost_user::SlaveFsCacheReq;
+use vhost_rs::vhost_user::{Listener, SlaveFsCacheReq};
 #[cfg(feature = "virtiofsd")]
 use vhost_user_backend::{VhostUserBackend, VhostUserDaemon, Vring};
 #[cfg(feature = "virtiofsd")]
@@ -277,6 +277,11 @@ trait NydusDaemon {
 
 #[allow(dead_code)]
 #[cfg(feature = "virtiofsd")]
+struct VhostUserFsBackendHandler {
+    backend: Mutex<VhostUserFsBackend>,
+}
+
+#[cfg(feature = "virtiofsd")]
 struct VhostUserFsBackend {
     mem: Option<GuestMemoryMmap>,
     kill_evt: EventFd,
@@ -287,24 +292,30 @@ struct VhostUserFsBackend {
 }
 
 #[cfg(feature = "virtiofsd")]
-impl VhostUserFsBackend {
+impl VhostUserFsBackendHandler {
     fn new(vfs: Arc<Vfs>) -> Result<Self> {
-        Ok(VhostUserFsBackend {
+        let backend = VhostUserFsBackend {
             mem: None,
             kill_evt: EventFd::new(EFD_NONBLOCK).map_err(Error::Epoll)?,
             server: Arc::new(Server::new(vfs)),
             vu_req: None,
             used_descs: Vec::with_capacity(QUEUE_SIZE),
+        };
+        Ok(VhostUserFsBackendHandler {
+            backend: Mutex::new(backend),
         })
     }
+}
 
+#[cfg(feature = "virtiofsd")]
+impl VhostUserFsBackend {
     // There's no way to recover if error happens during processing a virtq, let the caller
     // to handle it.
     fn process_queue(&mut self, vring: &mut Vring) -> Result<()> {
         let mem = self.mem.as_ref().ok_or(Error::NoMemoryConfigured)?;
 
         while let Some(avail_desc) = vring.mut_queue().iter(mem).next() {
-            let head_index = avail_desc.index;
+            let head_index = avail_desc.index();
             let reader =
                 Reader::new(mem, avail_desc.clone()).map_err(Error::InvalidDescriptorChain)?;
             let writer = Writer::new(mem, avail_desc).map_err(Error::InvalidDescriptorChain)?;
@@ -342,7 +353,7 @@ impl VhostUserFsBackend {
 }
 
 #[cfg(feature = "virtiofsd")]
-impl VhostUserBackend for VhostUserFsBackend {
+impl VhostUserBackend for VhostUserFsBackendHandler {
     fn num_queues(&self) -> usize {
         NUM_QUEUES
     }
@@ -362,15 +373,16 @@ impl VhostUserBackend for VhostUserFsBackend {
     fn set_event_idx(&mut self, _enabled: bool) {}
 
     fn update_memory(&mut self, mem: GuestMemoryMmap) -> VhostUserBackendResult<()> {
-        self.mem = Some(mem);
+        self.backend.lock().unwrap().mem = Some(mem);
         Ok(())
     }
 
     fn handle_event(
-        &mut self,
+        &self,
         index: u16,
         evset: epoll::Events,
         vrings: &[Arc<RwLock<Vring>>],
+        _thread_id: usize,
     ) -> VhostUserBackendResult<bool> {
         if evset != epoll::Events::EPOLLIN {
             return Err(Error::HandleEventNotEpollIn.into());
@@ -381,11 +393,11 @@ impl VhostUserBackend for VhostUserFsBackend {
                 let mut vring = vrings[HIPRIO_QUEUE_EVENT as usize].write().unwrap();
                 // high priority requests are also just plain fuse requests, just in a
                 // different queue
-                self.process_queue(&mut vring)?;
+                self.backend.lock().unwrap().process_queue(&mut vring)?;
             }
             x if x >= REQ_QUEUE_EVENT && x < vrings.len() as u16 => {
                 let mut vring = vrings[x as usize].write().unwrap();
-                self.process_queue(&mut vring)?;
+                self.backend.lock().unwrap().process_queue(&mut vring)?;
             }
             _ => return Err(Error::HandleEventUnknownEvent.into()),
         }
@@ -393,23 +405,33 @@ impl VhostUserBackend for VhostUserFsBackend {
         Ok(false)
     }
 
-    fn exit_event(&self) -> Option<(EventFd, Option<u16>)> {
-        Some((self.kill_evt.try_clone().unwrap(), Some(KILL_EVENT)))
+    fn exit_event(&self, _thread_index: usize) -> Option<(EventFd, Option<u16>)> {
+        Some((
+            self.backend.lock().unwrap().kill_evt.try_clone().unwrap(),
+            Some(KILL_EVENT),
+        ))
     }
 
     fn set_slave_req_fd(&mut self, vu_req: SlaveFsCacheReq) {
-        self.vu_req = Some(vu_req);
+        self.backend.lock().unwrap().vu_req = Some(vu_req);
     }
 }
 
 #[cfg(feature = "virtiofsd")]
-impl<S: VhostUserBackend> NydusDaemon for VhostUserDaemon<S> {
+struct VirtiofsDaemon<S: VhostUserBackend> {
+    sock: String,
+    daemon: VhostUserDaemon<S>,
+}
+
+#[cfg(feature = "virtiofsd")]
+impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
     fn start(&mut self, _: u32) -> Result<()> {
-        self.start().map_err(|e| einval!(e))
+        let listener = Listener::new(&self.sock, true).unwrap();
+        self.daemon.start(listener).map_err(|e| einval!(e))
     }
 
     fn wait(&mut self) -> Result<()> {
-        self.wait().map_err(|e| einval!(e))
+        self.daemon.wait().map_err(|e| einval!(e))
     }
 
     fn stop(&mut self) -> Result<()> {
@@ -425,11 +447,13 @@ impl<S: VhostUserBackend> NydusDaemon for VhostUserDaemon<S> {
 fn create_nydus_daemon(sock: &str, fs: Arc<Vfs>, _evtfd: EventFd) -> Result<Box<dyn NydusDaemon>> {
     let daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),
-        String::from(sock),
-        Arc::new(RwLock::new(VhostUserFsBackend::new(fs)?)),
+        Arc::new(RwLock::new(VhostUserFsBackendHandler::new(fs)?)),
     )
     .map_err(|e| Error::DaemonFailure(format!("{:?}", e)))?;
-    Ok(Box::new(daemon))
+    Ok(Box::new(VirtiofsDaemon {
+        sock: sock.to_owned(),
+        daemon,
+    }))
 }
 
 #[cfg(feature = "fusedev")]

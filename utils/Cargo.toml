@@ -11,7 +11,7 @@ log = "0.4"
 libc = "0.2"
 nix = "0.17"
 backtrace = "0.3"
-fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git", branch = "nydus", optional = true }
+fuse-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.git", optional = true }
 
 [features]
 fusedev = ["fuse-rs/fusedev"]

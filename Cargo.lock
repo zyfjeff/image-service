@@ -125,9 +125,9 @@ checksum = "2e8c087f005730276d1096a652e92a8bacee2e2472bcc9715a74d2bec38b5820"
 
 [[package]]
 name = "byteorder"
-version = "1.3.4"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08c48aae112d48ed9f069b33538ea9e3e90aa263cfa3d1c24309612b1f7472de"
+checksum = "652805b7e73fada9d85e9a6682a4abd490cb52d96aeecc12e33a0de34dfd0d23"
 
 [[package]]
 name = "bytes"
@@ -294,7 +294,7 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 [[package]]
 name = "fuse-rs"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=nydus#e55bbcd2232d4391b8f64e7adefd608a24284296"
+source = "git+https://github.com/cloud-hypervisor/fuse-backend-rs.git#e00a25867976f37b5788389ea030786309eb8598"
 dependencies = [
  "arc-swap",
  "bimap",
@@ -561,9 +561,9 @@ checksum = "9457b06509d27052635f90d6466700c65095fdf75409b3fbdd903e988b886f49"
 
 [[package]]
 name = "log"
-version = "0.4.8"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14b6052be84e6b71ab17edffc2eeabf5c2c3ae1fdb464aae35ac50c67a44e1f7"
+checksum = "c84ec4b527950aa83a329754b01dbe3f58361d1c5efacd1f6d68c494d08a17c6"
 dependencies = [
  "cfg-if",
 ]
@@ -771,7 +771,7 @@ dependencies = [
  "stderrlog",
  "uuid",
  "vhost",
- "vhost-user-backend",
+ "vhost_user_backend",
  "vm-memory",
  "vmm-sys-util",
  "xattr",
@@ -1438,9 +1438,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "vhost-user-backend"
+name = "vhost_user_backend"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git#2990c73ce26db4e5abcea8a4d31ba82c938d5f8f"
+source = "git+https://github.com/cloud-hypervisor/vhost-user-backend.git#78757bfad67c84f83dd383a10b1788a137e5478f"
 dependencies = [
  "epoll",
  "libc",
@@ -1471,7 +1471,7 @@ dependencies = [
 [[package]]
 name = "vm-virtio"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-virtio.git?branch=fuse#c8e0bc60b6777699c0cfc55b5b94682429496008"
+source = "git+https://github.com/cloud-hypervisor/vm-virtio.git?branch=dragonball#2bf58c10ed4d8f5a4ed2d09f25cc3a2f0561f82b"
 dependencies = [
  "byteorder",
  "libc",
