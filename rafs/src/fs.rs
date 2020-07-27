@@ -21,7 +21,7 @@ use std::time::SystemTime;
 
 use crate::io_stats;
 use crate::io_stats::StatsFop;
-use crate::metadata::RafsSuper;
+use crate::metadata::{RafsInode, RafsSuper};
 use crate::storage::device;
 use crate::storage::*;
 use crate::*;
@@ -220,21 +220,21 @@ impl Rafs {
         }
 
         if target == DOT || (ino == ROOT_ID && target == DOTDOT) {
-            let mut entry = parent.get_entry();
+            let mut entry = self.get_inode_entry(parent);
             entry.inode = ino;
             Ok(entry)
         } else if target == DOTDOT {
             Ok(self
                 .sb
                 .get_inode(parent.parent())
-                .map(|i| i.get_entry())
+                .map(|i| self.get_inode_entry(i))
                 .unwrap_or_else(|_| self.negative_entry()))
         } else {
             Ok(parent
                 .get_child_by_name(target)
                 .map(|i| {
                     self.ios.new_file_counter(i.ino());
-                    i.get_entry()
+                    self.get_inode_entry(i)
                 })
                 .unwrap_or_else(|_| self.negative_entry()))
         }
@@ -249,7 +249,20 @@ impl Rafs {
         attr.atime = self.i_time;
         attr.ctime = self.i_time;
         attr.mtime = self.i_time;
+
         Ok(attr)
+    }
+
+    fn get_inode_entry(&self, inode: Arc<dyn RafsInode>) -> Entry {
+        let mut entry = inode.get_entry();
+        entry.attr.st_uid = self.i_uid;
+        entry.attr.st_gid = self.i_gid;
+        entry.attr.st_rdev = self.i_rdev as u64;
+        entry.attr.st_atime = self.i_time as i64;
+        entry.attr.st_ctime = self.i_time as i64;
+        entry.attr.st_mtime = self.i_time as i64;
+
+        entry
     }
 }
 
@@ -257,7 +270,7 @@ impl BackendFileSystem for Rafs {
     fn mount(&self) -> Result<(Entry, u64)> {
         let root_inode = self.sb.get_inode(ROOT_ID)?;
         self.ios.new_file_counter(root_inode.ino());
-        let entry = root_inode.get_entry();
+        let entry = self.get_inode_entry(root_inode);
         Ok((entry, self.sb.get_max_ino()))
     }
 
@@ -437,7 +450,7 @@ impl FileSystem for Rafs {
     ) -> Result<()> {
         self.do_readdir(ino, size, offset, |dir_entry| {
             let inode = self.sb.get_inode(dir_entry.ino)?;
-            add_entry(dir_entry, inode.get_entry())
+            add_entry(dir_entry, self.get_inode_entry(inode))
         })
     }
 
