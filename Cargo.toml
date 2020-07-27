@@ -40,3 +40,18 @@ members = [
     "builder",
     "api",
 ]
+
+[patch.crates-io]
+vm-memory = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-memory.git", branch = "v5" }
+
+[patch.'https://github.com/cloud-hypervisor/fuse-backend-rs.git']
+fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git", branch = "nydus", optional = true }
+
+[patch.'https://github.com/cloud-hypervisor/vhost-user-backend.git']
+vhost_user_backend = { git = "ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git", optional = true }
+
+[patch."https://github.com/cloud-hypervisor/vhost.git"]
+vhost-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/vhost.git", branch = "v5", package = "vhost", optional = true }
+
+[patch."https://github.com/rust-vmm/event-manager.git"]
+event-manager = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/event-manager.git", branch = "v5" }

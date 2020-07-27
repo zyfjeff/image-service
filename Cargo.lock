@@ -248,7 +248,7 @@ dependencies = [
 [[package]]
 name = "event-manager"
 version = "0.1.0"
-source = "git+https://github.com/rust-vmm/event-manager.git#734a83f41a14fb9672daed79744f2a45ef581012"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/event-manager.git?branch=v5#8cc376b504ace3970fa5deab6dda43e5c83bba0f"
 dependencies = [
  "libc",
  "vmm-sys-util",
@@ -294,7 +294,7 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 [[package]]
 name = "fuse-rs"
 version = "0.1.0"
-source = "git+https://github.com/cloud-hypervisor/fuse-backend-rs.git#e00a25867976f37b5788389ea030786309eb8598"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=nydus#8096e7245f3340d9566dc184cc6a127ea4c7ab2a"
 dependencies = [
  "arc-swap",
  "bimap",
@@ -1430,17 +1430,18 @@ checksum = "b5a972e5669d67ba988ce3dc826706fb0a8b01471c088cb0b6110b805cc36aed"
 [[package]]
 name = "vhost"
 version = "0.1.0"
-source = "git+https://github.com/cloud-hypervisor/vhost.git?branch=dragonball#3e80cf531d278aeb7f947335a4eeca655e0f2c54"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vhost.git?branch=v5#dfc4623e7c3a682e4ab80cf41916cc8fa0fb5b6d"
 dependencies = [
  "bitflags",
  "libc",
+ "vmm-serde",
  "vmm-sys-util",
 ]
 
 [[package]]
 name = "vhost_user_backend"
 version = "0.1.0"
-source = "git+https://github.com/cloud-hypervisor/vhost-user-backend.git#78757bfad67c84f83dd383a10b1788a137e5478f"
+source = "git+ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git#8ac5300240f8d7fe3c4bd0b6eaf7d69f357ad3d3"
 dependencies = [
  "epoll",
  "libc",
@@ -1461,23 +1462,41 @@ checksum = "3ff512178285488516ed85f15b5d0113a7cdb89e9e8a760b269ae4f02b84bd6b"
 [[package]]
 name = "vm-memory"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "98d50eb34b2ec250e098fbad7486e81f592a1bdeff2b10f0433638f3ce6a0828"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-memory.git?branch=v5#d83633b68e689891c86d73e067e476b6006e47ec"
 dependencies = [
  "libc",
+ "vmm-serde",
  "winapi 0.3.8",
 ]
 
 [[package]]
 name = "vm-virtio"
 version = "0.1.0"
-source = "git+https://github.com/cloud-hypervisor/vm-virtio.git?branch=dragonball#2bf58c10ed4d8f5a4ed2d09f25cc3a2f0561f82b"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-virtio.git?branch=v5#ef38948b07cd41fe420add56356a458857e63ef3"
 dependencies = [
  "byteorder",
  "libc",
  "log",
  "vm-memory",
  "vmm-sys-util",
+]
+
+[[package]]
+name = "vmm-serde"
+version = "0.1.0"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vmm-serde.git?branch=v5#444d92f226dc7750c9654e9deb83322b0b2a2c58"
+dependencies = [
+ "vmm-serde-impl",
+]
+
+[[package]]
+name = "vmm-serde-impl"
+version = "0.1.0"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vmm-serde.git?branch=v5#444d92f226dc7750c9654e9deb83322b0b2a2c58"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
