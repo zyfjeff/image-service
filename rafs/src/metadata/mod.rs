@@ -285,6 +285,11 @@ impl RafsSuper {
 
     pub fn prefetch_hint_files(&self, r: &mut RafsIoReader) -> Result<RafsBioDesc> {
         let hint_entries = self.meta.prefetch_table_entries as usize;
+
+        if hint_entries == 0 {
+            return Err(enoent!("Prefetch table is empty!"));
+        }
+
         let mut prefetch_table = PrefetchTable::new();
         if prefetch_table
             .load_from(r, self.meta.prefetch_table_offset, hint_entries)
@@ -294,10 +299,6 @@ impl RafsSuper {
                 "Failed in load hint prefetch table at {}",
                 self.meta.prefetch_table_offset
             ));
-        }
-
-        if prefetch_table.inode_indexes.is_empty() {
-            return Err(enoent!("Prefetch table is empty!"));
         }
 
         let mut head_desc = RafsBioDesc {

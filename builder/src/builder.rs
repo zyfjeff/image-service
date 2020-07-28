@@ -251,9 +251,12 @@ impl Builder {
         let inode_table_size = inode_table.size();
         let mut prefetch_table_size = 0;
         let mut prefetch_table = PrefetchTable::new();
-        if self.ra_policy == ReadaheadPolicy::Fs {
+        let prefetch_table_entries = if self.ra_policy == ReadaheadPolicy::Fs {
             prefetch_table_size = align_to_rafs(self.hint_readahead_files.len() * size_of::<u32>());
-        }
+            self.hint_readahead_files.len() as u32
+        } else {
+            0u32
+        };
 
         // Blob table, use sha256 string (length 64) as blob id if not specified.
         let blob_id_size = if self.blob_id != "" {
@@ -276,7 +279,7 @@ impl Builder {
         super_block.set_blob_table_size(blob_table_size as u32);
         super_block.set_prefetch_table_offset(prefetch_table_offset as u64);
         super_block.set_flags(super_block.flags() | self.compressor as u64);
-        super_block.set_prefetch_table_entries(self.hint_readahead_files.len() as u32);
+        super_block.set_prefetch_table_entries(prefetch_table_entries);
 
         // Dump blob
         let mut compress_offset = 0u64;
