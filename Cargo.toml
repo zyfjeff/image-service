@@ -18,6 +18,7 @@ serde_json = "1.0.51"
 sha2 = "0.9.1"
 lazy_static = "1.4.0"
 xattr = "0.2.2"
+nix = "0.17"
 uuid = { version = "0.8", features = ["serde", "v4"] }
 rafs = { path = "rafs", features = ["backend-localfs", "backend-oss", "backend-registry"] }
 nydus-utils = { path = "utils" }

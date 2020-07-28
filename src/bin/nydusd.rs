@@ -20,16 +20,17 @@ use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 use libc::EFD_NONBLOCK;
 use std::fs::File;
 use std::io::{Read, Result};
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
-use std::sync::Arc;
 #[cfg(feature = "virtiofsd")]
-use std::sync::{Mutex, RwLock};
+use std::sync::RwLock;
+use std::sync::{Arc, Mutex};
 #[cfg(feature = "fusedev")]
 use std::thread;
 use std::{convert, error, fmt, io, process};
 
+use nix::sys::signal;
 use rlimit::{rlim, Resource};
 
 use clap::{App, Arg};
@@ -140,6 +141,7 @@ pub enum EpollDispatch {
 
 lazy_static! {
     static ref EVENT_MANAGER_RUN: AtomicBool = AtomicBool::new(true);
+    static ref EXIT_EVTFD: Mutex::<Option<EventFd>> = Mutex::<Option<EventFd>>::default();
 }
 
 type RafsMounter = fn(MountInfo, &RafsConfig, &Arc<Vfs>) -> Result<()>;
@@ -547,7 +549,7 @@ impl NydusDaemon for FusedevDaemon {
     }
 
     fn stop(&mut self) -> Result<()> {
-        Ok(())
+        self.session.umount()
     }
 }
 
@@ -671,6 +673,25 @@ impl ApiServer {
         };
 
         Ok(())
+    }
+}
+
+extern "C" fn sig_exit(_sig: std::os::raw::c_int) {
+    if cfg!(feature = "virtiofsd") {
+        // In case of virtiofsd, mechanism to unblock recvmsg() from VMM is lacked.
+        // Given the fact that we have nothing to clean up, directly exit seems fine.
+        // TODO: But it might be possible to use libc::pthread_kill to unblock it.
+        process::exit(0);
+    } else {
+        // Can't directly exit here since we want to umount rafs reflecting the signal.
+        EXIT_EVTFD
+            .lock()
+            .unwrap()
+            .deref()
+            .as_ref()
+            .unwrap()
+            .write(1)
+            .unwrap_or_else(|_| error!("Write event fd failed."))
     }
 }
 
@@ -913,6 +934,9 @@ fn main() -> Result<()> {
         info!("vfs mounted");
     }
 
+    nydus_utils::signal::register_signal_handler(signal::SIGINT, sig_exit);
+    nydus_utils::signal::register_signal_handler(signal::SIGTERM, sig_exit);
+
     let mut event_manager = EventManager::<Arc<dyn SubscriberWrapper>>::new().unwrap();
 
     let vfs = Arc::new(vfs);
@@ -943,6 +967,7 @@ fn main() -> Result<()> {
         .subscriber_mut(daemon_subscriber_id)
         .unwrap()
         .get_event_fd()?;
+    let exit_evtfd = evtfd.try_clone()?;
     let mut daemon = {
         if !vu_sock.is_empty() {
             create_nydus_daemon(vu_sock, vfs, evtfd)
@@ -951,6 +976,9 @@ fn main() -> Result<()> {
         }
     }?;
     info!("starting fuse daemon");
+
+    *EXIT_EVTFD.lock().unwrap().deref_mut() = Some(exit_evtfd);
+
     if let Err(e) = daemon.start(threads) {
         error!("Failed to start daemon: {:?}", e);
         process::exit(1);
@@ -961,12 +989,12 @@ fn main() -> Result<()> {
         event_manager.run().unwrap();
     }
 
-    if let Err(e) = daemon.wait() {
-        error!("Waiting for daemon failed: {:?}", e);
-    }
-
     if let Err(e) = daemon.stop() {
         error!("Error shutting down worker thread: {:?}", e)
+    }
+
+    if let Err(e) = daemon.wait() {
+        error!("Waiting for daemon failed: {:?}", e);
     }
 
     info!("nydusd quits");
