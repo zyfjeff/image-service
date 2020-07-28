@@ -37,7 +37,7 @@ impl<'a> MergedBackendRequest {
     }
 
     fn merge_begin(&mut self, first_cki: Arc<dyn RafsChunkInfo>, blob_id: &str) {
-        self.blob_offset = first_cki.blob_compress_offset();
+        self.blob_offset = first_cki.compress_offset();
         self.blob_size = first_cki.compress_size();
         self.chunks.push(first_cki);
         self.blob_id = String::from(blob_id);
@@ -53,8 +53,8 @@ fn is_chunk_continuous(prior: &RafsBio, cur: &RafsBio) -> bool {
     let prior_cki = &prior.chunkinfo;
     let cur_cki = &cur.chunkinfo;
 
-    let prior_end = prior_cki.blob_compress_offset() + prior_cki.compress_size() as u64;
-    let cur_offset = cur_cki.blob_compress_offset();
+    let prior_end = prior_cki.compress_offset() + prior_cki.compress_size() as u64;
+    let cur_offset = cur_cki.compress_offset();
 
     if prior_end == cur_offset && prior.blob_id == cur.blob_id {
         return true;
@@ -64,7 +64,7 @@ fn is_chunk_continuous(prior: &RafsBio, cur: &RafsBio) -> bool {
 }
 
 fn generate_merged_requests(bios: &mut [RafsBio], tx: &mut spmc::Sender<MergedBackendRequest>) {
-    bios.sort_by_key(|entry| entry.chunkinfo.blob_compress_offset());
+    bios.sort_by_key(|entry| entry.chunkinfo.compress_offset());
     let mut index: usize = 1;
     let first_cki = &bios[0].chunkinfo;
     let mut mr = MergedBackendRequest::default();
