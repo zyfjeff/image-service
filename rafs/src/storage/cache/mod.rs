@@ -66,6 +66,9 @@ fn is_chunk_continuous(prior: &RafsBio, cur: &RafsBio) -> bool {
 fn generate_merged_requests(bios: &mut [RafsBio], tx: &mut spmc::Sender<MergedBackendRequest>) {
     bios.sort_by_key(|entry| entry.chunkinfo.compress_offset());
     let mut index: usize = 1;
+    if bios.is_empty() {
+        return;
+    }
     let first_cki = &bios[0].chunkinfo;
     let mut mr = MergedBackendRequest::default();
     mr.merge_begin(Arc::clone(first_cki), &bios[0].blob_id);
