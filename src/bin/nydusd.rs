@@ -7,15 +7,14 @@
 extern crate clap;
 #[macro_use]
 extern crate log;
-extern crate config;
 extern crate rafs;
+extern crate serde_json;
 extern crate stderrlog;
 
 use std::fs::File;
 use std::io::{Read, Result};
 use std::ops::Deref;
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::path::Path;
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::Arc;
 #[cfg(feature = "virtiofsd")]
@@ -34,6 +33,8 @@ use fuse_rs::passthrough::{Config, PassthroughFs};
 #[cfg(feature = "virtiofsd")]
 use fuse_rs::transport::{Error as FuseTransportError, FsCacheReqHandler, Reader, Writer};
 use fuse_rs::Error as VhostUserFsError;
+#[cfg(feature = "fusedev")]
+use std::path::Path;
 #[cfg(feature = "virtiofsd")]
 use vhost_rs::vhost_user::message::*;
 #[cfg(feature = "virtiofsd")]
@@ -757,14 +758,10 @@ fn main() -> Result<()> {
         ));
     }
 
-    let mut settings = config::Config::new();
-    settings
-        .merge(config::File::from(Path::new(config)))
-        .map_err(|e| Error::InvalidConfig(e.to_string()))?;
-    let rafs_conf: RafsConfig = settings
-        .try_into()
-        .map_err(|e| Error::InvalidConfig(e.to_string()))?;
-
+    let content =
+        std::fs::read_to_string(config).map_err(|e| Error::InvalidConfig(e.to_string()))?;
+    let rafs_conf: RafsConfig =
+        serde_json::from_str(&content).map_err(|e| Error::InvalidConfig(e.to_string()))?;
     let vfs = Vfs::new(VfsOptions::default());
     if !shared_dir.is_empty() {
         // Vfs by default enables no_open and writeback, passthroughfs
@@ -809,13 +806,9 @@ fn main() -> Result<()> {
                 "mount" => {
                     let mut rafs = match info.config.as_ref() {
                         Some(config) => {
-                            let mut settings = config::Config::new();
-                            settings
-                                .merge(config::File::from(Path::new(config)))
+                            let content = std::fs::read_to_string(config)
                                 .map_err(|e| ApiError::MountFailure(einval!(e)))?;
-
-                            let rafs_conf: RafsConfig = settings
-                                .try_into()
+                            let rafs_conf: RafsConfig = serde_json::from_str(&content)
                                 .map_err(|e| ApiError::MountFailure(einval!(e)))?;
 
                             Rafs::new(rafs_conf, &info.mountpoint)
@@ -855,12 +848,9 @@ fn main() -> Result<()> {
                     info!("switch backend");
                     let rafs_conf = match info.config.as_ref() {
                         Some(config) => {
-                            let mut settings = config::Config::new();
-                            settings
-                                .merge(config::File::from(Path::new(config)))
+                            let content = std::fs::read_to_string(config)
                                 .map_err(|e| ApiError::MountFailure(einval!(e)))?;
-                            let rafs_conf: RafsConfig = settings
-                                .try_into()
+                            let rafs_conf: RafsConfig = serde_json::from_str(&content)
                                 .map_err(|e| ApiError::MountFailure(einval!(e)))?;
 
                             rafs_conf
