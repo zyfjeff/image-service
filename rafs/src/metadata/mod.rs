@@ -19,7 +19,7 @@ pub use self::digest::*;
 use self::direct::DirectMapping;
 use self::layout::*;
 use self::noop::NoopInodes;
-use crate::fs::{Inode, RafsConfig, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
+use crate::fs::{RafsConfig, RAFS_DEFAULT_ATTR_TIMEOUT, RAFS_DEFAULT_ENTRY_TIMEOUT};
 use crate::metadata::cached::CachedInodes;
 use crate::storage::compress;
 use crate::storage::device::{RafsBio, RafsBioDesc};
@@ -39,6 +39,9 @@ pub const RAFS_INODE_BLOCKSIZE: u32 = 4096;
 pub const RAFS_MAX_NAME: usize = 255;
 pub const RAFS_DEFAULT_BLOCK_SIZE: u64 = 1024 * 1024;
 pub const RAFS_MAX_METADATA_SIZE: usize = 0x8000_0000;
+
+/// Type of RAFS inode.
+pub type Inode = u64;
 
 #[macro_export]
 macro_rules! impl_getter_setter {
@@ -62,7 +65,7 @@ macro_rules! impl_getter {
     };
 }
 
-/// Cached Rafs super block metadata.
+/// Cached Rafs super block bootstrap.
 #[derive(Clone, Copy, Default, Debug)]
 pub struct RafsSuperMeta {
     pub magic: u32,
@@ -247,7 +250,7 @@ impl RafsSuper {
         Ok(())
     }
 
-    /// Store RAFS metadata to backend storage.
+    /// Store RAFS bootstrap to backend storage.
     pub fn store(&self, w: &mut RafsIoWriter) -> Result<usize> {
         let mut sb = OndiskSuperBlock::new();
 
@@ -359,30 +362,29 @@ pub trait RafsSuperInodes {
     fn get_max_ino(&self) -> Inode;
 
     fn get_blobs(&self) -> Vec<OndiskBlobTableEntry> {
-        Vec::new()
+        self.get_blob_table().get_all()
     }
+
+    fn get_blob_table(&self) -> Arc<OndiskBlobTable>;
 
     fn update(&self, r: &mut RafsIoReader) -> Result<()>;
 
     /// Validate child, chunk and symlink digest on inode tree.
     /// The chunk data digest for regular file will only validate on fs read.
     fn digest_validate(&self, inode: Arc<dyn RafsInode>, recursive: bool) -> Result<bool> {
-        trace!("validate inode digest {}", inode.ino());
-
-        let child_index = inode.get_child_index()?;
         let child_count = inode.get_child_count()?;
 
         let expected_digest = inode.get_digest()?;
         let mut hasher = RafsDigest::hasher();
 
         if inode.is_symlink() {
-            trace!("\tdigest symlink {}", inode.get_symlink()?);
+            // trace!("\tdigest symlink {}", inode.get_symlink()?);
             hasher.update(inode.get_symlink()?.as_bytes());
         } else {
-            for idx in child_index..(child_index + child_count) {
+            for idx in 0..child_count {
                 if inode.is_dir() {
-                    trace!("\tdigest child {}", idx);
-                    let child = self.get_inode(idx as u64, false)?;
+                    // trace!("\tdigest child {}", idx);
+                    let child = inode.get_child_by_index(idx as u64)?;
                     if (child.is_reg() || child.is_symlink() || (recursive && child.is_dir()))
                         && !self.digest_validate(child.clone(), recursive)?
                     {
@@ -392,7 +394,7 @@ pub trait RafsSuperInodes {
                     let child_digest = child_digest.as_ref().as_ref();
                     hasher.update(child_digest);
                 } else {
-                    trace!("\tdigest chunk {}", idx);
+                    // trace!("\tdigest chunk {}", idx);
                     let chunk = inode.get_chunk_info(idx as u32)?;
                     let chunk_digest = chunk.block_id();
                     let chunk_digest = chunk_digest.as_ref().as_ref();
@@ -401,7 +403,18 @@ pub trait RafsSuperInodes {
             }
         }
 
-        Ok(expected_digest == RafsDigest::finalize(hasher))
+        let digest = RafsDigest::finalize(hasher);
+        let result = expected_digest == digest;
+        if !result {
+            error!(
+                "invalid inode digest {}, ino: {} name: {}",
+                digest,
+                inode.ino(),
+                inode.name()?
+            );
+        }
+
+        Ok(result)
     }
 }
 
@@ -417,8 +430,8 @@ pub trait RafsInode {
     fn get_digest(&self) -> Result<RafsDigest>;
     fn get_child_by_name(&self, name: &str) -> Result<Arc<dyn RafsInode>>;
     fn get_child_by_index(&self, idx: Inode) -> Result<Arc<dyn RafsInode>>;
-    fn get_child_index(&self) -> Result<usize>;
-    fn get_child_count(&self) -> Result<usize>;
+    fn get_child_index(&self) -> Result<u32>;
+    fn get_child_count(&self) -> Result<u32>;
     fn get_chunk_info(&self, idx: u32) -> Result<Arc<dyn RafsChunkInfo>>;
     fn get_chunk_blob_id(&self, idx: u32) -> Result<String>;
     fn get_entry(&self) -> Entry;
@@ -440,6 +453,8 @@ pub trait RafsInode {
     fn ino(&self) -> u64;
     fn parent(&self) -> u64;
     fn size(&self) -> u64;
+
+    fn cast_ondisk(&self) -> Result<OndiskInode>;
 }
 
 /// Trait to access Rafs Data Chunk Information.
@@ -456,6 +471,8 @@ pub trait RafsChunkInfo: Sync + Send {
 
     fn file_offset(&self) -> u64;
     fn is_compressed(&self) -> bool;
+
+    fn cast_ondisk(&self) -> Result<OndiskChunkInfo>;
 }
 
 /// Trait to store Rafs meta block and validate alignment.

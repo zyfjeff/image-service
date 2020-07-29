@@ -439,9 +439,10 @@ impl BlobBackend for LocalFs {
         let fd = self.get_blob_fd(blob_id, offset, buf.len())?;
 
         debug!(
-            "local blob file reading: offset={}, size={}",
+            "local blob file reading: offset={}, size={} from={}",
             offset,
-            buf.len()
+            buf.len(),
+            blob_id,
         );
         let len = uio::pread(fd, buf, offset as i64)
             .map_err(|_| last_error!("failed to read blob file"))?;

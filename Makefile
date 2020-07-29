@@ -25,8 +25,9 @@ static-release:
 	cargo build --target x86_64-unknown-linux-musl --features=virtiofsd --release --target-dir target-virtiofsd
 
 test: build
-	RUST_BACKTRACE=1 cargo test --features=virtiofsd --target-dir target-virtiofsd -- --nocapture
-	RUST_BACKTRACE=1 cargo test --features=fusedev --target-dir target-fusedev -- --nocapture
+	# Run smoke test and unit tests
+	RUST_BACKTRACE=1 cargo test --features=fusedev --target-dir target-fusedev --workspace -- --nocapture
+	RUST_BACKTRACE=1 cargo test --features=virtiofsd --target-dir target-virtiofsd --workspace -- --nocapture
 
 docker-smoke:
 	docker build -t nydus-rs-smoke misc/smoke

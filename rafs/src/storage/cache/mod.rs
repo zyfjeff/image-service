@@ -153,11 +153,18 @@ pub trait RafsCache {
         }
 
         if dst_buf.len() != d_size {
-            return Err(eio!("invalid backend data"));
+            return Err(eio!(format!(
+                "invalid chunk data, expected size: {} != {}",
+                d_size,
+                dst_buf.len(),
+            )));
         }
 
         if digest_validate && !digest_check(dst_buf, &chunk.block_id()) {
-            return Err(eio!("failed to validate backend data"));
+            return Err(eio!(format!(
+                "invalid chunk data, expected digest: {}",
+                chunk.block_id()
+            )));
         }
 
         Ok(dst_buf.len())

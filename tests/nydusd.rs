@@ -20,6 +20,7 @@ pub fn exec(cmd: &str) -> Result<()> {
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(cmd)
+        .env("RUST_BACKTRACE", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -38,9 +39,15 @@ pub fn exec(cmd: &str) -> Result<()> {
 pub struct Nydusd {
     work_dir: PathBuf,
     mount_path: PathBuf,
+    bootstrap_file_name: String,
 }
 
-pub fn new(work_dir: &PathBuf, enable_cache: bool, rafs_mode: RafsMode) -> Result<Nydusd> {
+pub fn new(
+    work_dir: &PathBuf,
+    enable_cache: bool,
+    rafs_mode: RafsMode,
+    bootstrap_file_name: String,
+) -> Result<Nydusd> {
     let mount_path = work_dir.join("mnt");
     fs::create_dir_all(mount_path.clone())?;
 
@@ -73,6 +80,7 @@ pub fn new(work_dir: &PathBuf, enable_cache: bool, rafs_mode: RafsMode) -> Resul
                 {}
             }},
             "mode": "{}",
+            "digest_validate": true,
             "iostats_files": true
         }}
         "###,
@@ -86,6 +94,7 @@ pub fn new(work_dir: &PathBuf, enable_cache: bool, rafs_mode: RafsMode) -> Resul
     Ok(Nydusd {
         work_dir: work_dir.clone(),
         mount_path,
+        bootstrap_file_name,
     })
 }
 
@@ -100,16 +109,17 @@ impl Nydusd {
     pub fn start(&self) -> Result<()> {
         let work_dir = self.work_dir.clone();
         let mount_path = self.mount_path.clone();
+        let bootstrap_file_name = self.bootstrap_file_name.clone();
 
         spawn(move || {
             exec(
                 format!(
-                    "{} --config {:?} --apisock {:?} --mountpoint {:?} --metadata {:?} --log-level trace",
+                    "{} --config {:?} --apisock {:?} --mountpoint {:?} --bootstrap {:?} --log-level trace",
                     NYDUSD,
                     work_dir.join("config.json"),
                     work_dir.join("api.sock"),
                     mount_path,
-                    work_dir.join("parent-bootstrap"),
+                    work_dir.join(bootstrap_file_name),
                 )
                 .as_str(),
             ).unwrap_or(());

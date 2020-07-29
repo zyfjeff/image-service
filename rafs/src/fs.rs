@@ -22,15 +22,13 @@ use std::time::SystemTime;
 
 use crate::io_stats;
 use crate::io_stats::StatsFop;
-use crate::metadata::{RafsInode, RafsSuper};
+use crate::metadata::{Inode, RafsInode, RafsSuper};
 use crate::storage::device;
 use crate::storage::*;
 use crate::*;
 
 use nydus_utils::{eacces, ealready, ebadf, einval, enoent, eother};
 
-/// Type of RAFS inode.
-pub type Inode = u64;
 /// Type of RAFS fuse handle.
 pub type Handle = u64;
 
@@ -137,7 +135,7 @@ impl Rafs {
         Ok(())
     }
 
-    /// Import an rafs metadata to initialize the filesystem instance.
+    /// Import an rafs bootstrap to initialize the filesystem instance.
     pub fn import(&mut self, r: &mut RafsIoReader) -> Result<()> {
         if self.initialized {
             return Err(ealready!("rafs already mounted"));
@@ -192,7 +190,7 @@ impl Rafs {
             return Err(err_not_directory!());
         }
 
-        let mut idx = offset as usize;
+        let mut idx = offset as u32;
         while idx < parent.get_child_count()? {
             let child = parent.get_child_by_index(idx as u64)?;
             match add_entry(DirEntry {

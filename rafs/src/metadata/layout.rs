@@ -55,7 +55,7 @@ pub const RAFS_SUPER_MIN_VERSION: u32 = RAFS_SUPER_VERSION_V4;
 pub const RAFS_ALIGNMENT: usize = 8;
 pub const RAFS_ROOT_INODE: u64 = 1;
 
-macro_rules! impl_metadata_converter {
+macro_rules! impl_bootstrap_converter {
     ($T: ty) => {
         impl TryFrom<&[u8]> for &$T {
             type Error = Error;
@@ -266,7 +266,7 @@ impl RafsStore for OndiskSuperBlock {
     }
 }
 
-impl_metadata_converter!(OndiskSuperBlock);
+impl_bootstrap_converter!(OndiskSuperBlock);
 
 impl fmt::Display for OndiskSuperBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -366,7 +366,6 @@ impl PrefetchTable {
     }
 
     pub fn add_entry(&mut self, inode_idx: u32) {
-        debug!("Add index {}", inode_idx);
         self.inode_indexes.push(inode_idx);
     }
 
@@ -442,13 +441,20 @@ impl OndiskBlobTable {
     }
 
     #[inline]
-    pub fn minimum_size(blob_id_size: usize) -> usize {
-        align_to_rafs(size_of::<u32>() * 2 + blob_id_size)
+    pub fn predicted_size(&self, added_blob_id_size: usize) -> usize {
+        let current_size = if self.entries.is_empty() {
+            0
+        } else {
+            self.entries
+                .iter()
+                .fold(0usize, |size, entry| size + entry.size() + 1)
+        };
+        align_to_rafs(current_size + size_of::<u32>() * 2 + added_blob_id_size)
     }
 
     /// Get blob table size, aligned with RAFS_ALIGNMENT bytes
     pub fn size(&self) -> usize {
-        // blob entry splited with '\0'
+        // Blob entry split with '\0'
         align_to_rafs(
             self.entries
                 .iter()
@@ -482,9 +488,20 @@ impl OndiskBlobTable {
     }
     pub fn load_from_slice(&mut self, input: &[u8]) -> Result<()> {
         let mut input_rest = input;
+
         loop {
-            let (readahead, rest) = input_rest.split_at(std::mem::size_of::<u64>());
-            let (readahead_offset, readahead_size) = readahead.split_at(std::mem::size_of::<u32>());
+            let split_at_64 = std::mem::size_of::<u64>();
+            let split_at_32 = std::mem::size_of::<u32>();
+
+            if input_rest.len() < split_at_64 + 1 {
+                break;
+            }
+            let (readahead, rest) = input_rest.split_at(split_at_64);
+
+            if readahead.len() < split_at_32 + 1 {
+                break;
+            }
+            let (readahead_offset, readahead_size) = readahead.split_at(split_at_32);
 
             let readahead_offset =
                 u32::from_le_bytes(readahead_offset.try_into().map_err(|e| einval!(e))?);
@@ -498,10 +515,18 @@ impl OndiskBlobTable {
                 readahead_offset,
                 readahead_size,
             });
-            if rest.is_empty() || rest.as_bytes()[0] == b'\0' {
+
+            // Break blob id search loop, when rest bytes length is zero,
+            // or not split with '\0', or not have enough data to read (ending with padding data).
+            if rest.is_empty()
+                || rest.as_bytes()[0] != b'\0'
+                || rest.as_bytes().len() <= (size_of::<u32>() * 2 + 1)
+            {
                 break;
             }
-            input_rest = rest.as_bytes();
+
+            // Skip '\0' splitter for next search
+            input_rest = &rest.as_bytes()[1..];
         }
 
         Ok(())
@@ -535,6 +560,8 @@ impl RafsStore for OndiskBlobTable {
         let padding = align_to_rafs(size) - size;
         w.write_padding(padding)?;
 
+        size += padding;
+
         Ok(size)
     }
 }
@@ -565,7 +592,7 @@ pub struct OndiskInode {
     pub i_name_size: u16,
     /// symlink path size, [char; i_symlink_size]
     pub i_symlink_size: u16, // 100
-    i_reserved: [u8; 28], // 128
+    pub i_reserved: [u8; 28], // 128
 }
 
 impl OndiskInode {
@@ -653,7 +680,7 @@ impl<'a> RafsStore for OndiskInodeWrapper<'a> {
     }
 }
 
-impl_metadata_converter!(OndiskInode);
+impl_bootstrap_converter!(OndiskInode);
 
 /// On disk Rafs data chunk information.
 #[repr(C)]
@@ -713,6 +740,10 @@ impl RafsChunkInfo for OndiskChunkInfo {
         self.flags & CHUNK_FLAG_COMPRESSED == CHUNK_FLAG_COMPRESSED
     }
 
+    fn cast_ondisk(&self) -> Result<OndiskChunkInfo> {
+        Ok(*self)
+    }
+
     impl_getter!(blob_index, blob_index, u32);
     impl_getter!(compress_offset, compress_offset, u64);
     impl_getter!(compress_size, compress_size, u32);
@@ -721,7 +752,7 @@ impl RafsChunkInfo for OndiskChunkInfo {
     impl_getter!(file_offset, file_offset, u64);
 }
 
-impl_metadata_converter!(OndiskChunkInfo);
+impl_bootstrap_converter!(OndiskChunkInfo);
 
 impl Default for OndiskChunkInfo {
     fn default() -> Self {
@@ -743,12 +774,13 @@ impl fmt::Display for OndiskChunkInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "file_offset {}, compress_offset {}, compress_size {}, decompress_offset {}, decompress_size {}, block_id {:?}, is_compressed {}",
+            "file_offset {}, compress_offset {}, compress_size {}, decompress_offset {}, decompress_size {}, blob_index {}, block_id {:?}, is_compressed {}",
             self.file_offset,
             self.compress_offset,
             self.compress_size,
             self.decompress_offset,
             self.decompress_size,
+            self.blob_index,
             self.block_id,
             self.is_compressed(),
         )
@@ -793,7 +825,7 @@ impl From<RafsDigest> for OndiskDigest {
     }
 }
 
-impl_metadata_converter!(OndiskDigest);
+impl_bootstrap_converter!(OndiskDigest);
 
 /// On disk xattr data.
 #[repr(C)]
@@ -802,7 +834,7 @@ pub struct OndiskXAttrs {
     pub size: u64,
 }
 
-impl_metadata_converter!(OndiskXAttrs);
+impl_bootstrap_converter!(OndiskXAttrs);
 
 impl OndiskXAttrs {
     pub fn new() -> Self {
@@ -827,7 +859,7 @@ pub type XattrValue = Vec<u8>;
 
 #[derive(Clone, Default)]
 pub struct XAttrs {
-    pub pairs: HashMap<String, Vec<u8>>,
+    pub pairs: HashMap<String, XattrValue>,
 }
 
 impl XAttrs {

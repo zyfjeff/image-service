@@ -5,10 +5,6 @@
 #[macro_use]
 extern crate log;
 
-#[allow(dead_code)]
-#[allow(unused_variables)]
 pub mod builder;
-
-#[allow(dead_code)]
-#[allow(unused_variables)]
 pub mod node;
+pub mod tree;

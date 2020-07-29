@@ -3,9 +3,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! A manager to cache all file system metadata into memory.
+//! A manager to cache all file system bootstrap into memory.
 //!
-//! All file system metadata will be loaded, validated and cached into memory when loading the
+//! All file system bootstrap will be loaded, validated and cached into memory when loading the
 //! file system. And currently the cache layer only supports readonly file systems.
 use std::cmp;
 use std::collections::{BTreeMap, HashMap};
@@ -15,7 +15,6 @@ use std::sync::Arc;
 use fuse_rs::abi::linux_abi;
 use fuse_rs::api::filesystem::Entry;
 
-use crate::fs::Inode;
 use crate::metadata::layout::*;
 use crate::metadata::*;
 use crate::storage::device::{RafsBio, RafsBioDesc};
@@ -48,10 +47,12 @@ impl CachedInodes {
             match inode.load(&self.s_meta, r) {
                 Ok(_) => {
                     trace!(
-                        "got inode ino {} parent {} size {}",
+                        "got inode ino {} parent {} size {} child_idx {} child_cnt {}",
                         inode.ino(),
                         inode.parent(),
-                        inode.size()
+                        inode.size(),
+                        inode.i_child_idx,
+                        inode.i_child_cnt,
                     );
                 }
                 Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => break 'outer,
@@ -134,6 +135,10 @@ impl RafsSuperInodes for CachedInodes {
 
     fn get_max_ino(&self) -> u64 {
         self.s_inodes.len() as u64
+    }
+
+    fn get_blob_table(&self) -> Arc<OndiskBlobTable> {
+        self.s_blob.clone()
     }
 
     fn update(&self, _r: &mut RafsIoReader) -> Result<()> {
@@ -300,13 +305,13 @@ impl RafsInode for CachedInode {
     }
 
     #[inline]
-    fn get_child_index(&self) -> Result<usize> {
-        Ok(self.i_child_idx as usize)
+    fn get_child_index(&self) -> Result<u32> {
+        Ok(self.i_child_idx)
     }
 
     #[inline]
-    fn get_child_count(&self) -> Result<usize> {
-        Ok(self.i_child.len())
+    fn get_child_count(&self) -> Result<u32> {
+        Ok(self.i_child_cnt)
     }
 
     #[inline]
@@ -427,6 +432,25 @@ impl RafsInode for CachedInode {
         Ok(0)
     }
 
+    fn cast_ondisk(&self) -> Result<OndiskInode> {
+        Ok(OndiskInode {
+            i_digest: self.i_digest,
+            i_parent: self.i_parent,
+            i_ino: self.i_ino,
+            i_projid: self.i_projid,
+            i_mode: self.i_mode,
+            i_size: self.i_size,
+            i_nlink: self.i_nlink,
+            i_blocks: self.i_blocks,
+            i_flags: self.i_flags,
+            i_child_index: self.i_child_idx,
+            i_child_count: self.i_child_cnt,
+            i_name_size: self.i_name.len() as u16,
+            i_symlink_size: self.get_symlink()?.len() as u16,
+            i_reserved: [0; 28],
+        })
+    }
+
     impl_getter!(ino, i_ino, u64);
     impl_getter!(parent, i_parent, u64);
     impl_getter!(size, i_size, u64);
@@ -488,16 +512,30 @@ impl RafsChunkInfo for CachedChunkInfo {
         self.c_block_id.clone()
     }
 
+    fn is_compressed(&self) -> bool {
+        self.c_flags & CHUNK_FLAG_COMPRESSED == CHUNK_FLAG_COMPRESSED
+    }
+
+    fn cast_ondisk(&self) -> Result<OndiskChunkInfo> {
+        Ok(OndiskChunkInfo {
+            block_id: self.block_id().as_ref().clone().into(),
+            blob_index: self.blob_index(),
+            flags: self.c_flags,
+            compress_size: self.compress_size(),
+            decompress_size: self.decompress_size(),
+            compress_offset: self.compress_offset(),
+            decompress_offset: self.decompress_offset(),
+            file_offset: self.file_offset(),
+            reserved: 0u64,
+        })
+    }
+
     impl_getter!(blob_index, c_blob_index, u32);
     impl_getter!(compress_offset, c_compress_offset, u64);
     impl_getter!(compress_size, c_compr_size, u32);
     impl_getter!(decompress_offset, c_decompress_offset, u64);
     impl_getter!(decompress_size, c_decompress_size, u32);
     impl_getter!(file_offset, c_file_offset, u64);
-
-    fn is_compressed(&self) -> bool {
-        self.c_flags & CHUNK_FLAG_COMPRESSED == CHUNK_FLAG_COMPRESSED
-    }
 }
 
 impl From<&OndiskChunkInfo> for CachedChunkInfo {

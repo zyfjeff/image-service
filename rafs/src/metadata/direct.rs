@@ -2,21 +2,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-/// A metadata driver to directly use on disk metadata as runtime in-memory metadata.
+/// A bootstrap driver to directly use on disk bootstrap as runtime in-memory bootstrap.
 ///
-/// To reduce memory footprint and speed up filesystem initialization, the V5 on disk metadata
-/// layout has been designed to support directly mapping as runtime metadata. So we don't need to
-/// define another set of runtime data structures to cache on-disk metadata in memory.
+/// To reduce memory footprint and speed up filesystem initialization, the V5 on disk bootstrap
+/// layout has been designed to support directly mapping as runtime bootstrap. So we don't need to
+/// define another set of runtime data structures to cache on-disk bootstrap in memory.
 ///
-/// To support modification to the runtime metadata, several technologies have been adopted:
+/// To support modification to the runtime bootstrap, several technologies have been adopted:
 /// * - arc-swap is used to support RCU-like update instead of Mutex/RwLock.
 /// * - `offset` instead of `pointer` is used to record data structure position.
 /// * - reference count to the referenced resources/objects.
 ///
 /// # Security
-/// The metadata file may be provided by untrusted parties, so we must ensure strong validations
-/// before making use of any metadata, especially we are using them in memory-mapped mode. The
-/// rule is to call validate() after creating any data structure from the on-disk metadata.
+/// The bootstrap file may be provided by untrusted parties, so we must ensure strong validations
+/// before making use of any bootstrap, especially we are using them in memory-mapped mode. The
+/// rule is to call validate() after creating any data structure from the on-disk bootstrap.
 use std::fs::File;
 use std::io::Result;
 use std::mem::{size_of, ManuallyDrop};
@@ -71,7 +71,7 @@ macro_rules! impl_chunkinfo_getter {
     };
 }
 
-/// The underlying struct to maintain memory mapped metadata for a file system.
+/// The underlying struct to maintain memory mapped bootstrap for a file system.
 ///
 /// Only the DirectMappingState may store raw pointers.
 /// Other data structures should not store raw pointers, instead they should hold a reference to
@@ -105,7 +105,7 @@ impl DirectMappingState {
         }
     }
 
-    /// Mmap to metadata ondisk data directly.
+    /// Mmap to bootstrap ondisk data directly.
     fn cast_to_ref<'a, 'b, T>(&'a self, base: *const u8, offset: usize) -> Result<&'b T> {
         let start = base.wrapping_add(offset);
         let end = start.wrapping_add(size_of::<T>());
@@ -200,7 +200,7 @@ impl DirectMapping {
         // Validate file size
         let fd = unsafe { libc::dup(r.as_raw_fd()) };
         if fd < 0 {
-            return Err(last_error!("failed to dup metadata file fd"));
+            return Err(last_error!("failed to dup bootstrap file fd"));
         }
         let file = unsafe { File::from_raw_fd(fd) };
         let md = file.metadata()?;
@@ -210,7 +210,7 @@ impl DirectMapping {
             || len > RAFS_MAX_METADATA_SIZE as u64
             || len & (RAFS_ALIGNMENT as u64 - 1) != 0
         {
-            return Err(ebadf!("invalid metadata file"));
+            return Err(ebadf!("invalid bootstrap file"));
         }
 
         // Validate inode table layout
@@ -241,10 +241,10 @@ impl DirectMapping {
             return Err(ebadf!("invalid blob table"));
         }
 
-        // Prefetch the metadata file
+        // Prefetch the bootstrap file
         readahead(fd, 0, len);
 
-        // Mmap the metadata file into current process for direct access
+        // Mmap the bootstrap file into current process for direct access
         let base = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -256,10 +256,10 @@ impl DirectMapping {
             )
         } as *const u8;
         if base as *mut core::ffi::c_void == libc::MAP_FAILED {
-            return Err(last_error!("failed to mmap metadata"));
+            return Err(last_error!("failed to mmap bootstrap"));
         }
         if base.is_null() {
-            return Err(ebadf!("failed to mmap metadata"));
+            return Err(ebadf!("failed to mmap bootstrap"));
         }
         // Safe because the mmap area should covered the range [start, end)
         let end = unsafe { base.add(size) };
@@ -344,10 +344,9 @@ impl RafsSuperInodes for DirectMapping {
         state.inode_table.len() as u64
     }
 
-    fn get_blobs(&self) -> Vec<OndiskBlobTableEntry> {
+    fn get_blob_table(&self) -> Arc<OndiskBlobTable> {
         let state = self.state.load();
-
-        state.blob_table.get_all()
+        Arc::new(state.blob_table.clone())
     }
 
     fn update(&self, r: &mut RafsIoReader) -> Result<()> {
@@ -430,7 +429,7 @@ impl OndiskInodeWrapper {
 impl RafsInode for OndiskInodeWrapper {
     fn validate(&self) -> Result<()> {
         // TODO: please help to review/enhance this and all other validate(), otherwise there's
-        // always security risks because the image metadata may be provided by untrusted parties.
+        // always security risks because the image bootstrap may be provided by untrusted parties.
         let state = self.state();
         let inode = self.inode(state.deref());
 
@@ -648,19 +647,19 @@ impl RafsInode for OndiskInodeWrapper {
     }
 
     #[inline]
-    fn get_child_index(&self) -> Result<usize> {
+    fn get_child_index(&self) -> Result<u32> {
         let state = self.state();
         let inode = self.inode(state.deref());
 
-        Ok(inode.i_child_index as usize)
+        Ok(inode.i_child_index)
     }
 
     #[inline]
-    fn get_child_count(&self) -> Result<usize> {
+    fn get_child_count(&self) -> Result<u32> {
         let state = self.state();
         let inode = self.inode(state.deref());
 
-        Ok(inode.i_child_count as usize)
+        Ok(inode.i_child_count)
     }
 
     fn alloc_bio_desc(&self, offset: u64, size: usize) -> Result<RafsBioDesc> {
@@ -734,6 +733,11 @@ impl RafsInode for OndiskInodeWrapper {
         Ok(0)
     }
 
+    fn cast_ondisk(&self) -> Result<OndiskInode> {
+        let state = self.state();
+        Ok(*self.inode(state.deref()))
+    }
+
     impl_inode_wrapper!(is_dir, bool);
     impl_inode_wrapper!(is_reg, bool);
     impl_inode_wrapper!(is_symlink, bool);
@@ -744,7 +748,7 @@ impl RafsInode for OndiskInodeWrapper {
     impl_inode_getter!(size, i_size, u64);
 }
 
-struct OndiskChunkInfoWrapper {
+pub struct OndiskChunkInfoWrapper {
     mapping: DirectMapping,
     offset: usize,
     digest: Arc<OndiskDigest>,
@@ -796,6 +800,11 @@ impl RafsChunkInfo for OndiskChunkInfoWrapper {
     #[inline]
     fn block_id(&self) -> Arc<RafsDigest> {
         Arc::new((*self.digest.as_ref()).into())
+    }
+
+    fn cast_ondisk(&self) -> Result<OndiskChunkInfo> {
+        let state = self.state();
+        Ok(*self.chunk(state.deref()))
     }
 
     impl_chunkinfo_getter!(blob_index, u32);

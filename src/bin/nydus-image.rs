@@ -268,35 +268,38 @@ fn main() -> Result<()> {
             real_blob_path.to_owned(),
             bootstrap_path.to_owned(),
             parent_bootstrap,
-            blob_id.clone(),
+            blob_id,
             compressor,
             hint_readahead_files,
             ra_policy,
         )?;
-        blob_id = ib.build()?;
+        let (blob_ids, blob_size) = ib.build()?;
 
-        if let Some(backend_type) = matches.value_of("backend_type") {
-            if let Some(backend_config) = matches.value_of("backend_config") {
-                let config = factory::BackendConfig {
-                    backend_type: backend_type.to_owned(),
-                    backend_config: serde_json::from_str(backend_config).map_err(|e| {
-                        error!("failed to parse backend_config json: {}", e);
-                        e
-                    })?,
-                };
-                let blob_backend = factory::new_uploader(&config).unwrap();
-                upload_blob(blob_backend, blob_id.as_str(), real_blob_path)?;
+        // Upload blob file
+        if blob_size > 0 {
+            let blob_id = blob_ids.last().unwrap();
+            if let Some(backend_type) = matches.value_of("backend_type") {
+                if let Some(backend_config) = matches.value_of("backend_config") {
+                    let config = factory::BackendConfig {
+                        backend_type: backend_type.to_owned(),
+                        backend_config: serde_json::from_str(backend_config).map_err(|e| {
+                            error!("failed to parse backend_config json: {}", e);
+                            e
+                        })?,
+                    };
+                    let blob_backend = factory::new_uploader(&config).unwrap();
+                    upload_blob(blob_backend, blob_id.as_str(), real_blob_path)?;
+                }
             }
         }
 
-        if blob_path.is_some() {
+        if blob_path.is_some() && blob_size > 0 {
             info!(
-                "build finished, blob id: {}, blob file: {}",
-                blob_id.as_str(),
-                real_blob_path
+                "build finished, blob id: {:?}, blob file: {}",
+                blob_ids, real_blob_path
             );
         } else {
-            info!("build finished, blob id: {}", blob_id.as_str());
+            info!("build finished, blob id: {:?}", blob_ids);
         }
     }
 

@@ -8,7 +8,7 @@ A container image acceleration tool.
 # Run nydusd
 
 ```
-./nydusd --config config.json --metadata bootstrap --sock vhost-user-fs.sock
+./nydusd --config config.json --bootstrap bootstrap --sock vhost-user-fs.sock
 ```
 
 where the `config.json` is of format like:
@@ -113,7 +113,7 @@ mount -t virtiofs nydus /mnt
 One single nydusd can have multiple pseudo mounts corresponding to a unique virtio-fs mount inside guest.
 
 To obtain that, you have to trigger backend fs(e.g. Rafs) mount through curl method. Please note that don't specify
-`--metadata` option when you start nydusd.
+`--bootstrap` option when you start nydusd.
 
 The steps are exactly the same with one nydusd one backend fs scenario. But before any curl mount, you can't see
 any data from the virtio-fs mount inside guest.

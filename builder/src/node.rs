@@ -2,15 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use rafs::RafsIoWrite;
+//! File node for RAFS format
+
+use rafs::RafsIoWriter;
 use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::prelude::*;
-use std::io::{Result, SeekFrom};
+use std::io::Result;
 use std::os::linux::fs::MetadataExt;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::str;
+use std::str::FromStr;
 
 use sha2::digest::Digest;
 use sha2::Sha256;
@@ -22,11 +25,9 @@ use rafs::metadata::layout::*;
 use rafs::metadata::*;
 use rafs::storage::compress;
 
-pub type ChunkCache = HashMap<OndiskDigest, OndiskChunkInfo>;
-
 #[derive(Clone, Debug, PartialEq)]
 pub enum Overlay {
-    LowerAddition,
+    Lower,
     UpperAddition,
     UpperOpaque,
     UpperRemoval,
@@ -36,11 +37,11 @@ pub enum Overlay {
 impl fmt::Display for Overlay {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Overlay::LowerAddition => write!(f, "lower added"),
-            Overlay::UpperAddition => write!(f, "upper added"),
-            Overlay::UpperOpaque => write!(f, "upper opaqued"),
-            Overlay::UpperRemoval => write!(f, "upper removed"),
-            Overlay::UpperModification => write!(f, "upper modified"),
+            Overlay::Lower => write!(f, "LOWER"),
+            Overlay::UpperAddition => write!(f, "ADDED"),
+            Overlay::UpperOpaque => write!(f, "OPAQUED"),
+            Overlay::UpperRemoval => write!(f, "REMOVED"),
+            Overlay::UpperModification => write!(f, "MODIFIED"),
         }
     }
 }
@@ -49,16 +50,18 @@ impl fmt::Display for Node {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "{} {:?}: index {} ino {} child_count {} child_index {} i_name_size {} i_symlink_size {} i_nlink {} has_xattr {}",
-            self.get_type().unwrap(),
+            "{} {:?}: index {} ino {} real_ino {} i_parent {} child_index {} child_count {} i_nlink {} i_name_size {} i_symlink_size {} has_xattr {}",
+            self.file_type(),
             self.rootfs(),
             self.index,
             self.inode.i_ino,
-            self.inode.i_child_count,
+            self.real_ino,
+            self.inode.i_parent,
             self.inode.i_child_index,
+            self.inode.i_child_count,
+            self.inode.i_nlink,
             self.inode.i_name_size,
             self.inode.i_symlink_size,
-            self.inode.i_nlink,
             self.inode.has_xattr(),
         )
     }
@@ -67,13 +70,15 @@ impl fmt::Display for Node {
 #[derive(Clone)]
 pub struct Node {
     pub index: u64,
-    /// Inode name
-    pub name: String,
-    /// Overlay type for multiple layers build
+    /// Inode number in local filesystem
+    pub real_ino: Inode,
+    /// Overlay type for layered build
     pub overlay: Overlay,
-    /// Source path
-    pub root: PathBuf,
-    /// File path
+    /// Source directory path in local filesystem
+    /// For example: /home/source
+    pub source: PathBuf,
+    /// File path in local filesystem
+    /// For example: /home/source/a/b
     pub path: PathBuf,
     /// File inode info
     pub inode: OndiskInode,
@@ -86,18 +91,20 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new(root: PathBuf, path: PathBuf, overlay: Overlay) -> Node {
-        Node {
+    pub fn new(source: PathBuf, path: PathBuf, overlay: Overlay) -> Result<Node> {
+        let mut node = Node {
             index: 0,
-            name: String::new(),
-            root,
+            real_ino: 0,
+            source,
             path,
             overlay,
             inode: OndiskInode::new(),
             chunks: Vec::new(),
             symlink: None,
             xattrs: XAttrs::default(),
-        }
+        };
+        node.build_inode()?;
+        Ok(node)
     }
 
     fn build_inode_xattr(&mut self) -> Result<()> {
@@ -108,7 +115,7 @@ impl Node {
         }
 
         let mut xattrs = XAttrs::default();
-        for (count, key) in file_xattrs.enumerate() {
+        for (_, key) in file_xattrs.enumerate() {
             let key = key.to_str().ok_or_else(|| einval!())?.to_string();
             let value = xattr::get(&self.path, &key)?;
             xattrs.pairs.insert(key, value.unwrap_or_default());
@@ -120,23 +127,24 @@ impl Node {
         Ok(())
     }
 
-    #[allow(clippy::borrowed_box)]
+    #[allow(clippy::too_many_arguments)]
     pub fn dump_blob(
         &mut self,
-        f_blob: &mut Box<dyn RafsIoWrite>,
+        f_blob: &mut RafsIoWriter,
         blob_hash: &mut Sha256,
         compress_offset: &mut u64,
         decompress_offset: &mut u64,
-        chunk_cache: &mut ChunkCache,
+        chunk_cache: &mut HashMap<OndiskDigest, OndiskChunkInfo>,
         compressor: compress::Algorithm,
+        blob_index: u32,
     ) -> Result<usize> {
-        if self.is_symlink()? {
-            self.inode.i_digest =
-                RafsDigest::from_buf(self.symlink.as_ref().unwrap().as_bytes()).into();
+        if self.is_dir() {
             return Ok(0);
         }
 
-        if self.is_dir()? {
+        if self.is_symlink() {
+            self.inode.i_digest =
+                RafsDigest::from_buf(self.symlink.as_ref().unwrap().as_bytes()).into();
             return Ok(0);
         }
 
@@ -146,7 +154,7 @@ impl Node {
         let mut file = File::open(&self.path)?;
 
         for i in 0..self.inode.i_child_count {
-            // get chunk info
+            // Init chunk info
             let mut chunk = OndiskChunkInfo::new();
             let file_offset = i as u64 * RAFS_DEFAULT_BLOCK_SIZE;
             let chunk_size = if i == self.inode.i_child_count - 1 {
@@ -155,35 +163,38 @@ impl Node {
                 RAFS_DEFAULT_BLOCK_SIZE as usize
             };
 
-            // get chunk data
-            file.seek(SeekFrom::Start(file_offset))?;
+            // Read chunk data
             let mut chunk_data = vec![0; chunk_size];
             file.read_exact(&mut chunk_data)?;
 
-            // calc chunk digest
+            // Calculate chunk digest
             chunk.block_id = RafsDigest::from_buf(chunk_data.as_slice()).into();
-            // calc inode digest
+            // Calculate inode digest
             inode_hasher.update(chunk.block_id.as_ref());
 
+            // Deduplicate chunk if we found a same one from chunk cache
             if let Some(cached_chunk) = chunk_cache.get(&chunk.block_id) {
-                chunk.clone_from(&cached_chunk);
-                chunk.file_offset = file_offset;
-                self.chunks.push(chunk);
-                trace!(
-                    "\tbuilding duplicated chunk: {} compressor {}",
-                    chunk,
-                    compressor,
-                );
-                continue;
+                if cached_chunk.decompress_size == chunk_size as u32 {
+                    chunk.clone_from(&cached_chunk);
+                    chunk.file_offset = file_offset;
+                    self.chunks.push(chunk);
+                    trace!(
+                        "\t\tbuilding duplicated chunk: {} compressor {}",
+                        chunk,
+                        compressor,
+                    );
+                    continue;
+                }
             }
 
-            // compress chunk data
+            // Compress chunk data
             let (compressed, is_compressed) = compress::compress(&chunk_data, compressor)?;
             let compressed_size = compressed.len();
             if is_compressed {
                 chunk.flags |= CHUNK_FLAG_COMPRESSED;
             }
 
+            chunk.blob_index = blob_index;
             chunk.file_offset = file_offset;
             chunk.compress_offset = *compress_offset;
             chunk.decompress_offset = *decompress_offset;
@@ -191,55 +202,50 @@ impl Node {
             chunk.decompress_size = chunk_size as u32;
             blob_size += compressed_size;
 
-            // move cursor to offset of next chunk
+            // Move cursor to offset of next chunk
             *compress_offset += compressed_size as u64;
             *decompress_offset += chunk_size as u64;
 
-            // calc blob hash
+            // Calculate blob hash
             blob_hash.update(&compressed);
 
-            // dump compressed chunk data to blob
+            // Dump compressed chunk data to blob
             f_blob.write_all(&compressed)?;
 
-            // stash chunk
+            // Cache chunk digest info
             chunk_cache.insert(chunk.block_id, chunk);
             self.chunks.push(chunk);
 
-            trace!("\tbuilding chunk: {} compressor {}", chunk, compressor,);
+            trace!("\t\tbuilding chunk: {} compressor {}", chunk, compressor,);
         }
 
-        // finish calc inode digest
+        // Finish inode digest calculation
         self.inode.i_digest = RafsDigest::finalize(inode_hasher).into();
 
         Ok(blob_size)
     }
 
-    #[allow(clippy::borrowed_box)]
-    pub fn dump_bootstrap(
-        &mut self,
-        f_bootstrap: &mut Box<dyn RafsIoWrite>,
-        blob_index: u32,
-    ) -> Result<usize> {
+    pub fn dump_bootstrap(&mut self, f_bootstrap: &mut RafsIoWriter) -> Result<usize> {
         let mut node_size = 0;
 
-        // dump inode info
+        // Dump inode info
+        let name = self.name();
         let inode = OndiskInodeWrapper {
-            name: self.name.as_str(),
+            name: name.as_str(),
             symlink: self.symlink.as_deref(),
             inode: &self.inode,
         };
         let inode_size = inode.store(f_bootstrap)?;
         node_size += inode_size;
 
-        // dump inode xattr
+        // Dump inode xattr
         if !self.xattrs.pairs.is_empty() {
             let xattr_size = self.xattrs.store(f_bootstrap)?;
             node_size += xattr_size;
         }
 
-        // dump chunk info
+        // Dump chunk info
         for chunk in &mut self.chunks {
-            chunk.blob_index = blob_index;
             let chunk_size = chunk.store(f_bootstrap)?;
             node_size += chunk_size;
         }
@@ -253,36 +259,23 @@ impl Node {
         self.inode.i_mode = meta.st_mode();
         self.inode.i_projid = 0;
         self.inode.i_size = meta.st_size();
-        self.inode.i_nlink = meta.st_nlink();
-        // block count in 512B units per stat(2)
+        // Ignore actual nlink value and calculate from rootfs directory instead
+        self.inode.i_nlink = 1;
+        self.inode.i_blocks = meta.st_blocks();
         self.inode.i_blocks = div_round_up(self.inode.i_size, 512);
+
+        self.real_ino = meta.st_ino();
 
         Ok(())
     }
 
-    pub fn build_inode(&mut self) -> Result<()> {
-        if self.rootfs() == PathBuf::from("/") {
-            self.name = String::from("/");
-            self.inode.set_name_size(self.name.as_bytes().len());
-            self.build_inode_stat()?;
-            return Ok(());
-        }
-
-        let file_name = self
-            .path
-            .file_name()
-            .unwrap()
-            .to_owned()
-            .into_string()
-            .unwrap();
-
-        self.name = file_name;
-        self.inode.set_name_size(self.name.as_bytes().len());
+    fn build_inode(&mut self) -> Result<()> {
+        self.inode.set_name_size(self.name().as_bytes().len());
         self.build_inode_stat()?;
 
-        if self.is_reg()? {
+        if self.is_reg() {
             self.inode.i_child_count = self.chunk_count() as u32;
-        } else if self.is_symlink()? {
+        } else if self.is_symlink() {
             self.inode.i_flags |= INO_FLAG_SYMLINK as u64;
             let target_path = fs::read_link(&self.path)?;
             self.symlink = Some(target_path.to_str().unwrap().to_owned());
@@ -303,51 +296,75 @@ impl Node {
     /// For example:
     /// `/absolute/path/to/rootfs/file` after converting `/file`
     pub fn rootfs(&self) -> PathBuf {
-        Path::new("/").join(self.path.strip_prefix(&self.root).unwrap())
+        if let Ok(rootfs) = self.path.strip_prefix(&self.source) {
+            Path::new("/").join(rootfs)
+        } else {
+            // Compatible with path `/`
+            self.path.clone()
+        }
     }
 
-    pub fn is_dir(&self) -> Result<bool> {
-        Ok(self.meta()?.st_mode() & libc::S_IFMT == libc::S_IFDIR)
+    pub fn is_dir(&self) -> bool {
+        self.inode.i_mode & libc::S_IFMT == libc::S_IFDIR
     }
 
-    pub fn is_symlink(&self) -> Result<bool> {
-        Ok(self.meta()?.st_mode() & libc::S_IFMT == libc::S_IFLNK)
+    pub fn is_symlink(&self) -> bool {
+        self.inode.i_mode & libc::S_IFMT == libc::S_IFLNK
     }
 
-    pub fn is_reg(&self) -> Result<bool> {
-        Ok(self.meta()?.st_mode() & libc::S_IFMT == libc::S_IFREG)
+    pub fn is_reg(&self) -> bool {
+        self.inode.i_mode & libc::S_IFMT == libc::S_IFREG
     }
 
-    pub fn is_hardlink(&self) -> Result<bool> {
-        Ok(self.meta()?.st_nlink() > 1)
-    }
-
-    pub fn get_real_ino(&self) -> Result<u64> {
-        Ok(self.meta()?.st_ino())
+    pub fn is_hardlink(&self) -> bool {
+        self.inode.i_nlink > 1
     }
 
     pub fn chunk_count(&self) -> usize {
-        if !self.is_reg().unwrap() {
+        if !self.is_reg() {
             return 0;
         }
         div_round_up(self.inode.i_size, RAFS_DEFAULT_BLOCK_SIZE) as usize
     }
 
-    pub fn get_type(&self) -> Result<&str> {
+    pub fn file_type(&self) -> &str {
         let mut file_type = "";
 
-        if self.is_symlink()? {
+        if self.is_symlink() {
             file_type = "symlink";
-        } else if self.is_dir()? {
+        } else if self.is_dir() {
             file_type = "dir"
-        } else if self.is_reg()? {
-            if self.is_hardlink()? {
+        } else if self.is_reg() {
+            if self.is_hardlink() {
                 file_type = "hardlink";
             } else {
                 file_type = "file";
             }
         }
 
-        Ok(file_type)
+        file_type
+    }
+
+    pub fn name(&self) -> String {
+        if self.path == PathBuf::from_str("/").unwrap() || self.path == self.source {
+            return String::from("/");
+        }
+        self.path
+            .file_name()
+            .unwrap()
+            .to_owned()
+            .into_string()
+            .unwrap()
+    }
+
+    pub fn path_vec(&self) -> Vec<String> {
+        self.rootfs()
+            .components()
+            .map(|comp| match comp {
+                Component::RootDir => String::from("/"),
+                Component::Normal(name) => String::from(name.to_str().unwrap()),
+                _ => String::new(),
+            })
+            .collect::<Vec<_>>()
     }
 }

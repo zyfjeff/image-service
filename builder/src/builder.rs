@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+//! Bootstrap and blob file builder for RAFS format
+
 use std::collections::{BTreeMap, HashMap};
-use std::fs;
-use std::fs::DirEntry;
 use std::fs::OpenOptions;
 use std::io::{Error, Result};
 use std::mem::size_of;
@@ -14,43 +14,43 @@ use std::str::FromStr;
 use sha2::digest::Digest;
 use sha2::Sha256;
 
-use crate::node::*;
-
+use nydus_utils::einval;
 use rafs::metadata::layout::*;
-use rafs::metadata::{RafsDigest, RafsStore};
+use rafs::metadata::{Inode, RafsDigest, RafsMode, RafsStore, RafsSuper};
 use rafs::storage::compress;
 use rafs::{RafsIoRead, RafsIoWrite};
 
-use nydus_utils::einval;
-
-// const OCISPEC_WHITEOUT_PREFIX: &str = ".wh.";
-// const OCISPEC_WHITEOUT_OPAQUE: &str = ".wh..wh..opq";
+use crate::node::*;
+use crate::tree::Tree;
 
 pub struct Builder {
     /// Source root path.
     root: PathBuf,
+    /// Blob id (user specified or sha256(blob)).
+    blob_id: String,
     /// Blob file writer.
     f_blob: Box<dyn RafsIoWrite>,
     /// Bootstrap file writer.
     f_bootstrap: Box<dyn RafsIoWrite>,
     /// Parent bootstrap file reader.
     f_parent_bootstrap: Option<Box<dyn RafsIoRead>>,
-    /// Blob id (user specified or sha256(blob)).
-    blob_id: String,
     /// Blob chunk compress flag.
     compressor: compress::Algorithm,
-    /// Readahead file list, use BTreeMap to keep stable iteration order.
-    readahead_nodes: BTreeMap<PathBuf, Option<Node>>,
+    /// Cache node for hardlink, HashMap<real_ino, (index, i_nlink)>.
+    inode_map: HashMap<Inode, (u64, u64)>,
+    /// Store all chunk digest for chunk deduplicate during build.
+    chunk_cache: HashMap<OndiskDigest, OndiskChunkInfo>,
+    /// Store all blob id entry during build.
+    blob_table: OndiskBlobTable,
+    /// Readahead file list, use BTreeMap to keep stable iteration order, HashMap<path, Option<index>>.
+    readahead_files: BTreeMap<PathBuf, Option<u64>>,
     /// Specify files or directories which need to prefetch. Their inode indexes will
     /// be persist to prefetch table.
     hint_readahead_files: BTreeMap<PathBuf, Option<u64>>,
-    /// Node chunks info cache for hardlink, HashMap<i_ino, Node>.
-    inode_map: HashMap<u64, Node>,
-    /// For multiple layers build.
-    additions: Vec<Node>,
-    removals: HashMap<PathBuf, bool>,
-    opaques: HashMap<PathBuf, bool>,
     ra_policy: ReadaheadPolicy,
+    /// Store all nodes during build, node index of root starting from 1,
+    /// so the collection index equal to (node.index - 1).
+    nodes: Vec<Node>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -118,28 +118,19 @@ impl Builder {
 
         Ok(Builder {
             root: PathBuf::from(root),
+            blob_id,
             f_blob,
             f_bootstrap,
             f_parent_bootstrap,
-            blob_id,
             compressor,
             inode_map: HashMap::new(),
-            readahead_nodes: BTreeMap::new(),
+            chunk_cache: HashMap::new(),
+            blob_table: OndiskBlobTable::new(),
+            readahead_files: BTreeMap::new(),
             hint_readahead_files,
-            additions: Vec::new(),
-            removals: HashMap::new(),
-            opaques: HashMap::new(),
             ra_policy,
+            nodes: Vec::new(),
         })
-    }
-
-    fn get_lower_idx(&self, lowers: &[Node], path: PathBuf) -> Option<usize> {
-        for (idx, lower) in lowers.iter().enumerate() {
-            if lower.path == path {
-                return Some(idx);
-            }
-        }
-        None
     }
 
     /// Gain file or directory inode indexes which will be put into prefetch table.
@@ -171,95 +162,137 @@ impl Builder {
         false
     }
 
-    fn new_node(&self, path: &PathBuf) -> Node {
-        Node::new(self.root.clone(), path.clone(), Overlay::UpperAddition)
-    }
+    /// Traverse node tree, set inode index, ino, child_index and
+    /// child_count etc according to RAFS format, then store to nodes collection.
+    fn build_rafs(&mut self, tree: &mut Tree, mut nodes: &mut Vec<Node>) -> Result<()> {
+        let index = nodes.len() as u64;
+        let parent = &mut nodes[tree.node.index as usize - 1];
+        parent.inode.i_child_index = index as u32 + 1;
+        parent.inode.i_child_count = tree.children.len() as u32;
 
-    /// Directory walk by BFS
-    pub fn walk(&mut self) -> Result<()> {
-        let mut dirs = vec![0];
-        // Rafs' inode number starts from 1 which belongs to root inode.
-        let mut iter_ino: u64 = RAFS_ROOT_INODE;
-        let mut root_node = self.new_node(&self.root);
-        root_node.build_inode()?;
-        root_node.index = iter_ino;
-        root_node.inode.i_ino = iter_ino;
+        let parent_ino = parent.inode.i_ino;
 
-        // Fs walk skips root inode within below while loop and we allow
-        // user to pass the source root as prefetch hint. Check it here.
-        if self.need_prefetch(&Path::new("/").to_path_buf(), iter_ino) {
-            self.readahead_nodes
-                .insert(root_node.rootfs(), Some(root_node.clone()));
+        // Cache dir tree for BFS walk
+        let mut dirs: Vec<&mut Tree> = Vec::new();
+
+        // Sort children list by name,
+        // so that we can improve performance in fs read_dir using binary search.
+        tree.children.sort_by_key(|child| child.node.name());
+
+        for child in tree.children.iter_mut() {
+            let index = nodes.len() as u64 + 1;
+            child.node.index = index;
+            child.node.inode.i_parent = parent_ino;
+
+            // Hardlink node's ino, nlink should be the same
+            if let Some((index, i_nlink)) = self.inode_map.get_mut(&child.node.real_ino) {
+                *i_nlink += 1;
+                child.node.inode.i_ino = *index;
+                child.node.inode.i_nlink = *i_nlink;
+                // Update nlink for first hardlink node
+                nodes[*index as usize - 1].inode.i_nlink = *i_nlink;
+            } else {
+                child.node.inode.i_ino = index;
+                child.node.inode.i_nlink = 1;
+                // Store inode real ino
+                self.inode_map
+                    .insert(child.node.real_ino, (child.node.index, 1));
+            }
+
+            // Store node for bootstrap & blob dump
+            nodes.push(child.node.clone());
+
+            if self.need_prefetch(&child.node.rootfs(), child.node.inode.i_ino) {
+                self.readahead_files
+                    .insert(child.node.rootfs(), Some(child.node.index));
+            }
+
+            // Store chunk for chunk deduplicate
+            if child.node.is_reg() {
+                for chunk in &child.node.chunks {
+                    self.chunk_cache.insert(chunk.block_id, *chunk);
+                }
+            }
+
+            if child.node.is_dir() {
+                dirs.push(child);
+            }
         }
 
-        self.inode_map
-            .insert(root_node.inode.i_ino, root_node.clone());
-        self.additions.push(root_node);
-
-        while !dirs.is_empty() {
-            let mut next_dirs = Vec::new();
-
-            for dir_idx in &dirs {
-                let dir_node = self.additions.get_mut(*dir_idx).unwrap();
-                let children = fs::read_dir(&dir_node.path)?;
-                let dir_ino = dir_node.inode.i_ino;
-                let mut child_count = 0;
-                // Now the first child is given birth.
-                dir_node.inode.i_child_index = (iter_ino + 1) as u32;
-
-                let mut children = children.collect::<Result<Vec<DirEntry>>>()?;
-                children.sort_by_key(|entry| entry.file_name());
-
-                for entry in children {
-                    let path = entry.path();
-                    let mut node = self.new_node(&path);
-                    let real_ino = node.get_real_ino()?;
-
-                    // Ignore special file
-                    if node.get_type()? == "" {
-                        continue;
-                    }
-                    // Inode number is not continuous, we may have holes between
-                    // them if hardlink appears.
-                    iter_ino += 1;
-                    child_count += 1;
-                    if let Some(harklink) = self.inode_map.get(&real_ino) {
-                        node.inode.i_ino = harklink.inode.i_ino;
-                    } else {
-                        node.inode.i_ino = iter_ino;
-                    }
-                    node.build_inode()?;
-
-                    // Inode number always equals to its index within disk inode table.
-                    node.index = iter_ino;
-                    node.inode.i_parent = dir_ino;
-
-                    if node.is_dir()? && !node.is_symlink()? {
-                        next_dirs.push(self.additions.len());
-                    }
-                    if self.inode_map.get(&real_ino).is_none() {
-                        self.inode_map.insert(real_ino, node.clone());
-                    }
-                    self.additions.push(node.clone());
-
-                    if self.need_prefetch(&node.rootfs(), iter_ino) {
-                        self.readahead_nodes.insert(node.rootfs(), Some(node));
-                    }
-                }
-
-                let dir_node = self.additions.get_mut(*dir_idx).unwrap();
-                dir_node.inode.i_child_count = child_count;
-            }
-            dirs = next_dirs;
+        for mut dir in dirs {
+            self.build_rafs(&mut dir, &mut nodes)?;
         }
 
         Ok(())
     }
 
-    fn dump(&mut self) -> Result<()> {
+    fn build_rafs_wrap(&mut self, mut tree: &mut Tree) -> Result<()> {
+        let index = RAFS_ROOT_INODE;
+        tree.node.index = index;
+        tree.node.inode.i_ino = index;
+
+        // Fs walk skip root inode within below while loop and we allow
+        // user to pass the source root as prefetch hint. Check it here.
+        let root_path = Path::new("/").to_path_buf();
+        if self.need_prefetch(&root_path, index) {
+            self.readahead_files.insert(root_path, Some(index));
+        }
+
+        let mut nodes = vec![tree.node.clone()];
+        self.build_rafs(&mut tree, &mut nodes)?;
+        self.nodes = nodes;
+
+        Ok(())
+    }
+
+    /// Apply new node (upper layer from filesystem directory) to
+    /// bootstrap node tree (lower layer from bootstrap file)
+    pub fn apply_to_bootstrap(&mut self) -> Result<()> {
+        let mut rs = RafsSuper::default();
+        rs.mode = RafsMode::Direct;
+        rs.digest_validate = true;
+        rs.load(self.f_parent_bootstrap.as_mut().unwrap())?;
+
+        let lower_compressor = rs.meta.get_compressor();
+        if self.compressor != lower_compressor {
+            return Err(einval!(format!(
+                "Inconsistent compressor with the lower layer, current {}, lower: {}.",
+                self.compressor, lower_compressor
+            )));
+        }
+
+        // Build node tree of lower layer from a bootstrap file
+        let mut tree = Tree::from_bootstrap(&rs)?;
+
+        // Apply new node (upper layer) to node tree (lower layer)
+        for node in &self.nodes {
+            tree.apply(&node)?;
+        }
+
+        self.inode_map.clear();
+        self.build_rafs_wrap(&mut tree)?;
+
+        // Reuse lower layer blob table,
+        // we need to append the blob entry of upper layer to the table
+        self.blob_table = rs.inodes.get_blob_table().as_ref().clone();
+
+        Ok(())
+    }
+
+    /// Build node tree of upper layer from a filesystem directory
+    pub fn build_from_filesystem(&mut self, overlay: bool) -> Result<()> {
+        let mut tree = Tree::from_filesystem(&self.root, overlay)?;
+
+        self.build_rafs_wrap(&mut tree)?;
+
+        Ok(())
+    }
+
+    /// Dump bootstrap and blob file, return (Vec<blob_id>, blob_size)
+    fn dump_to_file(&mut self) -> Result<(Vec<String>, usize)> {
         // Inode table
         let super_block_size = size_of::<OndiskSuperBlock>();
-        let inode_table_entries = self.additions.len() as u32;
+        let inode_table_entries = self.nodes.len() as u32;
         let mut inode_table = OndiskInodeTable::new(inode_table_entries as usize);
         let inode_table_size = inode_table.size();
         let mut prefetch_table_size = 0;
@@ -271,16 +304,16 @@ impl Builder {
             0u32
         };
 
-        // Blob table, use sha256 string (length 64) as blob id if not specified.
+        // Blob table, use sha256 string (length 64) as blob id if not specified
         let blob_id_size = if self.blob_id != "" {
             self.blob_id.len()
         } else {
             64
         };
-        let blob_table_size = OndiskBlobTable::minimum_size(blob_id_size);
+        let blob_table_size = self.blob_table.predicted_size(blob_id_size);
         let prefetch_table_offset = super_block_size + inode_table_size;
-        let mut blob_table = OndiskBlobTable::new();
         let blob_table_offset = (prefetch_table_offset + prefetch_table_size) as u64;
+        let blob_new_index = self.blob_table.entries.len() as u32;
 
         // Super block
         let mut super_block = OndiskSuperBlock::new();
@@ -294,81 +327,74 @@ impl Builder {
         super_block.set_flags(super_block.flags() | self.compressor as u64);
         super_block.set_prefetch_table_entries(prefetch_table_entries);
 
-        // Dump blob
         let mut compress_offset = 0u64;
         let mut decompress_offset = 0u64;
         let mut blob_hash = Sha256::new();
-        let mut chunk_cache: ChunkCache = HashMap::new();
         let mut inode_offset =
             (super_block_size + inode_table_size + prefetch_table_size + blob_table_size) as u32;
 
-        info!(
-            "inode table starts at {}, prefetch table starts at {}, blob table starts at {}, inodes starts at {}",
-            super_block_size, prefetch_table_offset, blob_table_offset, inode_offset
-        );
-
-        for node in &mut self.additions {
-            let rootfs_path = node.rootfs();
-            let file_type = node.get_type()?;
+        for node in &mut self.nodes {
             inode_table.set(node.index, inode_offset)?;
             // Add inode size
             inode_offset += node.inode.size() as u32;
             if node.inode.has_xattr() && !node.xattrs.pairs.is_empty() {
                 inode_offset += (size_of::<OndiskXAttrs>() + node.xattrs.aligned_size()) as u32;
             }
-            // Replace inode because its metadata might be changed somehow.
-            if let Some(n) = self.readahead_nodes.get_mut(&rootfs_path) {
-                *n = Some(node.clone());
-            }
             // Add chunks size
-            if node.is_reg()? {
+            if node.is_reg() {
                 inode_offset +=
                     (node.inode.i_child_count as usize * size_of::<OndiskChunkInfo>()) as u32;
             }
         }
 
-        // Sort readahead list by file size for better prefetch.
-        let mut readahead_nodes = self
-            .readahead_nodes
-            .values_mut()
-            .filter_map(|node| node.as_mut())
-            .collect::<Vec<&mut Node>>();
-        readahead_nodes.sort_by_key(|node| node.inode.i_size);
+        // Sort readahead list by file size for better prefetch
+        let mut readahead_files = self
+            .readahead_files
+            .values()
+            .filter_map(|index| index.as_ref())
+            .collect::<Vec<&u64>>();
+        readahead_files.sort_by_key(|index| self.nodes[**index as usize - 1].inode.i_size);
 
         // Dump readahead nodes
         let blob_readahead_offset = 0;
-        let mut blob_readahead_size = 0;
-        for readahead_node in &mut readahead_nodes {
-            debug!("upper dumping readahead {}", readahead_node);
-            blob_readahead_size += readahead_node.dump_blob(
+        let mut blob_readahead_size = 0usize;
+        for index in &readahead_files {
+            let node = self.nodes.get_mut(**index as usize - 1).unwrap();
+            debug!("readahead {}", node);
+            blob_readahead_size += node.dump_blob(
                 &mut self.f_blob,
                 &mut blob_hash,
                 &mut compress_offset,
                 &mut decompress_offset,
-                &mut chunk_cache,
+                &mut self.chunk_cache,
                 self.compressor,
-            )? as u32;
-        }
-
-        if self.ra_policy != ReadaheadPolicy::Blob {
-            blob_readahead_size = 0;
+                blob_new_index,
+            )?;
         }
 
         // Dump other nodes
-        for node in &mut self.additions {
-            if let Some(Some(readahead_node)) = self.readahead_nodes.get(&node.rootfs()) {
-                // Prepare readahead node for bootstrap dump.
-                node.clone_from(&readahead_node);
+        let mut blob_size = blob_readahead_size;
+        for node in &mut self.nodes {
+            if let Some(Some(_)) = self.readahead_files.get(&node.rootfs()) {
+                // Prepare readahead node for bootstrap dump
+                // node.clone_from(&self.nodes[*index as usize - 1]);
             } else {
-                debug!("upper dumping {}", node);
-                node.dump_blob(
-                    &mut self.f_blob,
-                    &mut blob_hash,
-                    &mut compress_offset,
-                    &mut decompress_offset,
-                    &mut chunk_cache,
-                    self.compressor,
-                )?;
+                // Ignore lower layer node when dump blob
+                debug!("[{}]\t{}", node.overlay, node);
+                if !node.is_dir()
+                    && (node.overlay == Overlay::UpperAddition
+                        || node.overlay == Overlay::UpperModification)
+                {
+                    blob_size += node.dump_blob(
+                        &mut self.f_blob,
+                        &mut blob_hash,
+                        &mut compress_offset,
+                        &mut decompress_offset,
+                        &mut self.chunk_cache,
+                        self.compressor,
+                        blob_new_index,
+                    )?;
+                }
             }
         }
 
@@ -376,15 +402,20 @@ impl Builder {
         if self.blob_id == "" {
             self.blob_id = format!("{:x}", blob_hash.finalize());
         }
-        blob_table.add(
-            self.blob_id.clone(),
-            blob_readahead_offset,
-            blob_readahead_size,
-        );
+        if blob_size > 0 {
+            if self.ra_policy != ReadaheadPolicy::Blob {
+                blob_readahead_size = 0;
+            }
+            self.blob_table.add(
+                self.blob_id.clone(),
+                blob_readahead_offset,
+                blob_readahead_size as u32,
+            );
+        }
 
         // Set inode digest, use reverse iteration order to reduce repeated digest calculations.
-        for idx in (0..self.additions.len()).rev() {
-            self.additions[idx].inode.i_digest = self.digest_node(&self.additions[idx])?;
+        for idx in (0..self.nodes.len()).rev() {
+            self.nodes[idx].inode.i_digest = self.digest_node(&self.nodes[idx])?;
         }
 
         // Dump bootstrap
@@ -398,18 +429,26 @@ impl Builder {
             }
             prefetch_table.store(&mut self.f_bootstrap)?;
         }
-        blob_table.store(&mut self.f_bootstrap)?;
+        self.blob_table.store(&mut self.f_bootstrap)?;
 
-        for node in &mut self.additions {
-            node.dump_bootstrap(&mut self.f_bootstrap, 0)?;
+        for node in &mut self.nodes {
+            node.dump_bootstrap(&mut self.f_bootstrap)?;
         }
 
-        Ok(())
+        let blob_ids: Vec<String> = self
+            .blob_table
+            .entries
+            .iter()
+            .map(|entry| entry.blob_id.clone())
+            .collect();
+
+        Ok((blob_ids, blob_size))
     }
 
+    /// Calculate inode digest
     fn digest_node(&self, node: &Node) -> Result<OndiskDigest> {
         // We have set digest for non-directory inode in the previous dump_blob workflow, so just return digest here.
-        if !node.is_dir()? {
+        if !node.is_dir() {
             return Ok(node.inode.i_digest);
         }
 
@@ -418,7 +457,7 @@ impl Builder {
         let mut inode_hasher = RafsDigest::hasher();
 
         for idx in child_index..child_index + child_count {
-            let child = &self.additions[(idx - 1) as usize];
+            let child = &self.nodes[(idx - 1) as usize];
             inode_hasher.update(child.inode.i_digest.as_ref());
         }
 
@@ -427,10 +466,18 @@ impl Builder {
         Ok(inode_hash.into())
     }
 
-    pub fn build(&mut self) -> Result<String> {
-        self.walk()?;
-        self.dump()?;
+    /// Build workflow, return (Vec<blob_id>, blob_size)
+    pub fn build(&mut self) -> Result<(Vec<String>, usize)> {
+        if self.f_parent_bootstrap.is_some() {
+            // For layered build
+            self.build_from_filesystem(true)?;
+            self.apply_to_bootstrap()?;
+        } else {
+            // For non-layered build
+            self.build_from_filesystem(false)?;
+        }
 
-        Ok(self.blob_id.to_owned())
+        // Dump blob and bootstrap file
+        self.dump_to_file()
     }
 }

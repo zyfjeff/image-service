@@ -40,6 +40,10 @@ impl RafsSuperInodes for NoopInodes {
         unimplemented!()
     }
 
+    fn get_blob_table(&self) -> Arc<OndiskBlobTable> {
+        unimplemented!()
+    }
+
     fn update(&self, _r: &mut RafsIoReader) -> Result<()> {
         unimplemented!()
     }

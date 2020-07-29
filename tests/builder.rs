@@ -3,9 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::HashMap;
-use std::fs::OpenOptions;
 use std::fs::{self, File};
-use std::io::{Read, Result, Write};
+use std::io::Read;
+use std::io::{Result, Write};
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -14,13 +14,12 @@ use sha2::digest::Digest;
 use sha2::Sha256;
 
 use nydus_utils::einval;
-use rafs::fs::RafsConfig;
-use rafs::metadata::RafsSuper;
-use rafs::RafsIoRead;
 
 const NYDUS_IMAGE: &str = "./target-fusedev/debug/nydus-image";
 
 pub fn exec(cmd: &str) -> Result<String> {
+    println!("exec `{}`", cmd);
+
     let child = Command::new("sh")
         .arg("-c")
         .arg(cmd)
@@ -37,7 +36,7 @@ pub fn exec(cmd: &str) -> Result<String> {
         return Err(einval!(stderr));
     }
 
-    Ok(stdout.to_string())
+    Ok(stdout.to_string() + &stderr.to_string())
 }
 
 pub fn hash(data: &[u8]) -> String {
@@ -96,24 +95,13 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    pub fn create_rnd_file(&mut self, path: &PathBuf, size: &str) -> Result<()> {
-        exec(
-            format!(
-                "dd if=/dev/urandom of={:?} bs={} count=1 2>/dev/null",
-                path, size
-            )
-            .as_str(),
-        )?;
+    pub fn create_large_file(&mut self, path: &PathBuf, size_in_mb: u8) -> Result<()> {
+        let mut file = File::create(path)?;
 
-        let mut file = File::open(path)?;
-        let mut data = Vec::new();
-        file.read_to_end(&mut data)?;
-        self.record(
-            path,
-            FileInfo {
-                hash: hash(data.as_slice()),
-            },
-        );
+        for i in 1..size_in_mb + 1 {
+            // Write 1MB data
+            file.write_all(&vec![i; 1024 * 1024])?;
+        }
 
         Ok(())
     }
@@ -123,132 +111,150 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    pub fn make_parent(&mut self) -> Result<()> {
-        let dir = self.work_dir.join("parent");
+    pub fn make_lower(&mut self) -> Result<()> {
+        let dir = self.work_dir.join("lower");
         self.create_dir(&dir)?;
 
-        self.create_file(&dir.join("test-1"), b"lower:test-1")?;
-        self.create_file(&dir.join("test-2"), b"lower:test-2")?;
-        self.create_rnd_file(&dir.join("test-3-large"), "3MB")?;
-        self.create_rnd_file(&dir.join("test-4-large"), "3M")?;
+        self.create_file(&dir.join("root-1"), b"lower:root-1")?;
+        self.create_file(&dir.join("root-2"), b"lower:root-2")?;
+        self.create_large_file(&dir.join("root-large"), 3)?;
+        self.copy_file(&dir.join("root-large"), &dir.join("root-large-copy"))?;
+
         self.create_dir(&dir.join("sub"))?;
-        self.create_file(&dir.join("sub/test-1"), b"lower:sub/test-1")?;
-        self.create_file(&dir.join("sub/test-2"), b"lower:sub/test-2")?;
+        self.create_file(&dir.join("sub/sub-1"), b"lower:sub-1")?;
+        self.create_file(&dir.join("sub/sub-2"), b"lower:sub-2")?;
+        self.create_hardlink(
+            &dir.join("root-large"),
+            &dir.join("sub/sub-root-large-hardlink"),
+        )?;
+        self.create_hardlink(
+            &dir.join("root-large-copy"),
+            &dir.join("sub/sub-root-large-copy-hardlink"),
+        )?;
+        self.create_hardlink(
+            &dir.join("root-large-copy"),
+            &dir.join("sub/sub-root-large-copy-hardlink-1"),
+        )?;
+        self.create_symlink(
+            &Path::new("../root-large").to_path_buf(),
+            &dir.join("sub/sub-root-large-symlink"),
+        )?;
+
+        self.create_dir(&dir.join("sub/some"))?;
+        self.create_file(&dir.join("sub/some/some-1"), b"lower:some-1")?;
+
+        self.create_dir(&dir.join("sub/more"))?;
+        self.create_file(&dir.join("sub/more/more-1"), b"lower:more-1")?;
+        self.create_dir(&dir.join("sub/more/more-sub"))?;
+        self.create_file(
+            &dir.join("sub/more/more-sub/more-sub-1"),
+            b"lower:more-sub-1",
+        )?;
 
         let long_name = &"😉-name.".repeat(100)[..255];
-        self.create_file(&dir.join(long_name), b"lower:sub/long-name")?;
+        self.create_file(&dir.join(long_name), b"lower:long-name")?;
 
-        self.create_symlink(
-            &Path::new("../test-3-large").to_path_buf(),
-            &dir.join("sub/test-3-large-symlink"),
-        )?;
-
-        self.create_hardlink(
-            &dir.join("test-3-large"),
-            &dir.join("sub/test-3-large-hardlink"),
-        )?;
-
-        self.copy_file(
-            &dir.join("test-3-large"),
-            &dir.join("test-3-large-duplicated"),
-        )?;
-
-        self.create_dir(&dir.join("sub/hide"))?;
-        self.create_file(&dir.join("sub/hide/test-1"), b"lower:sub/hide/test-1")?;
-        self.create_file(&dir.join("sub/hide/test-2"), b"lower:sub/hide/test-2")?;
-        self.create_dir(&dir.join("sub/hide/sub"))?;
-
-        self.create_symlink(
-            &Path::new("../../hide/sub").to_path_buf(),
-            &dir.join("sub/hide/sub/hide-symlink"),
-        )?;
-
-        self.create_file(
-            &dir.join("sub/hide/sub/test-1"),
-            b"lower:sub/hide/sub/test-1",
+        self.set_xattr(
+            &dir.join("sub/sub-1"),
+            "user.key-foo",
+            "value-foo".as_bytes(),
         )?;
 
         self.set_xattr(
-            &dir.join("sub/hide/sub/test-1"),
-            "user.key-a",
-            "value-b".as_bytes(),
-        )?;
-
-        self.set_xattr(
-            &dir.join("sub/hide/sub/test-1"),
-            "user.key-cd",
-            "value-ef".as_bytes(),
+            &dir.join("sub/sub-1"),
+            "user.key-bar",
+            "value-bar".as_bytes(),
         )?;
 
         Ok(())
     }
 
-    pub fn make_source(&mut self) -> Result<()> {
-        let dir = self.work_dir.join("source");
-
+    pub fn make_upper(&mut self) -> Result<()> {
+        let dir = self.work_dir.join("upper");
         self.create_dir(&dir)?;
-        self.create_file(&dir.join("test-2"), b"upper:test-2")?;
+
+        self.create_large_file(&dir.join("root-large"), 3)?;
+        self.create_file(&dir.join(".wh.root-large"), b"")?;
+        self.create_file(&dir.join("root-2"), b"upper:root-2")?;
+        self.create_file(&dir.join(".wh.root-2"), b"")?;
+
         self.create_dir(&dir.join("sub"))?;
-        self.create_file(&dir.join("sub/test-4"), b"upper:sub/test-4")?;
-        self.create_dir(&dir.join("sub/hide"))?;
-        self.create_dir(&dir.join("sub/hide/sub"))?;
-        self.create_file(&dir.join("sub/hide/.wh..wh..opq"), b"")?;
-        self.create_file(&dir.join("sub/hide/test-1"), b"upper:sub/hide/test-1")?;
-        self.create_file(&dir.join("sub/.wh.test-1"), b"")?;
+        self.create_file(&dir.join("sub/sub-1"), b"upper:sub-1")?;
+        self.create_file(&dir.join("sub/.wh.some"), b"")?;
+        self.create_file(&dir.join("sub/.wh.sub-2"), b"")?;
+        self.create_file(&dir.join("sub/.wh.sub-root-large-copy-hardlink-1"), b"")?;
+
+        self.create_dir(&dir.join("sub/more"))?;
+        self.create_file(&dir.join("sub/more/more-1"), b"upper:more-1")?;
+        self.create_file(&dir.join("sub/more/.wh..wh..opq"), b"")?;
+        self.create_dir(&dir.join("sub/more/more-sub"))?;
+        self.create_file(
+            &dir.join("sub/more/more-sub/more-sub-2"),
+            b"upper:more-sub-2",
+        )?;
+
+        self.create_dir(&dir.join("sub/some"))?;
+        self.create_dir(&dir.join("sub/some/some-sub"))?;
+        self.create_file(
+            &dir.join("sub/some/some-sub/some-sub-1"),
+            b"upper:some-sub-1",
+        )?;
 
         Ok(())
     }
 
-    pub fn build_parent(&mut self, enable_compress: bool) -> Result<String> {
-        let parent_dir = self.work_dir.join("parent");
+    pub fn build_lower(&mut self, enable_compress: bool) -> Result<String> {
+        let lower_dir = self.work_dir.join("lower");
 
         self.create_dir(&self.work_dir.join("blobs"))?;
 
-        let tree_ret = exec(format!("tree -a {:?}", parent_dir).as_str())?;
+        let tree_ret = exec(format!("tree -a {:?}", lower_dir).as_str())?;
         let md5_ret =
-            exec(format!("find {:?} -type f -exec md5sum {{}} + | sort", parent_dir).as_str())?;
+            exec(format!("find {:?} -type f -exec md5sum {{}} + | sort", lower_dir).as_str())?;
 
         let ret = format!(
             "{}{}",
-            tree_ret.replace(parent_dir.to_str().unwrap(), ""),
-            md5_ret.replace(parent_dir.to_str().unwrap(), "")
+            tree_ret.replace(lower_dir.to_str().unwrap(), ""),
+            md5_ret.replace(lower_dir.to_str().unwrap(), "")
         );
 
-        exec(
+        let output = exec(
             format!(
-                "{:?} create --bootstrap {:?} {:?} --backend_type localfs --backend_config '{{\"dir\": {:?}}}' --log_level error {}",
+                "{:?} create --bootstrap {:?} --backend_type localfs --backend_config '{{\"dir\": {:?}}}' --log_level trace {} {:?}",
                 NYDUS_IMAGE,
-                self.work_dir.join("parent-bootstrap"),
-                parent_dir,
+                self.work_dir.join("bootstrap-lower"),
                 self.work_dir.join("blobs"),
                 if enable_compress { "" } else { "--compressor none" },
+                lower_dir,
             )
             .as_str(),
         )?;
+        println!("{}", output);
 
         Ok(ret)
     }
 
-    pub fn build_source(&mut self) -> Result<()> {
-        let source_dir = self.work_dir.join("source").to_path_buf();
+    pub fn build_upper(&mut self, enable_compress: bool) -> Result<()> {
+        let upper_dir = self.work_dir.join("upper").to_path_buf();
 
-        // exec(format!("tree {:?} -a", source_dir).as_str())?;
-        exec(
+        let output = exec(
             format!(
-                "{:?} create --blob {:?} --bootstrap {:?} --parent_bootstrap {:?} {:?} --log_level error",
+                "{:?} create --parent_bootstrap {:?} --bootstrap {:?} --backend_type localfs --backend_config '{{\"dir\": {:?}}}' --log_level trace {} {:?}",
                 NYDUS_IMAGE,
-                self.work_dir.join("source-blob"),
-                self.work_dir.join("bootstrap"),
-                self.work_dir.join("parent-bootstrap"),
-                source_dir,
+                self.work_dir.join("bootstrap-lower"),
+                self.work_dir.join("bootstrap-overlay"),
+                self.work_dir.join("blobs"),
+                if enable_compress { "" } else { "--compressor none" },
+                upper_dir,
             )
             .as_str(),
         )?;
+        println!("{}", output);
 
         Ok(())
     }
 
-    pub fn mount_check(&mut self) -> Result<String> {
+    pub fn mount_check(&mut self, expect_texture: &str) -> Result<()> {
         let mount_path = self.work_dir.join("mnt");
 
         let tree_ret = exec(format!("tree -a {:?}", mount_path).as_str())?;
@@ -261,52 +267,13 @@ impl<'a> Builder<'a> {
             md5_ret.replace(mount_path.to_str().unwrap(), "")
         );
 
-        Ok(ret)
-    }
+        let mut texture = File::open(format!("./tests/texture/{}", expect_texture))?;
+        let mut expected = String::new();
+        texture.read_to_string(&mut expected)?;
 
-    #[allow(dead_code)]
-    pub fn check_bootstrap(&mut self) -> Result<()> {
-        let mut f_bootstrap: Box<dyn RafsIoRead> = Box::new(
-            OpenOptions::new()
-                .write(false)
-                .create(false)
-                .read(true)
-                .open(self.work_dir.join("parent-bootstrap"))?,
-        ) as Box<dyn RafsIoRead>;
+        // std::thread::sleep(std::time::Duration::from_secs(1000));
 
-        let mut conf = RafsConfig::new();
-        conf.mode = String::from("direct");
-        conf.digest_validate = true;
-        let mut super_block = RafsSuper::new(&conf)?;
-        super_block.load(&mut f_bootstrap)?;
-
-        for i in 1..17 {
-            let inode = super_block.get_inode(i, true)?;
-
-            println!(
-                "----- inode name: {:?} size: {} ino: {} idx: {} has_xattr {}",
-                inode.name()?,
-                inode.size(),
-                inode.ino(),
-                i,
-                inode.has_xattr(),
-            );
-
-            if inode.is_symlink() {
-                let link = inode.get_symlink()?;
-                println!("\tlink {}", link);
-            } else if inode.is_dir() {
-                for i in 0..inode.get_child_count()? {
-                    let child = inode.get_child_by_index(i as u64)?;
-                    println!("\tchild {}", child.name()?);
-                }
-            } else if inode.is_reg() {
-                if inode.has_xattr() {
-                    let xattrs = inode.get_xattrs();
-                    println!("\txattrs {:?}", xattrs);
-                }
-            }
-        }
+        assert_eq!(ret.trim(), expected.trim());
 
         Ok(())
     }

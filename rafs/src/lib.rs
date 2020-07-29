@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! A readonly filesystem with separated metadata and data, to support on-demand loading.
+//! A readonly filesystem with separated bootstrap and data, to support on-demand loading.
 
 #[macro_use]
 extern crate log;
@@ -55,8 +55,8 @@ impl dyn RafsIoWrite {
     }
 }
 
-/// Handler to read file system metadata.
+/// Handler to read file system bootstrap.
 pub type RafsIoReader = Box<dyn RafsIoRead>;
 
-/// Handler to write file system metadata.
+/// Handler to write file system bootstrap.
 pub type RafsIoWriter = Box<dyn RafsIoWrite>;

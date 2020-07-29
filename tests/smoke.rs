@@ -17,27 +17,52 @@ fn test(enable_compress: bool, enable_cache: bool, rafs_mode: &str) -> Result<()
 
     let mut builder = builder::new(&work_dir);
 
-    // create & build parent rootfs
-    builder.make_parent()?;
-    let build_ret = builder.build_parent(enable_compress)?;
+    {
+        // Create & build lower rootfs
+        builder.make_lower()?;
+        builder.build_lower(enable_compress)?;
 
-    let nydusd = nydusd::new(&work_dir, enable_cache, rafs_mode.parse()?)?;
-    nydusd.start()?;
-    let mount_ret = builder.mount_check()?;
-    assert_eq!(build_ret, mount_ret);
-
-    // test blob cache recovery if enable cache
-    if enable_cache {
-        drop(nydusd);
-        let nydusd = nydusd::new(&work_dir, enable_cache, rafs_mode.parse()?)?;
+        // Mount lower rootfs and check
+        let nydusd = nydusd::new(
+            &work_dir,
+            enable_cache,
+            rafs_mode.parse()?,
+            "bootstrap-lower".to_string(),
+        )?;
         nydusd.start()?;
-        let mount_ret = builder.mount_check()?;
-        assert_eq!(build_ret, mount_ret);
+
+        builder.mount_check("lower")?;
     }
 
-    // create & build source rootfs based parent
-    builder.make_source()?;
-    builder.build_source()?;
+    // Mount upper rootfs and check
+    {
+        // Create & build upper rootfs based lower
+        builder.make_upper()?;
+        builder.build_upper(enable_compress)?;
+
+        // Mount overlay rootfs and check
+        let nydusd = nydusd::new(
+            &work_dir,
+            enable_cache,
+            rafs_mode.parse()?,
+            "bootstrap-overlay".to_string(),
+        )?;
+        nydusd.start()?;
+
+        builder.mount_check("overlay")?;
+    }
+
+    // Test blob cache recovery if enable cache
+    if enable_cache {
+        let nydusd = nydusd::new(
+            &work_dir,
+            enable_cache,
+            rafs_mode.parse()?,
+            "bootstrap-overlay".to_string(),
+        )?;
+        nydusd.start()?;
+        builder.mount_check("overlay")?;
+    }
 
     Ok(())
 }

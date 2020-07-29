@@ -634,9 +634,9 @@ fn main() -> Result<()> {
         .author(crate_authors!())
         .about("Launch a vhost-user-fs backend.")
         .arg(
-            Arg::with_name("metadata")
-                .long("metadata")
-                .help("rafs metadata file")
+            Arg::with_name("bootstrap")
+                .long("bootstrap")
+                .help("rafs bootstrap file")
                 .takes_value(true)
                 .min_values(1),
         )
@@ -728,8 +728,8 @@ fn main() -> Result<()> {
     let config = cmd_arguments
         .value_of("config")
         .ok_or_else(|| Error::InvalidArguments("config file is not provided".to_string()))?;
-    // metadata means rafs only
-    let metadata = cmd_arguments.value_of("metadata").unwrap_or_default();
+    // bootstrap means rafs only
+    let bootstrap = cmd_arguments.value_of("bootstrap").unwrap_or_default();
     // apisock means admin api socket support
     let apisock = cmd_arguments.value_of("apisock").unwrap_or_default();
     // threads means number of fuse service threads
@@ -744,9 +744,9 @@ fn main() -> Result<()> {
         .unwrap_or(rlimit_nofile_default);
 
     // Some basic validation
-    if !shared_dir.is_empty() && !metadata.is_empty() {
+    if !shared_dir.is_empty() && !bootstrap.is_empty() {
         return Err(einval!(
-            "shared-dir and metadata cannot be set at the same time"
+            "shared-dir and bootstrap cannot be set at the same time"
         ));
     }
     if vu_sock.is_empty() && mountpoint.is_empty() {
@@ -786,9 +786,9 @@ fn main() -> Result<()> {
         if rlimit_nofile != 0 {
             Resource::NOFILE.set(rlimit_nofile, rlimit_nofile)?;
         }
-    } else if !metadata.is_empty() {
+    } else if !bootstrap.is_empty() {
         let mut rafs = Rafs::new(rafs_conf.clone(), &"/".to_string())?;
-        let mut file = Box::new(File::open(metadata)?) as Box<dyn rafs::RafsIoRead>;
+        let mut file = Box::new(File::open(bootstrap)?) as Box<dyn rafs::RafsIoRead>;
         rafs.import(&mut file)?;
         info!("rafs mounted: {}", rafs_conf);
         vfs.mount(Box::new(rafs), "/")?;
