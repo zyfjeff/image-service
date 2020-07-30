@@ -6,70 +6,107 @@
 //! Structs for RAFS digest algorithm.
 
 use std::fmt;
-use std::fmt::Write;
 
-use crate::metadata::layout::OndiskDigest;
+use sha2::digest::Digest;
+use sha2::Sha256;
+
 use crate::metadata::RAFS_DIGEST_LENGTH;
 
-#[derive(Clone, Hash, PartialEq, Eq, Debug)]
+type DigestData = [u8; RAFS_DIGEST_LENGTH];
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DigestAlgorithm {
+    Blake3 = 0,
+    Sha256 = 1,
+}
+
+pub trait DigestHasher {
+    fn digest_update(&mut self, buf: &[u8]);
+    fn digest_finalize(&mut self) -> RafsDigest;
+}
+
+impl DigestHasher for blake3::Hasher {
+    fn digest_update(&mut self, buf: &[u8]) {
+        self.update(buf);
+    }
+    fn digest_finalize(&mut self) -> RafsDigest {
+        RafsDigest {
+            data: self.clone().finalize().into(),
+        }
+    }
+}
+
+impl DigestHasher for Sha256 {
+    fn digest_update(&mut self, buf: &[u8]) {
+        self.update(buf);
+    }
+    fn digest_finalize(&mut self) -> RafsDigest {
+        RafsDigest {
+            data: self.clone().finalize().into(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Hash, PartialEq, Eq, Debug)]
 pub struct RafsDigest {
-    pub result: blake3::Hash,
+    pub data: DigestData,
 }
 
 impl RafsDigest {
-    pub fn from_buf(buf: &[u8]) -> Self {
-        Self {
-            result: blake3::hash(buf),
+    pub fn from_buf(buf: &[u8], algorithm: DigestAlgorithm) -> Self {
+        let data: DigestData = match algorithm {
+            DigestAlgorithm::Blake3 => blake3::hash(buf).into(),
+            DigestAlgorithm::Sha256 => {
+                let mut hasher = Sha256::new();
+                hasher.update(buf);
+                hasher.finalize().into()
+            }
+        };
+
+        RafsDigest { data }
+    }
+    pub fn hasher(algorithm: DigestAlgorithm) -> Box<dyn DigestHasher> {
+        match algorithm {
+            DigestAlgorithm::Blake3 => Box::new(blake3::Hasher::new()) as Box<dyn DigestHasher>,
+            DigestAlgorithm::Sha256 => Box::new(Sha256::new()) as Box<dyn DigestHasher>,
         }
     }
     pub fn size(&self) -> usize {
         RAFS_DIGEST_LENGTH
     }
-    pub fn hasher() -> blake3::Hasher {
-        blake3::Hasher::new()
-    }
-    pub fn finalize(hasher: blake3::Hasher) -> Self {
-        Self {
-            result: hasher.finalize(),
-        }
-    }
 }
 
 impl Default for RafsDigest {
     fn default() -> Self {
-        Self::from_buf(&[])
+        Self {
+            data: [0u8; RAFS_DIGEST_LENGTH],
+        }
     }
 }
 
-impl Into<String> for RafsDigest {
-    fn into(self) -> String {
-        let mut ret = String::new();
-        for c in self.result.as_bytes() {
-            write!(ret, "{:02x}", c).unwrap();
-        }
-        ret
-    }
-}
-
-impl From<OndiskDigest> for RafsDigest {
-    fn from(digest: OndiskDigest) -> Self {
-        RafsDigest {
-            result: digest.data.into(),
-        }
+impl From<DigestData> for RafsDigest {
+    fn from(data: DigestData) -> Self {
+        Self { data }
     }
 }
 
 impl AsRef<[u8]> for RafsDigest {
     fn as_ref(&self) -> &[u8] {
-        self.result.as_bytes()
+        &self.data
     }
 }
 
 impl fmt::Display for RafsDigest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for c in self.result.as_bytes() {
+        for c in &self.data {
             write!(f, "{:02x}", c).unwrap()
         }
         Ok(())
+    }
+}
+
+impl Into<String> for RafsDigest {
+    fn into(self) -> String {
+        format!("{}", self)
     }
 }

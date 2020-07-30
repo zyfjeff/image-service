@@ -375,11 +375,11 @@ pub trait RafsSuperInodes {
         let child_count = inode.get_child_count()?;
 
         let expected_digest = inode.get_digest()?;
-        let mut hasher = RafsDigest::hasher();
+        let mut hasher = RafsDigest::hasher(DigestAlgorithm::Blake3);
 
         if inode.is_symlink() {
             // trace!("\tdigest symlink {}", inode.get_symlink()?);
-            hasher.update(inode.get_symlink()?.as_bytes());
+            hasher.digest_update(inode.get_symlink()?.as_bytes());
         } else {
             for idx in 0..child_count {
                 if inode.is_dir() {
@@ -392,18 +392,18 @@ pub trait RafsSuperInodes {
                     }
                     let child_digest = child.get_digest()?;
                     let child_digest = child_digest.as_ref().as_ref();
-                    hasher.update(child_digest);
+                    hasher.digest_update(child_digest);
                 } else {
                     // trace!("\tdigest chunk {}", idx);
                     let chunk = inode.get_chunk_info(idx as u32)?;
                     let chunk_digest = chunk.block_id();
                     let chunk_digest = chunk_digest.as_ref().as_ref();
-                    hasher.update(chunk_digest);
+                    hasher.digest_update(chunk_digest);
                 }
             }
         }
 
-        let digest = RafsDigest::finalize(hasher);
+        let digest = hasher.digest_finalize();
         let result = expected_digest == digest;
         if !result {
             error!(

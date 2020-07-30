@@ -467,7 +467,7 @@ mod blob_cache_tests {
     use vm_memory::{VolatileMemory, VolatileSlice};
 
     use crate::metadata::layout::OndiskChunkInfo;
-    use crate::metadata::{RafsDigest, RAFS_DEFAULT_BLOCK_SIZE};
+    use crate::metadata::{DigestAlgorithm, RafsDigest, RAFS_DEFAULT_BLOCK_SIZE};
     use crate::storage::backend::BlobBackend;
     use crate::storage::cache::blobcache;
     use crate::storage::cache::RafsCache;
@@ -519,7 +519,7 @@ mod blob_cache_tests {
 
         // generate chunk and bio
         let mut chunk = OndiskChunkInfo::new();
-        chunk.block_id = RafsDigest::from_buf(&expect).into();
+        chunk.block_id = RafsDigest::from_buf(&expect, DigestAlgorithm::Blake3).into();
         chunk.file_offset = 0;
         chunk.compress_offset = 0;
         chunk.compress_size = 100;

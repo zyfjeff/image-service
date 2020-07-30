@@ -150,7 +150,7 @@ impl RafsSuperInodes for CachedInodes {
 pub struct CachedInode {
     i_ino: Inode,
     i_name: String,
-    i_digest: OndiskDigest,
+    i_digest: RafsDigest,
     i_parent: u64,
     i_mode: u32,
     i_projid: u32,
@@ -301,7 +301,7 @@ impl RafsInode for CachedInode {
 
     #[inline]
     fn get_digest(&self) -> Result<RafsDigest> {
-        Ok(self.i_digest.into())
+        Ok(self.i_digest)
     }
 
     #[inline]
@@ -492,7 +492,7 @@ impl CachedChunkInfo {
     }
 
     fn copy_from_ondisk(&mut self, chunk: &OndiskChunkInfo) {
-        self.c_block_id = Arc::new(chunk.block_id.into());
+        self.c_block_id = Arc::new(chunk.block_id);
         self.c_blob_index = chunk.blob_index();
         self.c_compress_offset = chunk.compress_offset();
         self.c_decompress_offset = chunk.decompress_offset();
@@ -518,7 +518,7 @@ impl RafsChunkInfo for CachedChunkInfo {
 
     fn cast_ondisk(&self) -> Result<OndiskChunkInfo> {
         Ok(OndiskChunkInfo {
-            block_id: self.block_id().as_ref().clone().into(),
+            block_id: *self.block_id().as_ref(),
             blob_index: self.blob_index(),
             flags: self.c_flags,
             compress_size: self.compress_size(),

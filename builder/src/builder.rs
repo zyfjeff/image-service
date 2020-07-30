@@ -16,7 +16,8 @@ use sha2::Sha256;
 
 use nydus_utils::einval;
 use rafs::metadata::layout::*;
-use rafs::metadata::{Inode, RafsDigest, RafsMode, RafsStore, RafsSuper};
+use rafs::metadata::digest::{RafsDigest, DigestAlgorithm};
+use rafs::metadata::{Inode, RafsMode, RafsStore, RafsSuper};
 use rafs::storage::compress;
 use rafs::{RafsIoRead, RafsIoWrite};
 
@@ -40,7 +41,7 @@ pub struct Builder {
     lower_inode_map: HashMap<Inode, Vec<u64>>,
     upper_inode_map: HashMap<Inode, Vec<u64>>,
     /// Store all chunk digest for chunk deduplicate during build.
-    chunk_cache: HashMap<OndiskDigest, OndiskChunkInfo>,
+    chunk_cache: HashMap<RafsDigest, OndiskChunkInfo>,
     /// Store all blob id entry during build.
     blob_table: OndiskBlobTable,
     /// Readahead file list, use BTreeMap to keep stable iteration order, HashMap<path, Option<index>>.
@@ -459,7 +460,7 @@ impl Builder {
     }
 
     /// Calculate inode digest
-    fn digest_node(&self, node: &Node) -> Result<OndiskDigest> {
+    fn digest_node(&self, node: &Node) -> Result<RafsDigest> {
         // We have set digest for non-directory inode in the previous dump_blob workflow, so just return digest here.
         if !node.is_dir() {
             return Ok(node.inode.i_digest);
@@ -467,16 +468,16 @@ impl Builder {
 
         let child_index = node.inode.i_child_index;
         let child_count = node.inode.i_child_count;
-        let mut inode_hasher = RafsDigest::hasher();
+        let mut inode_hasher = RafsDigest::hasher(DigestAlgorithm::Blake3);
 
         for idx in child_index..child_index + child_count {
             let child = &self.nodes[(idx - 1) as usize];
-            inode_hasher.update(child.inode.i_digest.as_ref());
+            inode_hasher.digest_update(child.inode.i_digest.as_ref());
         }
 
-        let inode_hash = RafsDigest::finalize(inode_hasher);
+        let inode_hash = inode_hasher.digest_finalize();
 
-        Ok(inode_hash.into())
+        Ok(inode_hash)
     }
 
     /// Build workflow, return (Vec<blob_id>, blob_size)

@@ -143,7 +143,7 @@ impl Node {
         blob_hash: &mut Sha256,
         compress_offset: &mut u64,
         decompress_offset: &mut u64,
-        chunk_cache: &mut HashMap<OndiskDigest, OndiskChunkInfo>,
+        chunk_cache: &mut HashMap<RafsDigest, OndiskChunkInfo>,
         compressor: compress::Algorithm,
         blob_index: u32,
     ) -> Result<usize> {
@@ -153,13 +153,13 @@ impl Node {
 
         if self.is_symlink() {
             self.inode.i_digest =
-                RafsDigest::from_buf(self.symlink.as_ref().unwrap().as_bytes()).into();
+                RafsDigest::from_buf(self.symlink.as_ref().unwrap().as_bytes(), DigestAlgorithm::Blake3);
             return Ok(0);
         }
 
         let file_size = self.inode.i_size;
         let mut blob_size = 0usize;
-        let mut inode_hasher = RafsDigest::hasher();
+        let mut inode_hasher = RafsDigest::hasher(DigestAlgorithm::Blake3);
         let mut file = File::open(&self.path)?;
 
         for i in 0..self.inode.i_child_count {
@@ -177,9 +177,9 @@ impl Node {
             file.read_exact(&mut chunk_data)?;
 
             // Calculate chunk digest
-            chunk.block_id = RafsDigest::from_buf(chunk_data.as_slice()).into();
+            chunk.block_id = RafsDigest::from_buf(chunk_data.as_slice(), DigestAlgorithm::Blake3);
             // Calculate inode digest
-            inode_hasher.update(chunk.block_id.as_ref());
+            inode_hasher.digest_update(chunk.block_id.as_ref());
 
             // Deduplicate chunk if we found a same one from chunk cache
             if let Some(cached_chunk) = chunk_cache.get(&chunk.block_id) {
@@ -229,7 +229,7 @@ impl Node {
         }
 
         // Finish inode digest calculation
-        self.inode.i_digest = RafsDigest::finalize(inode_hasher).into();
+        self.inode.i_digest = inode_hasher.digest_finalize();
 
         Ok(blob_size)
     }

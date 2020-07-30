@@ -648,7 +648,7 @@ impl RafsInode for OndiskInodeWrapper {
         let state = self.state();
         let inode = self.inode(state.deref());
 
-        Ok(inode.i_digest.into())
+        Ok(inode.i_digest)
     }
 
     #[inline]
@@ -756,7 +756,7 @@ impl RafsInode for OndiskInodeWrapper {
 pub struct OndiskChunkInfoWrapper {
     mapping: DirectMapping,
     offset: usize,
-    digest: Arc<OndiskDigest>,
+    digest: Arc<RafsDigest>,
 }
 
 unsafe impl Send for OndiskChunkInfoWrapper {}
@@ -804,7 +804,7 @@ impl RafsChunkInfo for OndiskChunkInfoWrapper {
 
     #[inline]
     fn block_id(&self) -> Arc<RafsDigest> {
-        Arc::new((*self.digest.as_ref()).into())
+        self.digest.clone()
     }
 
     fn cast_ondisk(&self) -> Result<OndiskChunkInfo> {

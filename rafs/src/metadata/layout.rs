@@ -571,7 +571,7 @@ impl RafsStore for OndiskBlobTable {
 #[derive(Clone, Copy, Default, Debug)]
 pub struct OndiskInode {
     /// sha256(sha256(chunk) + ...), [char; RAFS_SHA256_LENGTH]
-    pub i_digest: OndiskDigest, // 32
+    pub i_digest: RafsDigest, // 32
     /// parent inode number
     pub i_parent: u64,
     /// from fs stat()
@@ -687,7 +687,7 @@ impl_bootstrap_converter!(OndiskInode);
 #[derive(Clone, Copy)]
 pub struct OndiskChunkInfo {
     /// sha256(chunk), [char; RAFS_SHA256_LENGTH]
-    pub block_id: OndiskDigest,
+    pub block_id: RafsDigest,
     /// blob index (blob_id = blob_table[blob_index])
     pub blob_index: u32,
     /// CHUNK_FLAG_COMPRESSED
@@ -732,7 +732,7 @@ impl RafsChunkInfo for OndiskChunkInfo {
 
     #[inline]
     fn block_id(&self) -> Arc<RafsDigest> {
-        Arc::new(self.block_id.into())
+        Arc::new(self.block_id)
     }
 
     #[inline]
@@ -757,7 +757,7 @@ impl_bootstrap_converter!(OndiskChunkInfo);
 impl Default for OndiskChunkInfo {
     fn default() -> Self {
         OndiskChunkInfo {
-            block_id: OndiskDigest::default(),
+            block_id: RafsDigest::default(),
             blob_index: 0,
             file_offset: 0,
             compress_size: 0,
@@ -786,46 +786,6 @@ impl fmt::Display for OndiskChunkInfo {
         )
     }
 }
-
-/// On disk Rafs SHA256 digest data.
-#[repr(C)]
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct OndiskDigest {
-    pub data: [u8; RAFS_DIGEST_LENGTH],
-}
-
-impl fmt::Debug for OndiskDigest {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        for c in &self.data {
-            write!(f, "{:02x}", c)?;
-        }
-        Ok(())
-    }
-}
-
-impl OndiskDigest {
-    pub fn new() -> Self {
-        OndiskDigest {
-            ..Default::default()
-        }
-    }
-}
-
-impl From<[u8; RAFS_DIGEST_LENGTH]> for OndiskDigest {
-    fn from(data: [u8; RAFS_DIGEST_LENGTH]) -> Self {
-        Self { data }
-    }
-}
-
-impl From<RafsDigest> for OndiskDigest {
-    fn from(digest: RafsDigest) -> Self {
-        Self {
-            data: *digest.result.as_bytes(),
-        }
-    }
-}
-
-impl_bootstrap_converter!(OndiskDigest);
 
 /// On disk xattr data.
 #[repr(C)]
