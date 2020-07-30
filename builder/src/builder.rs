@@ -8,7 +8,7 @@ use std::fs::DirEntry;
 use std::fs::OpenOptions;
 use std::io::{Error, Result};
 use std::mem::size_of;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use sha2::digest::Digest;
@@ -178,6 +178,13 @@ impl Builder {
         root_node.build_inode()?;
         root_node.index = iter_ino;
         root_node.inode.i_ino = iter_ino;
+
+        // Fs walk skips root inode within below while loop and we allow
+        // user to pass the source root as prefetch hint. Check it here.
+        if self.need_prefetch(&Path::new("/").to_path_buf(), iter_ino) {
+            self.readahead_nodes
+                .insert(root_node.rootfs(), Some(root_node.clone()));
+        }
 
         self.inode_map
             .insert(root_node.inode.i_ino, root_node.clone());
@@ -377,6 +384,7 @@ impl Builder {
         // Dump bootstrap
         super_block.store(&mut self.f_bootstrap)?;
         inode_table.store(&mut self.f_bootstrap)?;
+
         if self.ra_policy == ReadaheadPolicy::Fs {
             self.hint_readahead_files
                 .values()
