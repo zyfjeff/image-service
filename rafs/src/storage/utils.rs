@@ -12,7 +12,7 @@ use vm_memory::{Bytes, VolatileSlice};
 
 use nydus_utils::{einval, last_error, round_down_4k};
 
-use crate::metadata::{DigestAlgorithm, RafsDigest};
+use crate::metadata::digest::{self, RafsDigest};
 
 pub fn readv(fd: RawFd, bufs: &[VolatileSlice], offset: u64, max_size: usize) -> Result<usize> {
     if bufs.is_empty() {
@@ -99,6 +99,6 @@ pub fn alloc_buf(size: usize) -> Vec<u8> {
 }
 
 /// Check hash of data matches provided one
-pub fn digest_check(data: &[u8], digest: &RafsDigest) -> bool {
-    digest == &RafsDigest::from_buf(data, DigestAlgorithm::Blake3)
+pub fn digest_check(data: &[u8], digest: &RafsDigest, digester: digest::Algorithm) -> bool {
+    digest == &RafsDigest::from_buf(data, digester)
 }

@@ -13,8 +13,9 @@ use nix::sys::uio;
 extern crate spmc;
 use vm_memory::VolatileSlice;
 
+use crate::metadata::digest::{self, RafsDigest};
 use crate::metadata::layout::OndiskBlobTableEntry;
-use crate::metadata::{RafsChunkInfo, RafsDigest, RafsSuperMeta};
+use crate::metadata::{RafsChunkInfo, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::RafsCache;
 use crate::storage::cache::*;
@@ -46,7 +47,7 @@ impl BlobCacheEntry {
         }
     }
 
-    fn read(&self, buf: &mut [u8]) -> Result<usize> {
+    fn read(&self, buf: &mut [u8], digester: digest::Algorithm) -> Result<usize> {
         let d_offset = self.chunk.decompress_offset() as i64;
         let d_size = self.chunk.decompress_size();
 
@@ -62,7 +63,7 @@ impl BlobCacheEntry {
             return Err(einval!());
         }
 
-        if !digest_check(buf, &self.chunk.block_id()) {
+        if !digest_check(buf, &self.chunk.block_id(), digester) {
             return Err(einval!());
         }
 
@@ -202,9 +203,11 @@ impl BlobCache {
             }
             // We need read whole chunk to validate digest.
             let mut src_buf = alloc_buf(d_size);
-            cache_entry.read(&mut src_buf)?;
+            cache_entry.read(&mut src_buf, bio.digester)?;
             return copyv(&src_buf, bufs, offset, bio.size);
         }
+
+        let digester = if validate { Some(bio.digester) } else { None };
 
         // Optimize for the case where the first VolatileSlice covers the whole chunk.
         if bufs.len() == 1 && bufs[0].len() >= d_size as usize && offset == 0 {
@@ -212,7 +215,7 @@ impl BlobCache {
             let dst_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) };
 
             // Try to recovery cache from disk
-            if cache_entry.read(dst_buf).is_ok() {
+            if cache_entry.read(dst_buf, bio.digester).is_ok() {
                 trace!(
                     "recovery blob cache {} {}",
                     chunk.block_id().to_string(),
@@ -225,7 +228,7 @@ impl BlobCache {
             // Non-compressed source data is easy to handle
             if !chunk.is_compressed() {
                 // read from backend into the destination buffer
-                self.read_by_chunk(blob_id, chunk.as_ref(), dst_buf, &mut [], validate)?;
+                self.read_by_chunk(blob_id, chunk.as_ref(), dst_buf, &mut [], digester)?;
                 cache_entry.cache(dst_buf, d_size);
                 return Ok(d_size);
             }
@@ -236,7 +239,7 @@ impl BlobCache {
                 chunk.as_ref(),
                 src_buf.as_mut_slice(),
                 dst_buf,
-                validate,
+                digester,
             )?;
             cache_entry.cache(dst_buf, d_size);
             return Ok(d_size);
@@ -244,7 +247,10 @@ impl BlobCache {
 
         // Try to recovery cache from disk
         let mut dst_buf = alloc_buf(d_size);
-        if cache_entry.read(dst_buf.as_mut_slice()).is_ok() {
+        if cache_entry
+            .read(dst_buf.as_mut_slice(), bio.digester)
+            .is_ok()
+        {
             trace!(
                 "recovery blob cache {} {}",
                 chunk.block_id().to_string(),
@@ -261,7 +267,7 @@ impl BlobCache {
                 chunk.as_ref(),
                 dst_buf.as_mut_slice(),
                 &mut [],
-                validate,
+                digester,
             )?;
             cache_entry.cache(dst_buf.as_mut_slice(), d_size);
             return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
@@ -273,7 +279,7 @@ impl BlobCache {
             chunk.as_ref(),
             src_buf.as_mut_slice(),
             dst_buf.as_mut_slice(),
-            validate,
+            digester,
         )?;
         cache_entry.cache(dst_buf.as_mut_slice(), d_size);
         copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
@@ -466,8 +472,9 @@ mod blob_cache_tests {
 
     use vm_memory::{VolatileMemory, VolatileSlice};
 
+    use crate::metadata::digest::{self, RafsDigest};
     use crate::metadata::layout::OndiskChunkInfo;
-    use crate::metadata::{DigestAlgorithm, RafsDigest, RAFS_DEFAULT_BLOCK_SIZE};
+    use crate::metadata::RAFS_DEFAULT_BLOCK_SIZE;
     use crate::storage::backend::BlobBackend;
     use crate::storage::cache::blobcache;
     use crate::storage::cache::RafsCache;
@@ -519,7 +526,7 @@ mod blob_cache_tests {
 
         // generate chunk and bio
         let mut chunk = OndiskChunkInfo::new();
-        chunk.block_id = RafsDigest::from_buf(&expect, DigestAlgorithm::Blake3).into();
+        chunk.block_id = RafsDigest::from_buf(&expect, digest::Algorithm::Blake3).into();
         chunk.file_offset = 0;
         chunk.compress_offset = 0;
         chunk.compress_size = 100;
@@ -529,6 +536,7 @@ mod blob_cache_tests {
             Arc::new(chunk),
             blob_id.to_string(),
             compress::Algorithm::None,
+            digest::Algorithm::Blake3,
             50,
             50,
             RAFS_DEFAULT_BLOCK_SIZE as u32,

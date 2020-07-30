@@ -114,8 +114,9 @@ impl RafsSuperInodes for CachedInodes {
         self.load_all_inodes(r)?;
 
         // Validate inode digest tree
+        let digester = self.s_meta.get_digester();
         if self.digest_validate
-            && !self.digest_validate(self.get_inode(RAFS_ROOT_INODE, false)?, true)?
+            && !self.digest_validate(self.get_inode(RAFS_ROOT_INODE, false)?, true, digester)?
         {
             return Err(einval!("invalid inode digest"));
         }
@@ -378,6 +379,7 @@ impl RafsInode for CachedInode {
                 blk.clone(),
                 self.get_chunk_blob_id(blk.blob_index())?,
                 self.i_meta.get_compressor(),
+                self.i_meta.get_digester(),
                 (bio_offset - blk.file_offset()) as u32,
                 cmp::min(
                     end - bio_offset,

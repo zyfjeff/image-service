@@ -56,6 +56,12 @@ impl RafsCache for DummyCache {
         let c_size = chunk.compress_size() as usize;
         let d_size = chunk.decompress_size() as usize;
 
+        let digester = if self.validate {
+            Some(bio.digester)
+        } else {
+            None
+        };
+
         if !chunk.is_compressed() {
             if !self.validate {
                 return self.backend.readv(
@@ -67,13 +73,7 @@ impl RafsCache for DummyCache {
             }
             // We need read whole chunk to validate digest.
             let mut src_buf = alloc_buf(c_size);
-            self.read_by_chunk(
-                blob_id,
-                chunk.as_ref(),
-                &mut src_buf,
-                &mut [],
-                self.validate,
-            )?;
+            self.read_by_chunk(blob_id, chunk.as_ref(), &mut src_buf, &mut [], digester)?;
             return copyv(&src_buf, bufs, offset, bio.size);
         }
 
@@ -87,7 +87,7 @@ impl RafsCache for DummyCache {
                     chunk.as_ref(),
                     src_buf,
                     dst_buf.as_mut_slice(),
-                    self.validate,
+                    digester,
                 )?;
                 return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
             } else {
@@ -102,7 +102,7 @@ impl RafsCache for DummyCache {
                         chunk.as_ref(),
                         src_buf.as_mut_slice(),
                         dst_buf,
-                        self.validate,
+                        digester,
                     )?);
                 }
                 let mut dst_buf = alloc_buf(d_size);
@@ -111,7 +111,7 @@ impl RafsCache for DummyCache {
                     chunk.as_ref(),
                     src_buf.as_mut_slice(),
                     dst_buf.as_mut_slice(),
-                    self.validate,
+                    digester,
                 )?;
                 return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
             }
@@ -124,7 +124,7 @@ impl RafsCache for DummyCache {
             chunk.as_ref(),
             src_buf.as_mut_slice(),
             dst_buf.as_mut_slice(),
-            self.validate,
+            digester,
         )?;
         copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
     }

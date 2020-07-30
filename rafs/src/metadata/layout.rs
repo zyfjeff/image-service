@@ -216,6 +216,14 @@ impl OndiskSuperBlock {
         Ok(())
     }
 
+    pub fn set_compressor(&mut self, compressor: compress::Algorithm) {
+        self.s_flags |= compressor as u64
+    }
+
+    pub fn set_digester(&mut self, digester: digest::Algorithm) {
+        self.s_flags |= digester as u64
+    }
+
     impl_pub_getter_setter!(magic, set_magic, s_magic, u32);
     impl_pub_getter_setter!(version, set_version, s_fs_version, u32);
     impl_pub_getter_setter!(sb_size, set_sb_size, s_sb_size, u32);

@@ -21,6 +21,7 @@ use sha2::Sha256;
 use nydus_utils::div_round_up;
 use nydus_utils::einval;
 
+use rafs::metadata::digest::{self, RafsDigest};
 use rafs::metadata::layout::*;
 use rafs::metadata::*;
 use rafs::storage::compress;
@@ -145,6 +146,7 @@ impl Node {
         decompress_offset: &mut u64,
         chunk_cache: &mut HashMap<RafsDigest, OndiskChunkInfo>,
         compressor: compress::Algorithm,
+        digester: digest::Algorithm,
         blob_index: u32,
     ) -> Result<usize> {
         if self.is_dir() {
@@ -153,13 +155,13 @@ impl Node {
 
         if self.is_symlink() {
             self.inode.i_digest =
-                RafsDigest::from_buf(self.symlink.as_ref().unwrap().as_bytes(), DigestAlgorithm::Blake3);
+                RafsDigest::from_buf(self.symlink.as_ref().unwrap().as_bytes(), digester);
             return Ok(0);
         }
 
         let file_size = self.inode.i_size;
         let mut blob_size = 0usize;
-        let mut inode_hasher = RafsDigest::hasher(DigestAlgorithm::Blake3);
+        let mut inode_hasher = RafsDigest::hasher(digester);
         let mut file = File::open(&self.path)?;
 
         for i in 0..self.inode.i_child_count {
@@ -177,7 +179,7 @@ impl Node {
             file.read_exact(&mut chunk_data)?;
 
             // Calculate chunk digest
-            chunk.block_id = RafsDigest::from_buf(chunk_data.as_slice(), DigestAlgorithm::Blake3);
+            chunk.block_id = RafsDigest::from_buf(chunk_data.as_slice(), digester);
             // Calculate inode digest
             inode_hasher.digest_update(chunk.block_id.as_ref());
 

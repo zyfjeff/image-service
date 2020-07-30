@@ -15,8 +15,8 @@ use sha2::digest::Digest;
 use sha2::Sha256;
 
 use nydus_utils::einval;
+use rafs::metadata::digest::{self, RafsDigest};
 use rafs::metadata::layout::*;
-use rafs::metadata::digest::{RafsDigest, DigestAlgorithm};
 use rafs::metadata::{Inode, RafsMode, RafsStore, RafsSuper};
 use rafs::storage::compress;
 use rafs::{RafsIoRead, RafsIoWrite};
@@ -37,6 +37,8 @@ pub struct Builder {
     f_parent_bootstrap: Option<Box<dyn RafsIoRead>>,
     /// Blob chunk compress flag.
     compressor: compress::Algorithm,
+    /// Inode and chunk digest algorithm flag.
+    digester: digest::Algorithm,
     /// Cache node index for hardlinks, HashMap<Inode, Vec<index>>.
     lower_inode_map: HashMap<Inode, Vec<u64>>,
     upper_inode_map: HashMap<Inode, Vec<u64>>,
@@ -89,6 +91,7 @@ impl Builder {
         parent_bootstrap_path: String,
         blob_id: String,
         compressor: compress::Algorithm,
+        digester: digest::Algorithm,
         hint_readahead_files: BTreeMap<PathBuf, Option<u64>>,
         prefetch_policy: PrefetchPolicy,
     ) -> Result<Builder> {
@@ -125,6 +128,7 @@ impl Builder {
             f_bootstrap,
             f_parent_bootstrap,
             compressor,
+            digester,
             lower_inode_map: HashMap::new(),
             upper_inode_map: HashMap::new(),
             chunk_cache: HashMap::new(),
@@ -338,7 +342,8 @@ impl Builder {
         super_block.set_blob_table_offset(blob_table_offset);
         super_block.set_blob_table_size(blob_table_size as u32);
         super_block.set_prefetch_table_offset(prefetch_table_offset as u64);
-        super_block.set_flags(super_block.flags() | self.compressor as u64);
+        super_block.set_compressor(self.compressor);
+        super_block.set_digester(self.digester);
         super_block.set_prefetch_table_entries(prefetch_table_entries);
 
         let mut compress_offset = 0u64;
@@ -382,6 +387,7 @@ impl Builder {
                 &mut decompress_offset,
                 &mut self.chunk_cache,
                 self.compressor,
+                self.digester,
                 blob_new_index,
             )?;
         }
@@ -406,6 +412,7 @@ impl Builder {
                         &mut decompress_offset,
                         &mut self.chunk_cache,
                         self.compressor,
+                        self.digester,
                         blob_new_index,
                     )?;
                 }
@@ -468,7 +475,7 @@ impl Builder {
 
         let child_index = node.inode.i_child_index;
         let child_count = node.inode.i_child_count;
-        let mut inode_hasher = RafsDigest::hasher(DigestAlgorithm::Blake3);
+        let mut inode_hasher = RafsDigest::hasher(self.digester);
 
         for idx in child_index..child_index + child_count {
             let child = &self.nodes[(idx - 1) as usize];

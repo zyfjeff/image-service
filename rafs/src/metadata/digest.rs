@@ -3,21 +3,47 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-//! Structs for RAFS digest algorithm.
+//! Struct for RAFS digest algorithm.
 
 use std::fmt;
 
 use sha2::digest::Digest;
 use sha2::Sha256;
+use std::io::Error;
+use std::str::FromStr;
 
 use crate::metadata::RAFS_DIGEST_LENGTH;
+
+use nydus_utils::einval;
 
 type DigestData = [u8; RAFS_DIGEST_LENGTH];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum DigestAlgorithm {
-    Blake3 = 0,
-    Sha256 = 1,
+pub enum Algorithm {
+    Blake3 = 0x0000,
+    Sha256 = 0x0100,
+}
+
+impl Into<Algorithm> for u8 {
+    fn into(self) -> Algorithm {
+        match self {
+            0x00 => Algorithm::Blake3,
+            0x01 => Algorithm::Sha256,
+            _ => Algorithm::Blake3,
+        }
+    }
+}
+
+impl FromStr for Algorithm {
+    type Err = Error;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s {
+            "blake3" => Ok(Self::Blake3),
+            "sha256" => Ok(Self::Sha256),
+            _ => Err(einval!("digest algorithm should be blake3 or sha256")),
+        }
+    }
 }
 
 pub trait DigestHasher {
@@ -53,10 +79,10 @@ pub struct RafsDigest {
 }
 
 impl RafsDigest {
-    pub fn from_buf(buf: &[u8], algorithm: DigestAlgorithm) -> Self {
+    pub fn from_buf(buf: &[u8], algorithm: Algorithm) -> Self {
         let data: DigestData = match algorithm {
-            DigestAlgorithm::Blake3 => blake3::hash(buf).into(),
-            DigestAlgorithm::Sha256 => {
+            Algorithm::Blake3 => blake3::hash(buf).into(),
+            Algorithm::Sha256 => {
                 let mut hasher = Sha256::new();
                 hasher.update(buf);
                 hasher.finalize().into()
@@ -65,14 +91,11 @@ impl RafsDigest {
 
         RafsDigest { data }
     }
-    pub fn hasher(algorithm: DigestAlgorithm) -> Box<dyn DigestHasher> {
+    pub fn hasher(algorithm: Algorithm) -> Box<dyn DigestHasher> {
         match algorithm {
-            DigestAlgorithm::Blake3 => Box::new(blake3::Hasher::new()) as Box<dyn DigestHasher>,
-            DigestAlgorithm::Sha256 => Box::new(Sha256::new()) as Box<dyn DigestHasher>,
+            Algorithm::Blake3 => Box::new(blake3::Hasher::new()) as Box<dyn DigestHasher>,
+            Algorithm::Sha256 => Box::new(Sha256::new()) as Box<dyn DigestHasher>,
         }
-    }
-    pub fn size(&self) -> usize {
-        RAFS_DIGEST_LENGTH
     }
 }
 

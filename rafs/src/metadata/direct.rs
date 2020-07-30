@@ -331,7 +331,8 @@ impl RafsSuperInodes for DirectMapping {
         let inode = Arc::new(wrapper) as Arc<dyn RafsInode>;
 
         // Validate inode digest tree
-        if digest_validate && !self.digest_validate(inode.clone(), false)? {
+        let digester = state.meta.get_digester();
+        if digest_validate && !self.digest_validate(inode.clone(), false, digester)? {
             return Err(einval!("invalid inode digest"));
         }
 
@@ -696,10 +697,12 @@ impl RafsInode for OndiskInodeWrapper {
             };
 
             let compressor = state.meta.get_compressor();
+            let digester = state.meta.get_digester();
             let bio = RafsBio::new(
                 chunk,
                 blob_id,
                 compressor,
+                digester,
                 chunk_start as u32,
                 (chunk_end - chunk_start) as usize,
                 blksize,

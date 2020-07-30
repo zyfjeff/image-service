@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use vm_memory::VolatileSlice;
 
+use crate::metadata::digest;
 use crate::metadata::layout::OndiskBlobTableEntry;
 use crate::metadata::{RafsChunkInfo, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
@@ -140,7 +141,7 @@ pub trait RafsCache {
         chunk: &dyn RafsChunkInfo,
         src_buf: &'a mut [u8],
         mut dst_buf: &'a mut [u8],
-        digest_validate: bool,
+        digester: Option<digest::Algorithm>,
     ) -> Result<usize> {
         let c_offset = chunk.compress_offset();
         let d_size = chunk.decompress_size() as usize;
@@ -160,11 +161,13 @@ pub trait RafsCache {
             )));
         }
 
-        if digest_validate && !digest_check(dst_buf, &chunk.block_id()) {
-            return Err(eio!(format!(
-                "invalid chunk data, expected digest: {}",
-                chunk.block_id()
-            )));
+        if let Some(digester) = digester {
+            if !digest_check(dst_buf, &chunk.block_id(), digester) {
+                return Err(eio!(format!(
+                    "invalid chunk data, expected digest: {}",
+                    chunk.block_id()
+                )));
+            }
         }
 
         Ok(dst_buf.len())

@@ -3,7 +3,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::borrow::Cow;
-use std::convert::From;
 use std::fmt;
 use std::io::{Error, Result};
 use std::str::FromStr;
@@ -17,8 +16,18 @@ const COMPRESSION_MINIMUM_RATIO: usize = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Algorithm {
-    None = 0,
-    LZ4Block = 1,
+    None = 0x0000,
+    LZ4Block = 0x0001,
+}
+
+impl Into<Algorithm> for u8 {
+    fn into(self) -> Algorithm {
+        match self {
+            0x00 => Algorithm::None,
+            0x01 => Algorithm::LZ4Block,
+            _ => Algorithm::LZ4Block,
+        }
+    }
 }
 
 impl fmt::Display for Algorithm {
@@ -35,15 +44,6 @@ impl FromStr for Algorithm {
             "none" => Ok(Self::None),
             "lz4_block" => Ok(Self::LZ4Block),
             _ => Err(einval!("compression algorithm should be none or lz4_block")),
-        }
-    }
-}
-
-impl From<&u8> for Algorithm {
-    fn from(src: &u8) -> Self {
-        match *src {
-            1 => Self::LZ4Block,
-            _ => Self::None,
         }
     }
 }

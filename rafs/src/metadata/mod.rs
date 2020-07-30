@@ -15,7 +15,7 @@ use std::time::Duration;
 use fuse_rs::abi::linux_abi::Attr;
 use fuse_rs::api::filesystem::Entry;
 
-pub use self::digest::*;
+use self::digest::RafsDigest;
 use self::direct::DirectMapping;
 use self::layout::*;
 use self::noop::NoopInodes;
@@ -74,6 +74,7 @@ pub struct RafsSuperMeta {
     pub root_inode: Inode,
     pub block_size: u32,
     pub inodes_count: u64,
+    // Use u64 as [u8; 8] => [.., digest::Algorithm, compress::Algorithm]
     pub flags: u64,
     pub inode_table_entries: u32,
     pub inode_table_offset: u64,
@@ -89,7 +90,10 @@ pub struct RafsSuperMeta {
 
 impl RafsSuperMeta {
     pub fn get_compressor(&self) -> compress::Algorithm {
-        self.flags.to_be_bytes().last().unwrap().into()
+        self.flags.to_le_bytes()[0].into()
+    }
+    pub fn get_digester(&self) -> digest::Algorithm {
+        self.flags.to_le_bytes()[1].into()
     }
 }
 
@@ -371,11 +375,16 @@ pub trait RafsSuperInodes {
 
     /// Validate child, chunk and symlink digest on inode tree.
     /// The chunk data digest for regular file will only validate on fs read.
-    fn digest_validate(&self, inode: Arc<dyn RafsInode>, recursive: bool) -> Result<bool> {
+    fn digest_validate(
+        &self,
+        inode: Arc<dyn RafsInode>,
+        recursive: bool,
+        digester: digest::Algorithm,
+    ) -> Result<bool> {
         let child_count = inode.get_child_count()?;
 
         let expected_digest = inode.get_digest()?;
-        let mut hasher = RafsDigest::hasher(DigestAlgorithm::Blake3);
+        let mut hasher = RafsDigest::hasher(digester);
 
         if inode.is_symlink() {
             // trace!("\tdigest symlink {}", inode.get_symlink()?);
@@ -386,7 +395,7 @@ pub trait RafsSuperInodes {
                     // trace!("\tdigest child {}", idx);
                     let child = inode.get_child_by_index(idx as u64)?;
                     if (child.is_reg() || child.is_symlink() || (recursive && child.is_dir()))
-                        && !self.digest_validate(child.clone(), recursive)?
+                        && !self.digest_validate(child.clone(), recursive, digester)?
                     {
                         return Ok(false);
                     }

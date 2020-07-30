@@ -171,6 +171,14 @@ fn main() -> Result<()> {
                         .default_value("lz4_block"),
                 )
                 .arg(
+                    Arg::with_name("digester")
+                        .long("digester")
+                        .help("how inode and blob chunk will be digested: blake3 (default), sha256")
+                        .takes_value(true)
+                        .required(false)
+                        .default_value("blake3"),
+                )
+                .arg(
                     Arg::with_name("parent-bootstrap")
                         .long("parent-bootstrap")
                         .help("bootstrap file path of parent (optional)")
@@ -241,6 +249,7 @@ fn main() -> Result<()> {
         }
 
         let compressor = matches.value_of("compressor").unwrap_or_default().parse()?;
+        let digester = matches.value_of("digester").unwrap_or_default().parse()?;
 
         let temp_blob_file = TempFile::new_with_prefix("").unwrap();
 
@@ -273,6 +282,7 @@ fn main() -> Result<()> {
             parent_bootstrap,
             blob_id,
             compressor,
+            digester,
             hint_readahead_files,
             prefetch_policy,
         )?;

@@ -12,6 +12,7 @@ use fuse_rs::api::filesystem::{ZeroCopyReader, ZeroCopyWriter};
 use fuse_rs::transport::FileReadWriteVolatile;
 use vm_memory::{Bytes, VolatileSlice};
 
+use crate::metadata::digest;
 use crate::metadata::layout::OndiskBlobTableEntry;
 use crate::metadata::{RafsChunkInfo, RafsSuperMeta};
 use crate::storage::cache::RafsCache;
@@ -184,6 +185,8 @@ pub struct RafsBio {
     pub blob_id: String,
     /// compression algorithm of chunk
     pub compressor: compress::Algorithm,
+    /// digest algorithm of chunk
+    pub digester: digest::Algorithm,
     /// offset within the chunk
     pub offset: u32,
     /// size within the chunk
@@ -197,6 +200,7 @@ impl RafsBio {
         chunkinfo: Arc<dyn RafsChunkInfo>,
         blob_id: String,
         compressor: compress::Algorithm,
+        digester: digest::Algorithm,
         offset: u32,
         size: usize,
         blksize: u32,
@@ -205,6 +209,7 @@ impl RafsBio {
             chunkinfo,
             blob_id,
             compressor,
+            digester,
             offset,
             size,
             blksize,
