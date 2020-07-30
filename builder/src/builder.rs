@@ -158,6 +158,12 @@ impl Builder {
                 }
                 return true;
             } else if path.starts_with(f) {
+                // Users can specify hinted parent directory with its child files hinted as well.
+                // Only put the parent directory into ondisk prefetch table since a hinted directory's
+                // all child files will be prefetched after mount.
+                if self.hint_readahead_files.get(path).is_some() {
+                    self.hint_readahead_files.remove(path);
+                }
                 return true;
             }
         }
@@ -386,10 +392,10 @@ impl Builder {
         inode_table.store(&mut self.f_bootstrap)?;
 
         if self.ra_policy == ReadaheadPolicy::Fs {
-            self.hint_readahead_files
-                .values()
-                .filter(|_| true)
-                .for_each(|idx| prefetch_table.add_entry(idx.unwrap() as u32));
+            for (p, i) in self.hint_readahead_files.iter() {
+                let i = i.ok_or_else(|| einval!(format!("Path {:?} is not gathered!", p)))?;
+                prefetch_table.add_entry(i as u32);
+            }
             prefetch_table.store(&mut self.f_bootstrap)?;
         }
         blob_table.store(&mut self.f_bootstrap)?;
