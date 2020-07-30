@@ -182,10 +182,7 @@ impl RafsCache for DummyCache {
     fn release(&self) {}
 }
 
-pub fn new(
-    config: &CacheConfig,
-    backend: Arc<dyn BlobBackend + Sync + Send>,
-) -> Result<DummyCache> {
+pub fn new(config: CacheConfig, backend: Arc<dyn BlobBackend + Sync + Send>) -> Result<DummyCache> {
     Ok(DummyCache {
         backend,
         validate: config.cache_validate,

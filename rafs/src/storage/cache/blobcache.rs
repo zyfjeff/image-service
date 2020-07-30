@@ -114,13 +114,13 @@ impl BlobCacheEntry {
 }
 
 #[derive(Default)]
-struct BlocCacheState {
+struct BlobCacheState {
     chunk_map: HashMap<RafsDigest, Arc<Mutex<BlobCacheEntry>>>,
     file_map: HashMap<String, File>,
     work_dir: String,
 }
 
-impl BlocCacheState {
+impl BlobCacheState {
     fn get_blob_fd(&mut self, blob_id: &str) -> Result<RawFd> {
         if let Some(file) = self.file_map.get(blob_id) {
             return Ok(file.as_raw_fd());
@@ -141,7 +141,7 @@ impl BlocCacheState {
 }
 
 pub struct BlobCache {
-    cache: Arc<RwLock<BlocCacheState>>,
+    cache: Arc<RwLock<BlobCacheState>>,
     validate: bool,
     pub backend: Arc<dyn BlobBackend + Sync + Send>,
 }
@@ -418,29 +418,41 @@ impl RafsCache for BlobCache {
     }
 }
 
-pub fn new(config: &CacheConfig, backend: Arc<dyn BlobBackend + Sync + Send>) -> Result<BlobCache> {
-    let config_map = &config.cache_config;
-    let work_dir = config_map
-        .get("work_dir")
-        .map_or(Ok("."), |p| -> Result<&str> {
-            let path = fs::metadata(p).map_err(|e| {
-                last_error!(format!("fail to stat blobcache work_dir {}: {}", p, e))
-            })?;
-            if path.is_dir() {
-                Ok(p.as_str())
-            } else {
-                Err(enoent!(format!(
-                    "blobcache work_dir {} is not a directory",
-                    p
-                )))
-            }
+#[derive(Clone, Deserialize)]
+struct BlobCacheConfig {
+    #[serde(default = "default_work_dir")]
+    work_dir: String,
+}
+
+fn default_work_dir() -> String {
+    ".".to_string()
+}
+
+pub fn new(config: CacheConfig, backend: Arc<dyn BlobBackend + Sync + Send>) -> Result<BlobCache> {
+    let blob_config: BlobCacheConfig =
+        serde_json::from_value(config.cache_config).map_err(|e| einval!(e))?;
+    let work_dir = {
+        let path = fs::metadata(&blob_config.work_dir).map_err(|e| {
+            last_error!(format!(
+                "fail to stat blobcache work_dir {}: {}",
+                blob_config.work_dir, e
+            ))
         })?;
+        if path.is_dir() {
+            Ok(blob_config.work_dir.as_str())
+        } else {
+            Err(enoent!(format!(
+                "blobcache work_dir {} is not a directory",
+                blob_config.work_dir
+            )))
+        }
+    }?;
 
     Ok(BlobCache {
-        cache: Arc::new(RwLock::new(BlocCacheState {
+        cache: Arc::new(RwLock::new(BlobCacheState {
             chunk_map: HashMap::new(),
             file_map: HashMap::new(),
-            work_dir: String::from(work_dir),
+            work_dir: work_dir.to_string(),
         })),
         validate: config.cache_validate,
         backend,
@@ -450,7 +462,6 @@ pub fn new(config: &CacheConfig, backend: Arc<dyn BlobBackend + Sync + Send>) ->
 #[cfg(test)]
 mod blob_cache_tests {
     use std::alloc::{alloc, dealloc, Layout};
-    use std::collections::HashMap;
     use std::io::Result;
     use std::slice::from_raw_parts;
     use std::sync::Arc;
@@ -488,15 +499,14 @@ mod blob_cache_tests {
     #[test]
     fn test_add() {
         // new blob cache
-        let mut config = HashMap::new();
-        config.insert(String::from("work_dir"), String::from("/tmp"));
+        let s = r#"{"work_dir":"/tmp"}"#;
         let cache_config = CacheConfig {
             cache_validate: true,
             cache_type: String::from("blobcache"),
-            cache_config: config,
+            cache_config: serde_json::from_str(s).unwrap(),
         };
         let blob_cache = blobcache::new(
-            &cache_config,
+            cache_config,
             Arc::new(MockBackend {}) as Arc<dyn BlobBackend + Send + Sync>,
         )
         .unwrap();

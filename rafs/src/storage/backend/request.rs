@@ -66,9 +66,9 @@ pub struct Request {
 }
 
 impl Request {
-    pub fn new(proxy: Option<&String>) -> Result<Request> {
+    pub fn new(proxy: &str) -> Result<Request> {
         let mut cb = Client::builder().timeout(None);
-        if let Some(proxy) = proxy {
+        if !proxy.is_empty() {
             cb = cb.proxy(reqwest::Proxy::all(proxy).map_err(|e| einval!(e))?)
         }
 

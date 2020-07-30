@@ -2,11 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::Result;
+
 use url::Url;
 
+use crate::storage::backend::default_http_scheme;
 use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, Request};
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 
@@ -23,6 +24,16 @@ pub struct Registry {
     scheme: String,
     host: String,
     repo: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct RegistryConfig {
+    host: String,
+    repo: String,
+    #[serde(default = "default_http_scheme")]
+    scheme: String,
+    #[serde(default)]
+    proxy: String,
 }
 
 impl Registry {
@@ -65,27 +76,16 @@ impl Registry {
     }
 }
 
-pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Result<Registry> {
-    let host = config
-        .get("host")
-        .map(|s| s.to_owned())
-        .ok_or_else(|| einval!("host required"))?;
-    let repo = config
-        .get("repo")
-        .map(|s| s.to_owned())
-        .ok_or_else(|| einval!("repo required"))?;
-    let scheme = if let Some(scheme) = config.get("scheme") {
-        scheme.to_owned()
-    } else {
-        String::from("https")
-    };
-    let request = Request::new(config.get("proxy"))?;
+pub fn new(registry_config: serde_json::value::Value) -> Result<Registry> {
+    let config: RegistryConfig = serde_json::from_value(registry_config).map_err(|e| einval!(e))?;
+
+    let request = Request::new(&config.proxy)?;
 
     Ok(Registry {
         request,
-        scheme,
-        host,
-        repo,
+        scheme: config.scheme,
+        host: config.host,
+        repo: config.repo,
     })
 }
 

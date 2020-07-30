@@ -287,7 +287,7 @@ fn main() -> Result<()> {
                             e
                         })?,
                     };
-                    let blob_backend = factory::new_uploader(&config).unwrap();
+                    let blob_backend = factory::new_uploader(config).unwrap();
                     upload_blob(blob_backend, blob_id.as_str(), real_blob_path)?;
                 }
             }

@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::Result;
 use std::time::SystemTime;
@@ -11,6 +10,7 @@ use hmac::{Hmac, Mac, NewMac};
 use sha1::Sha1;
 use url::Url;
 
+use crate::storage::backend::default_http_scheme;
 use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, Request};
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 
@@ -29,6 +29,18 @@ pub struct OSS {
     scheme: String,
     endpoint: String,
     bucket_name: String,
+}
+
+#[derive(Clone, Deserialize)]
+struct OssConfig {
+    endpoint: String,
+    access_key_id: String,
+    access_key_secret: String,
+    bucket_name: String,
+    #[serde(default = "default_http_scheme")]
+    scheme: String,
+    #[serde(default)]
+    proxy: String,
 }
 
 impl OSS {
@@ -129,37 +141,17 @@ impl OSS {
     }
 }
 
-pub fn new<S: ::std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Result<OSS> {
-    let endpoint = config
-        .get("endpoint")
-        .map(|s| s.to_owned())
-        .ok_or_else(|| einval!("endpoint required"))?;
-    let access_key_id = config
-        .get("access_key_id")
-        .map(|s| s.to_owned())
-        .ok_or_else(|| einval!("access_key_id required"))?;
-    let access_key_secret = config
-        .get("access_key_secret")
-        .map(|s| s.to_owned())
-        .ok_or_else(|| einval!("access_key_secret required"))?;
-    let bucket_name = config
-        .get("bucket_name")
-        .map(|s| s.to_owned())
-        .ok_or_else(|| einval!("bucket_name required"))?;
+pub fn new(oss_config: serde_json::value::Value) -> Result<OSS> {
+    let config: OssConfig = serde_json::from_value(oss_config).map_err(|e| einval!(e))?;
 
-    let scheme = if let Some(scheme) = config.get("scheme") {
-        scheme.to_owned()
-    } else {
-        String::from("https")
-    };
-    let request = Request::new(config.get("proxy"))?;
+    let request = Request::new(&config.proxy)?;
 
     Ok(OSS {
-        scheme,
-        endpoint,
-        access_key_id,
-        access_key_secret,
-        bucket_name,
+        scheme: config.scheme,
+        endpoint: config.endpoint,
+        access_key_id: config.access_key_id,
+        access_key_secret: config.access_key_secret,
+        bucket_name: config.bucket_name,
         request,
     })
 }

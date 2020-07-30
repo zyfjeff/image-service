@@ -78,3 +78,7 @@ pub trait BlobBackendUploader {
         callback: fn((usize, usize)),
     ) -> Result<usize>;
 }
+
+fn default_http_scheme() -> String {
+    "https".to_string()
+}

@@ -74,7 +74,7 @@ pub fn new(
                     "type": "localfs",
                     "config": {{
                         "dir": {:?},
-                        "readahead": "true"
+                        "readahead": true
                     }}
                 }}
                 {}

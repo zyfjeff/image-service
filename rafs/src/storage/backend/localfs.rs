@@ -45,35 +45,46 @@ pub struct LocalFs {
     file_table: RwLock<HashMap<String, FileTableEntry>>,
 }
 
-pub fn new<S: std::hash::BuildHasher>(config: &HashMap<String, String, S>) -> Result<LocalFs> {
-    let readahead = config
-        .get("readahead")
-        .map(|r| r == "true")
-        .unwrap_or(false);
-    let readahead_sec = config
-        .get("readahead_sec")
-        .map(|n| n.parse().unwrap_or(BLOB_ACCESS_RECORD_SECOND))
-        .unwrap_or(BLOB_ACCESS_RECORD_SECOND);
+#[derive(Clone, Deserialize)]
+struct LocalFsConfig {
+    #[serde(default)]
+    readahead: bool,
+    #[serde(default = "default_readahead_sec")]
+    readahead_sec: u32,
+    #[serde(default)]
+    blob_file: String,
+    #[serde(default)]
+    dir: String,
+}
 
-    match (config.get("blob_file"), config.get("dir")) {
-        (Some(blob_file), _) => Ok(LocalFs {
-            blob_file: String::from(blob_file),
-            readahead,
-            readahead_sec,
-            file_table: RwLock::new(HashMap::new()),
-            ..Default::default()
-        }),
+fn default_readahead_sec() -> u32 {
+    BLOB_ACCESS_RECORD_SECOND
+}
 
-        (_, Some(dir)) => Ok(LocalFs {
-            dir: String::from(dir),
-            readahead,
-            readahead_sec,
-            file_table: RwLock::new(HashMap::new()),
-            ..Default::default()
-        }),
+pub fn new(localfs_config: serde_json::value::Value) -> Result<LocalFs> {
+    let config: LocalFsConfig = serde_json::from_value(localfs_config).map_err(|e| einval!(e))?;
 
-        _ => Err(einval!("blob file or dir is required")),
+    if config.blob_file.is_empty() && config.dir.is_empty() {
+        return Err(einval!("blob file or dir is required"));
     }
+
+    if !config.blob_file.is_empty() {
+        return Ok(LocalFs {
+            blob_file: config.blob_file,
+            readahead: config.readahead,
+            readahead_sec: config.readahead_sec,
+            file_table: RwLock::new(HashMap::new()),
+            ..Default::default()
+        });
+    }
+
+    Ok(LocalFs {
+        dir: config.dir,
+        readahead: config.readahead,
+        readahead_sec: config.readahead_sec,
+        file_table: RwLock::new(HashMap::new()),
+        ..Default::default()
+    })
 }
 
 type AccessLogEntry = (u64, u32, u32);
