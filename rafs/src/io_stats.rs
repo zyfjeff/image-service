@@ -349,8 +349,6 @@ pub fn export_global_stats(name: &Option<String>) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread::sleep;
-    use std::time::Duration;
 
     #[test]
     fn test_block_read_count() {
@@ -373,39 +371,5 @@ mod tests {
 
         g.global_update(StatsFop::Read, 2015520, &Ok(()));
         assert_eq!(g.block_count_read[3].load(Ordering::Relaxed), 2);
-    }
-    #[test]
-    fn test_latency_record() {
-        let g = GlobalIOStats::default();
-        g.init();
-        let start = g.latency_start();
-        sleep(Duration::from_micros(800));
-        g.global_update(StatsFop::Read, 100, &Ok(()));
-        g.latency_end(&start, StatsFop::Read);
-
-        println!("{:?}", g.read_latency_dist);
-        println!("{:?}", g.fop_hits);
-        assert_eq!(g.read_latency_dist[2].load(Ordering::Relaxed), 1);
-
-        let start = g.latency_start();
-        sleep(Duration::from_micros(2000));
-        g.global_update(StatsFop::Read, 100, &Ok(()));
-        g.latency_end(&start, StatsFop::Read);
-
-        assert_eq!(g.read_latency_dist[3].load(Ordering::Relaxed), 1);
-
-        let start = g.latency_start();
-        sleep(Duration::from_micros(10));
-        g.global_update(StatsFop::Read, 100, &Ok(()));
-        g.latency_end(&start, StatsFop::Read);
-
-        assert_eq!(g.read_latency_dist[0].load(Ordering::Relaxed), 1);
-
-        let start = g.latency_start();
-        sleep(Duration::from_micros(1600));
-        g.global_update(StatsFop::Read, 100, &Ok(()));
-        g.latency_end(&start, StatsFop::Read);
-
-        assert_eq!(g.read_latency_dist[3].load(Ordering::Relaxed), 2);
     }
 }
