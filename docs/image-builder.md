@@ -28,11 +28,11 @@ cargo build --release
 
 ./target/release/nydus-image create \
             --blob $BLOB_PATH \
-            --blob_id $BLOB_ID \
+            --blob-id $BLOB_ID \
             --bootstrap $BOOTSTRAP_PATH \
-            --parent_bootstrap $PARENT_BOOTSTRAP_PATH \
-            --backend_type $BACKEND_TYPE \
-            --backend_config $BACKEND_CONFIG \
+            --parent-bootstrap $PARENT_BOOTSTRAP_PATH \
+            --backend-type $BACKEND_TYPE \
+            --backend-config $BACKEND_CONFIG \
             $SOURCE
 ```
 
@@ -41,8 +41,8 @@ For `localfs` backend, it's much simpler as below:
 ```shell
 ./target/release/nydus-image create \
             --bootstrap $BOOTSTRAP_PATH \
-            --backend_type localfs \
-            --backend_config "{\"dir\":\"/path/to/blobs/\"}" \
+            --backend-type localfs \
+            --backend-config "{\"dir\":\"/path/to/blobs/\"}" \
             $SOURCE
 ```
 

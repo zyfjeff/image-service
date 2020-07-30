@@ -220,7 +220,7 @@ impl<'a> Builder<'a> {
 
         let output = exec(
             format!(
-                "{:?} create --bootstrap {:?} --backend_type localfs --backend_config '{{\"dir\": {:?}}}' --log_level trace {} {:?}",
+                "{:?} create --bootstrap {:?} --backend-type localfs --backend-config '{{\"dir\": {:?}}}' --log-level trace {} {:?}",
                 NYDUS_IMAGE,
                 self.work_dir.join("bootstrap-lower"),
                 self.work_dir.join("blobs"),
@@ -239,7 +239,7 @@ impl<'a> Builder<'a> {
 
         let output = exec(
             format!(
-                "{:?} create --parent_bootstrap {:?} --bootstrap {:?} --backend_type localfs --backend_config '{{\"dir\": {:?}}}' --log_level trace {} {:?}",
+                "{:?} create --parent-bootstrap {:?} --bootstrap {:?} --backend-type localfs --backend-config '{{\"dir\": {:?}}}' --log-level trace {} {:?}",
                 NYDUS_IMAGE,
                 self.work_dir.join("bootstrap-lower"),
                 self.work_dir.join("bootstrap-overlay"),

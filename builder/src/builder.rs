@@ -47,14 +47,14 @@ pub struct Builder {
     /// Specify files or directories which need to prefetch. Their inode indexes will
     /// be persist to prefetch table.
     hint_readahead_files: BTreeMap<PathBuf, Option<u64>>,
-    ra_policy: ReadaheadPolicy,
+    prefetch_policy: PrefetchPolicy,
     /// Store all nodes during build, node index of root starting from 1,
     /// so the collection index equal to (node.index - 1).
     nodes: Vec<Node>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ReadaheadPolicy {
+pub enum PrefetchPolicy {
     None,
     /// Readahead will be issued from Fs layer, which leverages inode/chunkinfo to prefetch data
     /// from blob no mather where it resides(OSS/Localfs). Basically, it is willing to cache the
@@ -66,7 +66,7 @@ pub enum ReadaheadPolicy {
     Blob,
 }
 
-impl FromStr for ReadaheadPolicy {
+impl FromStr for PrefetchPolicy {
     type Err = Error;
     fn from_str(s: &str) -> Result<Self> {
         match s {
@@ -88,7 +88,7 @@ impl Builder {
         blob_id: String,
         compressor: compress::Algorithm,
         hint_readahead_files: BTreeMap<PathBuf, Option<u64>>,
-        ra_policy: ReadaheadPolicy,
+        prefetch_policy: PrefetchPolicy,
     ) -> Result<Builder> {
         let f_blob = Box::new(
             OpenOptions::new()
@@ -128,21 +128,21 @@ impl Builder {
             blob_table: OndiskBlobTable::new(),
             readahead_files: BTreeMap::new(),
             hint_readahead_files,
-            ra_policy,
+            prefetch_policy,
             nodes: Vec::new(),
         })
     }
 
     /// Gain file or directory inode indexes which will be put into prefetch table.
     fn need_prefetch(&mut self, path: &PathBuf, index: u64) -> bool {
-        if self.ra_policy == ReadaheadPolicy::None {
+        if self.prefetch_policy == PrefetchPolicy::None {
             return false;
         }
 
         for f in self.hint_readahead_files.keys() {
             // As path is canonicalized, it should be reliable.
             if path.as_os_str() == f.as_os_str() {
-                if self.ra_policy == ReadaheadPolicy::Fs {
+                if self.prefetch_policy == PrefetchPolicy::Fs {
                     if let Some(i) = self.hint_readahead_files.get_mut(path) {
                         *i = Some(index);
                     }
@@ -297,7 +297,7 @@ impl Builder {
         let inode_table_size = inode_table.size();
         let mut prefetch_table_size = 0;
         let mut prefetch_table = PrefetchTable::new();
-        let prefetch_table_entries = if self.ra_policy == ReadaheadPolicy::Fs {
+        let prefetch_table_entries = if self.prefetch_policy == PrefetchPolicy::Fs {
             prefetch_table_size = align_to_rafs(self.hint_readahead_files.len() * size_of::<u32>());
             self.hint_readahead_files.len() as u32
         } else {
@@ -403,7 +403,7 @@ impl Builder {
             self.blob_id = format!("{:x}", blob_hash.finalize());
         }
         if blob_size > 0 {
-            if self.ra_policy != ReadaheadPolicy::Blob {
+            if self.prefetch_policy != PrefetchPolicy::Blob {
                 blob_readahead_size = 0;
             }
             self.blob_table.add(
@@ -422,7 +422,7 @@ impl Builder {
         super_block.store(&mut self.f_bootstrap)?;
         inode_table.store(&mut self.f_bootstrap)?;
 
-        if self.ra_policy == ReadaheadPolicy::Fs {
+        if self.prefetch_policy == PrefetchPolicy::Fs {
             for (p, i) in self.hint_readahead_files.iter() {
                 let i = i.ok_or_else(|| einval!(format!("Path {:?} is not gathered!", p)))?;
                 prefetch_table.add_entry(i as u32);

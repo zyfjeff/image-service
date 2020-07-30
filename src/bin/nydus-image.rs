@@ -157,8 +157,8 @@ fn main() -> Result<()> {
                         .takes_value(true),
                 )
                 .arg(
-                    Arg::with_name("blob_id")
-                        .long("blob_id")
+                    Arg::with_name("blob-id")
+                        .long("blob-id")
                         .help("blob id (as object id in backend)")
                         .takes_value(true),
                 )
@@ -171,36 +171,36 @@ fn main() -> Result<()> {
                         .default_value("lz4_block"),
                 )
                 .arg(
-                    Arg::with_name("parent_bootstrap")
-                        .long("parent_bootstrap")
+                    Arg::with_name("parent-bootstrap")
+                        .long("parent-bootstrap")
                         .help("bootstrap file path of parent (optional)")
                         .takes_value(true)
                         .required(false),
                 )
                 .arg(
-                    Arg::with_name("backend_type")
-                        .long("backend_type")
+                    Arg::with_name("backend-type")
+                        .long("backend-type")
                         .help("blob storage backend type (enable backend upload if specified)")
                         .takes_value(true),
                 )
                 .arg(
-                    Arg::with_name("backend_config")
-                        .long("backend_config")
+                    Arg::with_name("backend-config")
+                        .long("backend-config")
                         .help("blob storage backend config (json)")
                         .takes_value(true),
                 )
                 .arg(
-                    Arg::with_name("ra_policy")
-                        .long("ra_policy")
-                        .help("Readahead policy: fs(issued from Fs layer), blob(issued from backend/blob layer), none(no readahead is needed)")
+                    Arg::with_name("prefetch-policy")
+                        .long("prefetch-policy")
+                        .help("Prefetch policy: fs(issued from Fs layer), blob(issued from backend/blob layer), none(no readahead is needed)")
                         .takes_value(true)
                         .required(false)
                         .default_value("none"),
                 ),
         )
         .arg(
-            Arg::with_name("log_level")
-                .long("log_level")
+            Arg::with_name("log-level")
+                .long("log-level")
                 .default_value("info")
                 .help("Specify log level: trace, debug, info, warn, error")
                 .takes_value(true)
@@ -210,7 +210,7 @@ fn main() -> Result<()> {
         .get_matches();
 
     let v = cmd
-        .value_of("log_level")
+        .value_of("log-level")
         .unwrap()
         .parse()
         .unwrap_or(log::LevelFilter::Warn);
@@ -230,7 +230,7 @@ fn main() -> Result<()> {
             .expect("bootstrap is required");
 
         let mut blob_id = String::new();
-        if let Some(p_blob_id) = matches.value_of("blob_id") {
+        if let Some(p_blob_id) = matches.value_of("blob-id") {
             blob_id = String::from(p_blob_id);
             if blob_id.len() > BLOB_ID_MAXIMUM_LENGTH {
                 return Err(einval!(format!(
@@ -251,13 +251,16 @@ fn main() -> Result<()> {
         };
 
         let mut parent_bootstrap = String::new();
-        if let Some(_parent_bootstrap) = matches.value_of("parent_bootstrap") {
+        if let Some(_parent_bootstrap) = matches.value_of("parent-bootstrap") {
             parent_bootstrap = _parent_bootstrap.to_owned();
         }
 
-        let ra_policy = matches.value_of("ra_policy").unwrap_or_default().parse()?;
+        let prefetch_policy = matches
+            .value_of("prefetch-policy")
+            .unwrap_or_default()
+            .parse()?;
 
-        let hint_readahead_files = if ra_policy != builder::ReadaheadPolicy::None {
+        let hint_readahead_files = if prefetch_policy != builder::PrefetchPolicy::None {
             get_readahead_files(source_path)?
         } else {
             BTreeMap::new()
@@ -271,15 +274,15 @@ fn main() -> Result<()> {
             blob_id,
             compressor,
             hint_readahead_files,
-            ra_policy,
+            prefetch_policy,
         )?;
         let (blob_ids, blob_size) = ib.build()?;
 
         // Upload blob file
         if blob_size > 0 {
             let blob_id = blob_ids.last().unwrap();
-            if let Some(backend_type) = matches.value_of("backend_type") {
-                if let Some(backend_config) = matches.value_of("backend_config") {
+            if let Some(backend_type) = matches.value_of("backend-type") {
+                if let Some(backend_config) = matches.value_of("backend-config") {
                     let config = factory::BackendConfig {
                         backend_type: backend_type.to_owned(),
                         backend_config: serde_json::from_str(backend_config).map_err(|e| {
