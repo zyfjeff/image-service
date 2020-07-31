@@ -34,6 +34,15 @@ pub enum Overlay {
     UpperModification,
 }
 
+impl Overlay {
+    pub fn lower_layer(&self) -> bool {
+        if self == &Overlay::Lower {
+            return true;
+        }
+        false
+    }
+}
+
 impl fmt::Display for Overlay {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {

@@ -135,7 +135,7 @@ impl FilesystemTreeBuilder {
             return Ok(result);
         }
 
-        // Ignore children of the directory included OCISPEC_WHITEOUT_OPAQUE file
+        // Ignore children of the directory including OCISPEC_WHITEOUT_OPAQUE file
         if overlay && parent.path.join(OCISPEC_WHITEOUT_OPAQUE).exists() {
             parent.overlay = Overlay::UpperOpaque;
         }

@@ -36,8 +36,9 @@ pub struct Builder {
     f_parent_bootstrap: Option<Box<dyn RafsIoRead>>,
     /// Blob chunk compress flag.
     compressor: compress::Algorithm,
-    /// Cache node for hardlink, HashMap<real_ino, (index, i_nlink)>.
-    inode_map: HashMap<Inode, (u64, u64)>,
+    /// Cache node index for hardlinks, HashMap<Inode, Vec<index>>.
+    lower_inode_map: HashMap<Inode, Vec<u64>>,
+    upper_inode_map: HashMap<Inode, Vec<u64>>,
     /// Store all chunk digest for chunk deduplicate during build.
     chunk_cache: HashMap<OndiskDigest, OndiskChunkInfo>,
     /// Store all blob id entry during build.
@@ -123,7 +124,8 @@ impl Builder {
             f_bootstrap,
             f_parent_bootstrap,
             compressor,
-            inode_map: HashMap::new(),
+            lower_inode_map: HashMap::new(),
+            upper_inode_map: HashMap::new(),
             chunk_cache: HashMap::new(),
             blob_table: OndiskBlobTable::new(),
             readahead_files: BTreeMap::new(),
@@ -184,23 +186,33 @@ impl Builder {
             child.node.index = index;
             child.node.inode.i_parent = parent_ino;
 
-            // Hardlink node's ino, nlink should be the same
-            if let Some((index, i_nlink)) = self.inode_map.get_mut(&child.node.real_ino) {
-                *i_nlink += 1;
-                child.node.inode.i_ino = *index;
-                child.node.inode.i_nlink = *i_nlink;
-                // Update nlink for first hardlink node
-                nodes[*index as usize - 1].inode.i_nlink = *i_nlink;
+            // Hardlink handle, all hardlink nodes' ino, nlink should be the same,
+            // because the real_ino may be conflicted between different layers,
+            // so we need to find hardlink node index list in the layer where the node is located.
+            let inode_map = if child.node.overlay.lower_layer() {
+                &mut self.lower_inode_map
+            } else {
+                &mut self.upper_inode_map
+            };
+            if let Some(indexes) = inode_map.get_mut(&child.node.real_ino) {
+                indexes.push(index);
+                let first_index = indexes.first().unwrap();
+                let nlink = indexes.len() as u64;
+                child.node.inode.i_ino = *first_index;
+                // Store node for bootstrap & blob dump
+                nodes.push(child.node.clone());
+                // Update nlink for previous hardlink inodes
+                for idx in indexes {
+                    nodes[*idx as usize - 1].inode.i_nlink = nlink;
+                }
             } else {
                 child.node.inode.i_ino = index;
                 child.node.inode.i_nlink = 1;
                 // Store inode real ino
-                self.inode_map
-                    .insert(child.node.real_ino, (child.node.index, 1));
+                inode_map.insert(child.node.real_ino, vec![child.node.index]);
+                // Store node for bootstrap & blob dump
+                nodes.push(child.node.clone());
             }
-
-            // Store node for bootstrap & blob dump
-            nodes.push(child.node.clone());
 
             if self.need_prefetch(&child.node.rootfs(), child.node.inode.i_ino) {
                 self.readahead_files
@@ -269,7 +281,8 @@ impl Builder {
             tree.apply(&node)?;
         }
 
-        self.inode_map.clear();
+        self.lower_inode_map.clear();
+        self.upper_inode_map.clear();
         self.build_rafs_wrap(&mut tree)?;
 
         // Reuse lower layer blob table,
@@ -317,7 +330,7 @@ impl Builder {
 
         // Super block
         let mut super_block = OndiskSuperBlock::new();
-        let inodes_count = self.inode_map.len() as u64;
+        let inodes_count = (self.lower_inode_map.len() + self.upper_inode_map.len()) as u64;
         super_block.set_inodes_count(inodes_count);
         super_block.set_inode_table_offset(super_block_size as u64);
         super_block.set_inode_table_entries(inode_table_entries);
