@@ -242,9 +242,9 @@ fn main() -> Result<()> {
 
         let compressor = matches.value_of("compressor").unwrap_or_default().parse()?;
 
-        let temp_blob_file = TempFile::new().unwrap();
+        let temp_blob_file = TempFile::new_with_prefix("").unwrap();
 
-        let real_blob_path = if let Some(blob_path) = blob_path {
+        let mut real_blob_path = if let Some(blob_path) = blob_path {
             blob_path
         } else {
             temp_blob_file.as_path().to_str().unwrap()
@@ -298,11 +298,13 @@ fn main() -> Result<()> {
             }
             // blob not uploaded to backend, let's save it to local file system
             if !uploaded && real_blob_path == temp_blob_file.as_path().to_str().unwrap() {
+                trace!("rename {} to {}", real_blob_path, blob_id);
                 rename(real_blob_path, blob_id)?;
+                real_blob_path = blob_id;
             }
         }
 
-        if blob_path.is_some() && blob_size > 0 {
+        if blob_size > 0 {
             info!(
                 "build finished, blob id: {:?}, blob file: {}",
                 blob_ids, real_blob_path
