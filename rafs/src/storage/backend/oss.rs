@@ -4,15 +4,17 @@
 
 use std::fs::File;
 use std::io::Result;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use hmac::{Hmac, Mac, NewMac};
+use reqwest::{Method, StatusCode};
 use sha1::Sha1;
 use url::Url;
 
 use crate::storage::backend::default_http_scheme;
 use crate::storage::backend::request::{HeaderMap, Progress, ReqBody, Request};
-use crate::storage::backend::{BlobBackend, BlobBackendUploader};
+use crate::storage::backend::{BlobBackend, BlobBackendUploader, CommonConfig};
 
 use nydus_utils::{einval, epipe};
 
@@ -23,12 +25,14 @@ type HmacSha1 = Hmac<Sha1>;
 
 #[derive(Debug)]
 pub struct OSS {
-    request: Request,
+    request: Arc<Request>,
     access_key_id: String,
     access_key_secret: String,
     scheme: String,
     endpoint: String,
     bucket_name: String,
+    force_upload: bool,
+    retry_limit: u8,
 }
 
 #[derive(Clone, Deserialize)]
@@ -39,15 +43,13 @@ struct OssConfig {
     bucket_name: String,
     #[serde(default = "default_http_scheme")]
     scheme: String,
-    #[serde(default)]
-    proxy: String,
 }
 
 impl OSS {
     /// generate oss request signature
     fn sign(
         &self,
-        verb: &str,
+        verb: Method,
         mut headers: HeaderMap,
         canonicalized_resource: &str,
     ) -> Result<HeaderMap> {
@@ -58,7 +60,7 @@ impl OSS {
         let date = httpdate::fmt_http_date(SystemTime::now());
 
         let mut data = vec![
-            verb,
+            verb.as_str(),
             content_md5,
             content_type,
             date.as_str(),
@@ -127,24 +129,42 @@ impl OSS {
 
     #[allow(dead_code)]
     fn create_bucket(&self) -> Result<()> {
-        let method = "PUT";
         let query = &[];
         let (resource, url) = self.url("", query)?;
-        let headers = self.sign(method, HeaderMap::new(), resource.as_str())?;
+        let headers = self.sign(Method::PUT, HeaderMap::new(), resource.as_str())?;
 
         // Safe because the the call() is a synchronous operation.
-        let data = unsafe { ReqBody::from_static_slice(b"") };
         self.request
-            .call::<&[u8]>(method, url.as_str(), data, headers)?;
+            .call::<&[u8]>(Method::PUT, url.as_str(), None, headers, true)?;
 
         Ok(())
     }
+
+    fn blob_exists(&self, blob_id: &str) -> Result<bool> {
+        let (resource, url) = self.url(blob_id, &[])?;
+        let headers = HeaderMap::new();
+        let headers = self.sign(Method::HEAD, headers, resource.as_str())?;
+
+        let resp = self
+            .request
+            .call::<&[u8]>(Method::HEAD, url.as_str(), None, headers, false)?;
+
+        if resp.status() == StatusCode::OK {
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
 }
 
-pub fn new(oss_config: serde_json::value::Value) -> Result<OSS> {
-    let config: OssConfig = serde_json::from_value(oss_config).map_err(|e| einval!(e))?;
+pub fn new(config: serde_json::value::Value) -> Result<OSS> {
+    let common_config: CommonConfig =
+        serde_json::from_value(config.clone()).map_err(|e| einval!(e))?;
+    let force_upload = common_config.force_upload;
+    let retry_limit = common_config.retry_limit;
+    let request = Request::new(common_config)?;
 
-    let request = Request::new(&config.proxy)?;
+    let config: OssConfig = serde_json::from_value(config).map_err(|e| einval!(e))?;
 
     Ok(OSS {
         scheme: config.scheme,
@@ -153,13 +173,19 @@ pub fn new(oss_config: serde_json::value::Value) -> Result<OSS> {
         access_key_secret: config.access_key_secret,
         bucket_name: config.bucket_name,
         request,
+        force_upload,
+        retry_limit,
     })
 }
 
 impl BlobBackend for OSS {
+    #[inline]
+    fn retry_limit(&self) -> u8 {
+        self.retry_limit
+    }
+
     /// read ranged data from oss object
-    fn read(&self, blob_id: &str, mut buf: &mut [u8], offset: u64) -> Result<usize> {
-        let method = "GET";
+    fn try_read(&self, blob_id: &str, mut buf: &mut [u8], offset: u64) -> Result<usize> {
         let query = &[];
         let (resource, url) = self.url(blob_id, query)?;
 
@@ -167,14 +193,13 @@ impl BlobBackend for OSS {
         let end_at = offset + buf.len() as u64 - 1;
         let range = format!("bytes={}-{}", offset, end_at);
         headers.insert("Range", range.as_str().parse().map_err(|e| einval!(e))?);
-        let headers = self.sign(method, headers, resource.as_str())?;
+        let headers = self.sign(Method::GET, headers, resource.as_str())?;
 
         // Safe because the the call() is a synchronous operation.
-        let data = unsafe { ReqBody::from_static_slice(b"") };
         let mut resp = self
             .request
-            .call::<&[u8]>(method, url.as_str(), data, headers)
-            .map_err(|e| einval!(format!("oss req failed {:?}", e)))?;
+            .call::<&[u8]>(Method::GET, url.as_str(), None, headers, true)
+            .map_err(|e| epipe!(format!("oss req failed {:?}", e)))?;
 
         resp.copy_to(&mut buf)
             .map_err(|err| epipe!(format!("oss read failed {:?}", err)))
@@ -183,16 +208,14 @@ impl BlobBackend for OSS {
 
     /// append data to oss object
     fn write(&self, blob_id: &str, buf: &[u8], offset: u64) -> Result<usize> {
-        let method = "POST";
         let position = format!("position={}", offset);
         let query = &["append", position.as_str()];
         let (resource, url) = self.url(blob_id, query)?;
-        let headers = self.sign(method, HeaderMap::new(), resource.as_str())?;
+        let headers = self.sign(Method::POST, HeaderMap::new(), resource.as_str())?;
 
         // Safe because the the call() is a synchronous operation.
-        let data = unsafe { ReqBody::from_static_slice(buf) };
         self.request
-            .call::<&[u8]>(method, url.as_str(), data, headers)?;
+            .call::<&[u8]>(Method::POST, url.as_str(), None, headers, true)?;
 
         Ok(buf.len())
     }
@@ -208,15 +231,23 @@ impl BlobBackendUploader for OSS {
         size: usize,
         callback: fn((usize, usize)),
     ) -> Result<usize> {
-        let method = "PUT";
+        if !self.force_upload && self.blob_exists(blob_id)? {
+            return Ok(0);
+        }
+
         let query = &[];
         let (resource, url) = self.url(blob_id, query)?;
-        let headers = self.sign(method, HeaderMap::new(), resource.as_str())?;
+        let headers = self.sign(Method::PUT, HeaderMap::new(), resource.as_str())?;
 
         let body = Progress::new(file, size, callback);
 
-        self.request
-            .call(method, url.as_str(), ReqBody::Read(body, size), headers)?;
+        self.request.call(
+            Method::PUT,
+            url.as_str(),
+            Some(ReqBody::Read(body, size)),
+            headers,
+            true,
+        )?;
 
         Ok(size as usize)
     }

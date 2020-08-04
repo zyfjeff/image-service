@@ -20,7 +20,7 @@ use sha2::digest::Digest;
 use sha2::Sha256;
 
 use nydus_utils::div_round_up;
-use nydus_utils::einval;
+use nydus_utils::{einval, last_error};
 
 use rafs::metadata::digest::{self, RafsDigest};
 use rafs::metadata::layout::*;
@@ -169,7 +169,7 @@ impl Node {
         let file_size = self.inode.i_size;
         let mut blob_size = 0usize;
         let mut inode_hasher = RafsDigest::hasher(digester);
-        let mut file = File::open(&self.path)?;
+        let mut file = File::open(&self.path).map_err(|e| last_error!(e))?;
 
         for i in 0..self.inode.i_child_count {
             // Init chunk info

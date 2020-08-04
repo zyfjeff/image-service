@@ -35,9 +35,13 @@ oss backend with blobcache:
   },
   "mode": "direct",
   "digest_validate": false,
-  "iostats_files": false,
-  "fs_prefetch": false,
-  "enable_xattr": false
+  "iostats_files": true,
+  "enable_xattr": false,
+  "fs_prefetch": {
+    "enable": false,
+    "threads_count": 10,
+    "merging_size": 131072 // 128KB
+  }
 }
 ```
 
@@ -48,13 +52,15 @@ registry backend:
     "backend": {
       "type": "registry",
       "config": {
-        "host": "user:pass@my-registry:5000",
-        "repo": ""
+        "scheme": "https",
+        "host": "my-registry:5000",
+        "repo": "test/repo",
+        "auth": "<base64_encoded_auth>",
+        "blob_url_scheme": "http"
       }
     }
   },
-  "mode": "direct",
-  "digest_validate": false
+  ...
 }
 ```
 
@@ -72,8 +78,31 @@ localfs backend:
     },
     "cache": {}
   },
-  "mode": "direct",
-  "digest_validate": false
+  ...
+}
+```
+
+Also backend config support some common fields like:
+
+```
+{
+  "device": {
+    "backend": {
+      "type": "...",
+      "config": {
+        ...
+        "proxy": "http://p2p-proxy:65001",
+        "proxy_fallback": true,
+        "proxy_ping_url": "http://p2p-proxy:40901/server/ping",
+        "proxy_check_interval": 5,
+        "timeout": 5,
+        "connect_timeout": 5,
+        "retry_limit": 0
+      }
+    },
+    "cache": {}
+  },
+  ...
 }
 ```
 

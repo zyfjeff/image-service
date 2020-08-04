@@ -65,7 +65,12 @@ pub fn new_backend(config: BackendConfig) -> Result<Arc<dyn BlobBackend + Send +
     }
 }
 
-pub fn new_uploader(config: BackendConfig) -> Result<Arc<dyn BlobBackendUploader<Reader = File>>> {
+pub fn new_uploader(
+    mut config: BackendConfig,
+) -> Result<Arc<dyn BlobBackendUploader<Reader = File>>> {
+    // Disable http timeout for upload request
+    config.backend_config["connect_timeout"] = 0.into();
+    config.backend_config["timeout"] = 0.into();
     match config.backend_type.as_str() {
         #[cfg(feature = "backend-oss")]
         "oss" => {

@@ -7,8 +7,8 @@ use std::io::{Read, Result};
 use vm_memory::VolatileSlice;
 
 use crate::storage::utils::copyv;
+use nydus_utils::eio;
 
-pub mod dummy;
 #[cfg(feature = "backend-localfs")]
 pub mod localfs;
 #[cfg(feature = "backend-oss")]
@@ -17,6 +17,48 @@ pub mod oss;
 pub mod registry;
 #[cfg(any(feature = "backend-oss", feature = "backend-registry"))]
 pub mod request;
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ProxyConfig {
+    url: String,
+    ping_url: String,
+    fallback: bool,
+    check_interval: u64,
+}
+
+impl Default for ProxyConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            ping_url: String::new(),
+            fallback: true,
+            check_interval: 5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct CommonConfig {
+    proxy: ProxyConfig,
+    timeout: u64,
+    connect_timeout: u64,
+    force_upload: bool,
+    retry_limit: u8,
+}
+
+impl Default for CommonConfig {
+    fn default() -> Self {
+        Self {
+            proxy: ProxyConfig::default(),
+            timeout: 5,
+            connect_timeout: 5,
+            force_upload: false,
+            retry_limit: 0,
+        }
+    }
+}
 
 /// Rafs blob backend API
 pub trait BlobBackend {
@@ -32,8 +74,37 @@ pub trait BlobBackend {
         Ok(())
     }
 
+    #[inline]
+    fn retry_limit(&self) -> u8 {
+        0
+    }
+
     /// Read a range of data from blob into the provided slice
-    fn read(&self, blob_id: &str, buf: &mut [u8], offset: u64) -> Result<usize>;
+    fn read(&self, blob_id: &str, buf: &mut [u8], offset: u64) -> Result<usize> {
+        let mut retry_count = self.retry_limit();
+        loop {
+            let ret = self.try_read(blob_id, buf, offset);
+            match ret {
+                Ok(size) => {
+                    return Ok(size);
+                }
+                Err(err) => {
+                    if retry_count > 0 {
+                        warn!(
+                            "Read from backend failed: {}, retry count {}",
+                            err, retry_count
+                        );
+                        retry_count -= 1;
+                    } else {
+                        break Err(eio!(format!("Read from backend failed: {}", err)));
+                    }
+                }
+            }
+        }
+    }
+
+    /// Read a range of data from blob into the provided slice
+    fn try_read(&self, blob_id: &str, buf: &mut [u8], offset: u64) -> Result<usize>;
 
     /// Read mutilple range of data from blob into the provided slices
     fn readv(

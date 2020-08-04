@@ -17,7 +17,7 @@ use vm_memory::VolatileSlice;
 use crate::storage::backend::{BlobBackend, BlobBackendUploader};
 use crate::storage::utils::{readahead, readv};
 
-use nydus_utils::{ebadf, einval, eio, last_error};
+use nydus_utils::{ebadf, einval, eio, enoent, last_error};
 use nydus_utils::{round_down_4k, round_up_4k};
 
 const BLOB_ACCESSED_SUFFIX: &str = ".access";
@@ -61,8 +61,8 @@ fn default_readahead_sec() -> u32 {
     BLOB_ACCESS_RECORD_SECOND
 }
 
-pub fn new(localfs_config: serde_json::value::Value) -> Result<LocalFs> {
-    let config: LocalFsConfig = serde_json::from_value(localfs_config).map_err(|e| einval!(e))?;
+pub fn new(config: serde_json::value::Value) -> Result<LocalFs> {
+    let config: LocalFsConfig = serde_json::from_value(config).map_err(|e| einval!(e))?;
 
     if config.blob_file.is_empty() && config.dir.is_empty() {
         return Err(einval!("blob file or dir is required"));
@@ -369,7 +369,7 @@ impl BlobBackend for LocalFs {
 
         let _ = self
             .get_blob_fd(blob_id, 0, 0)
-            .map_err(|e| einval!(format!("failed to find blob {}: {}", blob_id, e)))?;
+            .map_err(|e| enoent!(format!("failed to find blob {}: {}", blob_id, e)))?;
         // Do not expect get failure as we just added it above in get_blob_fd
         let blob_file = self
             .file_table
@@ -446,7 +446,7 @@ impl BlobBackend for LocalFs {
         Ok(())
     }
 
-    fn read(&self, blob_id: &str, buf: &mut [u8], offset: u64) -> Result<usize> {
+    fn try_read(&self, blob_id: &str, buf: &mut [u8], offset: u64) -> Result<usize> {
         let fd = self.get_blob_fd(blob_id, offset, buf.len())?;
 
         debug!(

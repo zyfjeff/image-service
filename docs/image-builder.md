@@ -18,13 +18,13 @@ cargo build --release
 ## Build nydus image from source
 
 ```shell
-# $BLOB_PATH: blob file path, optional
-# $BLOB_ID: blob id for storage backend
-# $BOOTSTRAP_PATH: bootstrap file path
+# $BLOB_PATH: output blob file path, optional
+# $BLOB_ID: blob id for storage backend, optional
+# $BOOTSTRAP_PATH: output bootstrap file path
 # $PARENT_BOOTSTRAP_PATH: parent bootstrap file path, optional
-# $SOURCE: rootfs source directory
-# $BACKEND_TYPE: oss|registry|localfs
-# $BACKEND_CONFIG: JSON string
+# $SOURCE: rootfs source directory path
+# $BACKEND_TYPE: oss | registry | localfs, optional
+# $BACKEND_CONFIG: JSON string of backend config, optional
 
 ./target/release/nydus-image create \
             --blob $BLOB_PATH \
@@ -57,5 +57,5 @@ oss backend,
 registry backend,
 
 ```shell
---backend_config '{"host":"user:pass@registry:5000","repo":""}'
+--backend_config '{"scheme":"https","host":"my-registry:5000","repo":"test/repo","auth":"<base64_encoded_auth>"}'
 ```
