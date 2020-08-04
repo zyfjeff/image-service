@@ -15,7 +15,7 @@ use clap::{App, Arg, SubCommand};
 use vmm_sys_util::tempfile::TempFile;
 
 use std::collections::BTreeMap;
-use std::fs::{File, OpenOptions};
+use std::fs::{rename, File, OpenOptions};
 use std::io::{self, Result, Write};
 use std::os::linux::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -281,6 +281,7 @@ fn main() -> Result<()> {
         // Upload blob file
         if blob_size > 0 {
             let blob_id = blob_ids.last().unwrap();
+            let mut uploaded = false;
             if let Some(backend_type) = matches.value_of("backend-type") {
                 if let Some(backend_config) = matches.value_of("backend-config") {
                     let config = factory::BackendConfig {
@@ -292,7 +293,12 @@ fn main() -> Result<()> {
                     };
                     let blob_backend = factory::new_uploader(config).unwrap();
                     upload_blob(blob_backend, blob_id.as_str(), real_blob_path)?;
+                    uploaded = true;
                 }
+            }
+            // blob not uploaded to backend, let's save it to local file system
+            if !uploaded && real_blob_path == temp_blob_file.as_path().to_str().unwrap() {
+                rename(real_blob_path, blob_id)?;
             }
         }
 
