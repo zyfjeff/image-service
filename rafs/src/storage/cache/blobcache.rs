@@ -434,12 +434,17 @@ pub fn new(config: CacheConfig, backend: Arc<dyn BlobBackend + Sync + Send>) -> 
     let blob_config: BlobCacheConfig =
         serde_json::from_value(config.cache_config).map_err(|e| einval!(e))?;
     let work_dir = {
-        let path = fs::metadata(&blob_config.work_dir).map_err(|e| {
-            last_error!(format!(
-                "fail to stat blobcache work_dir {}: {}",
-                blob_config.work_dir, e
-            ))
-        })?;
+        let path = fs::metadata(&blob_config.work_dir)
+            .or_else(|_| {
+                fs::create_dir_all(&blob_config.work_dir)?;
+                fs::metadata(&blob_config.work_dir)
+            })
+            .map_err(|e| {
+                last_error!(format!(
+                    "fail to stat blobcache work_dir {}: {}",
+                    blob_config.work_dir, e
+                ))
+            })?;
         if path.is_dir() {
             Ok(blob_config.work_dir.as_str())
         } else {
@@ -510,7 +515,7 @@ mod blob_cache_tests {
             "work_dir": {:?}
         }}
         "###,
-            tmp_dir.as_path().to_path_buf(),
+            tmp_dir.as_path().to_path_buf().join("cache"),
         );
 
         let cache_config = CacheConfig {
