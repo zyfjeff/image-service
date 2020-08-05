@@ -11,7 +11,6 @@ use std::thread;
 
 use nix::sys::uio;
 extern crate spmc;
-use nix::unistd::lseek;
 use vm_memory::VolatileSlice;
 
 use crate::metadata::layout::OndiskBlobTableEntry;
@@ -51,8 +50,7 @@ impl BlobCacheEntry {
         let d_offset = self.chunk.decompress_offset() as i64;
         let d_size = self.chunk.decompress_size();
 
-        let data_offset =
-            lseek(self.fd, d_offset, nix::unistd::Whence::SeekData).map_err(|_| last_error!())?;
+        let data_offset = unsafe { libc::lseek(self.fd, d_offset, libc::SEEK_DATA) };
 
         // The seek data offset should be equal to d_offset if the cache ready.
         if data_offset != d_offset {
