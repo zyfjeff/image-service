@@ -194,7 +194,7 @@ impl EventSubscriber for NydusDaemonSubscriber {
             EventSet::HANG_UP => {
                 event_ops
                     .remove(events)
-                    .unwrap_or_else(|_| error!("Encountered error during cleanup"));
+                    .unwrap_or_else(|e| error!("Encountered error during cleanup, {}", e));
             }
             _ => {}
         }
@@ -241,7 +241,7 @@ impl EventSubscriber for ApiSeverSubscriber {
             EventSet::IN => {
                 self.server
                     .process_request(&self.api_receiver, self.mounter, &self.rafs_conf, &self.vfs)
-                    .unwrap_or_else(|_| error!("API server process events failed."));
+                    .unwrap_or_else(|e| error!("API server process events failed, {}", e));
             }
             EventSet::ERROR => {
                 error!("Got error on the monitored event.");
@@ -249,7 +249,7 @@ impl EventSubscriber for ApiSeverSubscriber {
             EventSet::HANG_UP => {
                 event_ops
                     .remove(events)
-                    .unwrap_or_else(|_| error!("Encountered error during cleanup"));
+                    .unwrap_or_else(|e| error!("Encountered error during cleanup, {}", e));
             }
             _ => {}
         }
@@ -691,7 +691,7 @@ extern "C" fn sig_exit(_sig: std::os::raw::c_int) {
             .as_ref()
             .unwrap()
             .write(1)
-            .unwrap_or_else(|_| error!("Write event fd failed."))
+            .unwrap_or_else(|e| error!("Write event fd failed, {}", e))
     }
 }
 
