@@ -519,7 +519,12 @@ impl RafsInode for OndiskInodeWrapper {
             return Err(einval!("inode is not a directory"));
         }
 
-        let mut first = 0 as i32;
+        let mut first = 0i32;
+
+        if inode.i_child_count == 0 {
+            return Err(enoent!());
+        }
+
         let mut last = (inode.i_child_count - 1) as i32;
 
         // Binary search by child name.
