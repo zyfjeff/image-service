@@ -184,7 +184,8 @@ impl Builder {
 
         // Sort children list by name,
         // so that we can improve performance in fs read_dir using binary search.
-        tree.children.sort_by_key(|child| child.node.name());
+        tree.children
+            .sort_by_key(|child| child.node.name().to_os_string());
 
         for child in tree.children.iter_mut() {
             let index = nodes.len() as u64 + 1;

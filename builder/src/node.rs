@@ -6,14 +6,15 @@
 
 use rafs::RafsIoWriter;
 use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::{self, File};
 use std::io::prelude::*;
 use std::io::Result;
 use std::os::linux::fs::MetadataExt;
+use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 use std::str;
-use std::str::FromStr;
 
 use sha2::digest::Digest;
 use sha2::Sha256;
@@ -25,6 +26,8 @@ use rafs::metadata::digest::{self, RafsDigest};
 use rafs::metadata::layout::*;
 use rafs::metadata::*;
 use rafs::storage::compress;
+
+const ROOT_PATH_NAME: &[u8] = &[b'/'];
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Overlay {
@@ -242,7 +245,7 @@ impl Node {
         // Dump inode info
         let name = self.name();
         let inode = OndiskInodeWrapper {
-            name: name.as_str(),
+            name,
             symlink: self.symlink.as_deref(),
             inode: &self.inode,
         };
@@ -356,25 +359,21 @@ impl Node {
         file_type
     }
 
-    pub fn name(&self) -> String {
-        if self.path == PathBuf::from_str("/").unwrap() || self.path == self.source {
-            return String::from("/");
+    pub fn name(&self) -> &OsStr {
+        if self.path == self.source {
+            OsStr::from_bytes(ROOT_PATH_NAME)
+        } else {
+            self.path.file_name().unwrap()
         }
-        self.path
-            .file_name()
-            .unwrap()
-            .to_owned()
-            .into_string()
-            .unwrap()
     }
 
-    pub fn path_vec(&self) -> Vec<String> {
+    pub fn path_vec(&self) -> Vec<OsString> {
         self.rootfs()
             .components()
             .map(|comp| match comp {
-                Component::RootDir => String::from("/"),
-                Component::Normal(name) => String::from(name.to_str().unwrap()),
-                _ => String::new(),
+                Component::RootDir => OsString::from("/"),
+                Component::Normal(name) => name.to_os_string(),
+                _ => OsString::new(),
             })
             .collect::<Vec<_>>()
     }

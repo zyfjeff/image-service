@@ -32,8 +32,10 @@
 
 use std::convert::TryFrom;
 use std::convert::TryInto;
+use std::ffi::OsStr;
 use std::io::{Error, Result};
 use std::mem::size_of;
+use std::os::unix::ffi::OsStrExt;
 
 use nydus_utils::{einval, enoent};
 
@@ -654,7 +656,7 @@ impl OndiskInode {
 }
 
 pub struct OndiskInodeWrapper<'a> {
-    pub name: &'a str,
+    pub name: &'a OsStr,
     pub symlink: Option<&'a str>,
     pub inode: &'a OndiskInode,
 }

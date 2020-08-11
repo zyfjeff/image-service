@@ -162,11 +162,14 @@ impl FilesystemTreeBuilder {
                     continue;
                 }
                 // Handle whiteout file
-                if name.starts_with(OCISPEC_WHITEOUT_PREFIX) {
-                    child_tree.node.path = parent.path.join(&name[OCISPEC_WHITEOUT_PREFIX.len()..]);
-                    child_tree.node.overlay = Overlay::UpperRemoval;
-                    result.insert(0, child_tree);
-                    continue;
+                if let Some(n) = name.to_str() {
+                    if n.starts_with(OCISPEC_WHITEOUT_PREFIX) {
+                        child_tree.node.path =
+                            parent.path.join(&n[OCISPEC_WHITEOUT_PREFIX.len()..]);
+                        child_tree.node.overlay = Overlay::UpperRemoval;
+                        result.insert(0, child_tree);
+                        continue;
+                    }
                 }
             }
 
