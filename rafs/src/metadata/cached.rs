@@ -9,6 +9,7 @@
 //! file system. And currently the cache layer only supports readonly file systems.
 use std::cmp;
 use std::collections::{BTreeMap, HashMap};
+use std::ffi::{OsStr, OsString};
 use std::io::{ErrorKind, Read, Result};
 use std::sync::Arc;
 
@@ -150,7 +151,7 @@ impl RafsSuperInodes for CachedInodes {
 #[derive(Default, Clone, Debug)]
 pub struct CachedInode {
     i_ino: Inode,
-    i_name: String,
+    i_name: OsString,
     i_digest: RafsDigest,
     i_parent: u64,
     i_mode: u32,
@@ -186,7 +187,7 @@ impl CachedInode {
         if name_size > 0 {
             let mut name_buf = vec![0u8; name_size];
             r.read_exact(name_buf.as_mut_slice())?;
-            self.i_name = parse_string(&name_buf)?.0.to_string();
+            self.i_name = parse_file_name(&name_buf).to_os_string();
         }
         Ok(())
     }
@@ -275,7 +276,7 @@ impl RafsInode for CachedInode {
         Ok(())
     }
 
-    fn name(&self) -> Result<String> {
+    fn name(&self) -> Result<OsString> {
         Ok(self.i_name.clone())
     }
 
@@ -287,10 +288,10 @@ impl RafsInode for CachedInode {
         }
     }
 
-    fn get_child_by_name(&self, name: &str) -> Result<Arc<dyn RafsInode>> {
+    fn get_child_by_name(&self, name: &OsStr) -> Result<Arc<dyn RafsInode>> {
         let idx = self
             .i_child
-            .binary_search_by(|c| c.i_name.cmp(&name.to_string()))
+            .binary_search_by(|c| c.i_name.as_os_str().cmp(name))
             .map_err(|_| enoent!())?;
         Ok(self.i_child[idx].clone())
     }
@@ -367,7 +368,7 @@ impl RafsInode for CachedInode {
         let end = cmp::min(offset + size as u64, self.i_size);
         let blksize = self.i_blksize;
 
-        trace!("inode {} offset:{} size:{}", self.i_name, offset, size);
+        trace!("inode {:?} offset:{} size:{}", self.i_name, offset, size);
         for blk in self.i_data.iter() {
             if (blk.file_offset() + blksize as u64) <= offset {
                 continue;
@@ -424,7 +425,7 @@ impl RafsInode for CachedInode {
 
         for child_inode in &self.i_child {
             if child_inode.is_dir() {
-                trace!("Got dir {}", child_inode.name().unwrap());
+                trace!("Got dir {:?}", child_inode.name().unwrap());
                 child_inode.collect_descendants_inodes(descendants)?;
             } else {
                 descendants.push(child_inode.clone());

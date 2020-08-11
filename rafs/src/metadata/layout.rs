@@ -901,7 +901,11 @@ pub fn parse_string(buf: &[u8]) -> Result<(&str, &str)> {
                 (origin, "")
             }
         })
-        .map_err(|_| einval!("failed to parse string"))
+        .map_err(|e| einval!(format!("failed in parsing string, {:?}", e)))
+}
+
+pub fn parse_file_name(buf: &[u8]) -> &OsStr {
+    OsStr::from_bytes(buf)
 }
 
 /// Parse a 'buf' to xattr pair then callback.

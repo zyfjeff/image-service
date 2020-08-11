@@ -363,6 +363,7 @@ impl Node {
         if self.path == self.source {
             OsStr::from_bytes(ROOT_PATH_NAME)
         } else {
+            // Safe to unwrap because `path` should be returned from `path()` which is canonicalized
             self.path.file_name().unwrap()
         }
     }

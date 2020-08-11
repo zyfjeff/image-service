@@ -6,6 +6,7 @@
 //! Structs and Traits for RAFS file system meta data management.
 
 use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{Error, Result, Seek, SeekFrom};
 use std::str::FromStr;
@@ -416,7 +417,7 @@ pub trait RafsSuperInodes {
         let result = expected_digest == digest;
         if !result {
             error!(
-                "invalid inode digest {}, ino: {} name: {}",
+                "invalid inode digest {}, ino: {} name: {:?}",
                 digest,
                 inode.ino(),
                 inode.name()?
@@ -434,10 +435,10 @@ pub trait RafsInode {
     /// must validate it before accessing any fields of the object.
     fn validate(&self) -> Result<()>;
 
-    fn name(&self) -> Result<String>;
+    fn name(&self) -> Result<OsString>;
     fn get_symlink(&self) -> Result<String>;
     fn get_digest(&self) -> Result<RafsDigest>;
-    fn get_child_by_name(&self, name: &str) -> Result<Arc<dyn RafsInode>>;
+    fn get_child_by_name(&self, name: &OsStr) -> Result<Arc<dyn RafsInode>>;
     fn get_child_by_index(&self, idx: Inode) -> Result<Arc<dyn RafsInode>>;
     fn get_child_index(&self) -> Result<u32>;
     fn get_child_count(&self) -> Result<u32>;

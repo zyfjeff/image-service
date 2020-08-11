@@ -8,8 +8,10 @@
 
 use std::any::Any;
 use std::ffi::CStr;
+use std::ffi::OsStr;
 use std::fmt;
 use std::io::Result;
+use std::os::unix::ffi::OsStrExt;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -27,7 +29,7 @@ use crate::storage::device;
 use crate::storage::*;
 use crate::*;
 
-use nydus_utils::{eacces, ealready, ebadf, einval, enoent, eother};
+use nydus_utils::{eacces, ealready, einval, enoent, eother};
 
 /// Type of RAFS fuse handle.
 pub type Handle = u64;
@@ -228,7 +230,7 @@ impl Rafs {
     }
 
     fn lookup_wrapped(&self, ino: u64, name: &CStr) -> Result<Entry> {
-        let target = name.to_str().map_err(|_| ebadf!("failed to get name"))?;
+        let target = OsStr::from_bytes(name.to_bytes());
         let parent = self.sb.get_inode(ino, self.digest_validate)?;
         if !parent.is_dir() {
             return Err(err_not_directory!());

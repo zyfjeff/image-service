@@ -17,6 +17,7 @@
 /// The bootstrap file may be provided by untrusted parties, so we must ensure strong validations
 /// before making use of any bootstrap, especially we are using them in memory-mapped mode. The
 /// rule is to call validate() after creating any data structure from the on-disk bootstrap.
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Result;
 use std::mem::{size_of, ManuallyDrop};
@@ -375,14 +376,14 @@ impl OndiskInodeWrapper {
         }
     }
 
-    fn name_ref<'a>(&self, state: &'a DirectMappingState) -> Result<&'a str> {
+    fn name_ref<'a>(&self, state: &'a DirectMappingState) -> Result<&OsStr> {
         let offset = self.offset + size_of::<OndiskInode>();
         let name = unsafe {
             let start = state.base.add(offset);
             slice::from_raw_parts(start, self.inode(state).i_name_size as usize)
         };
 
-        Ok(parse_string(name)?.0)
+        Ok(parse_file_name(name))
     }
 
     #[allow(clippy::cast_ptr_alignment)]
@@ -485,7 +486,7 @@ impl RafsInode for OndiskInodeWrapper {
     ///
     /// # Safety
     /// It depends on Self::validate() to ensure valid memory layout.
-    fn name(&self) -> Result<String> {
+    fn name(&self) -> Result<OsString> {
         let state = self.state();
 
         self.name_ref(state.deref()).map(|v| v.to_owned())
@@ -512,7 +513,7 @@ impl RafsInode for OndiskInodeWrapper {
     ///
     /// # Safety
     /// It depends on Self::validate() to ensure valid memory layout.
-    fn get_child_by_name(&self, name: &str) -> Result<Arc<dyn RafsInode>> {
+    fn get_child_by_name(&self, name: &OsStr) -> Result<Arc<dyn RafsInode>> {
         let state = self.state();
         let inode = self.inode(state.deref());
 
@@ -731,7 +732,7 @@ impl RafsInode for OndiskInodeWrapper {
         for idx in child_index..(child_index + child_count) {
             let child_inode = self.mapping.get_inode(idx, false).unwrap();
             if child_inode.is_dir() {
-                trace!("Got dir {}", child_inode.name().unwrap());
+                trace!("Got dir {:?}", child_inode.name().unwrap());
                 child_inode.collect_descendants_inodes(descendants)?;
             } else {
                 descendants.push(child_inode);
