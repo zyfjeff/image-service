@@ -172,9 +172,7 @@ impl BlobCache {
             let fd = cache.get_blob_fd(blob_id)?;
             let entry = Arc::new(Mutex::new(BlobCacheEntry::new(blk, fd)));
 
-            cache
-                .chunk_map
-                .insert(block_id.as_ref().clone(), entry.clone());
+            cache.chunk_map.insert(*block_id.clone(), entry.clone());
 
             Ok(entry)
         }
