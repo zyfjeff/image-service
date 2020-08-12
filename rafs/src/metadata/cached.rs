@@ -162,7 +162,7 @@ pub struct CachedInode {
     i_blocks: u64,
     i_child_idx: u32,
     i_child_cnt: u32,
-    i_target: String, // for symbol link
+    i_target: OsString, // for symbol link
 
     // extra info need cache
     i_blksize: u32,
@@ -196,7 +196,7 @@ impl CachedInode {
         if self.is_symlink() && symlink_size > 0 {
             let mut symbol_buf = vec![0u8; symlink_size];
             r.read_exact(symbol_buf.as_mut_slice())?;
-            self.i_target = parse_string(&symbol_buf)?.0.to_string();
+            self.i_target = parse_file_name(&symbol_buf).to_os_string();
         }
         Ok(())
     }
@@ -280,7 +280,7 @@ impl RafsInode for CachedInode {
         Ok(self.i_name.clone())
     }
 
-    fn get_symlink(&self) -> Result<String> {
+    fn get_symlink(&self) -> Result<OsString> {
         if !self.is_symlink() {
             Err(einval!("inode is not a symlink"))
         } else {

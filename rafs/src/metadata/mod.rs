@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{Error, Result, Seek, SeekFrom};
+use std::os::unix::ffi::OsStrExt;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -389,7 +390,7 @@ pub trait RafsSuperInodes {
 
         if inode.is_symlink() {
             // trace!("\tdigest symlink {}", inode.get_symlink()?);
-            hasher.digest_update(inode.get_symlink()?.as_bytes());
+            hasher.digest_update(inode.get_symlink()?.as_os_str().as_bytes());
         } else {
             for idx in 0..child_count {
                 if inode.is_dir() {
@@ -436,7 +437,7 @@ pub trait RafsInode {
     fn validate(&self) -> Result<()>;
 
     fn name(&self) -> Result<OsString>;
-    fn get_symlink(&self) -> Result<String>;
+    fn get_symlink(&self) -> Result<OsString>;
     fn get_digest(&self) -> Result<RafsDigest>;
     fn get_child_by_name(&self, name: &OsStr) -> Result<Arc<dyn RafsInode>>;
     fn get_child_by_index(&self, idx: Inode) -> Result<Arc<dyn RafsInode>>;

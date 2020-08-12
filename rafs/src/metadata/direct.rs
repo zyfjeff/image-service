@@ -496,7 +496,7 @@ impl RafsInode for OndiskInodeWrapper {
     ///
     /// # Safety
     /// It depends on Self::validate() to ensure valid memory layout.
-    fn get_symlink(&self) -> Result<String> {
+    fn get_symlink(&self) -> Result<OsString> {
         let state = self.state();
         let inode = self.inode(state.deref());
         let offset = self.offset + size_of::<OndiskInode>() + inode.i_name_size as usize;
@@ -506,7 +506,7 @@ impl RafsInode for OndiskInodeWrapper {
             slice::from_raw_parts(start, inode.i_symlink_size as usize)
         };
 
-        Ok(parse_string(symlink)?.0.to_owned())
+        Ok(parse_file_name(symlink).to_os_string())
     }
 
     /// Get the child with the specified name.

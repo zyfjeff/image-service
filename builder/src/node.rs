@@ -98,7 +98,7 @@ pub struct Node {
     /// Chunks info list of regular file
     pub chunks: Vec<OndiskChunkInfo>,
     /// Symlink info of symlink file
-    pub symlink: Option<String>,
+    pub symlink: Option<OsString>,
     /// Xattr list of file
     pub xattrs: XAttrs,
 }
@@ -292,9 +292,9 @@ impl Node {
         } else if self.is_symlink() {
             self.inode.i_flags |= INO_FLAG_SYMLINK as u64;
             let target_path = fs::read_link(&self.path)?;
-            self.symlink = Some(target_path.to_str().unwrap().to_owned());
+            self.symlink = Some(target_path.into());
             self.inode
-                .set_symlink_size(self.symlink.as_ref().unwrap().len());
+                .set_symlink_size(self.symlink.as_ref().unwrap().as_bytes().len());
         }
 
         self.build_inode_xattr()?;

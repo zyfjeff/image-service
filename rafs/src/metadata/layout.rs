@@ -657,7 +657,7 @@ impl OndiskInode {
 
 pub struct OndiskInodeWrapper<'a> {
     pub name: &'a OsStr,
-    pub symlink: Option<&'a str>,
+    pub symlink: Option<&'a OsStr>,
     pub inode: &'a OndiskInode,
 }
 
