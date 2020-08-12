@@ -175,7 +175,7 @@ impl Builder {
 
     /// Traverse node tree, set inode index, ino, child_index and
     /// child_count etc according to RAFS format, then store to nodes collection.
-    fn build_rafs(&mut self, tree: &mut Tree, mut nodes: &mut Vec<Node>) -> Result<()> {
+    fn build_rafs(&mut self, tree: &mut Tree, nodes: &mut Vec<Node>) -> Result<()> {
         let index = nodes.len() as u64;
         let parent = &mut nodes[tree.node.index as usize - 1];
         parent.inode.i_child_index = index as u32 + 1;
@@ -241,8 +241,18 @@ impl Builder {
             }
         }
 
-        for mut dir in dirs {
-            self.build_rafs(&mut dir, &mut nodes)?;
+        // According to filesystem semantics, a parent dir should have nlink equal to
+        // 2 plus the number of its child directory. And in case of layered build,
+        // updating parent directory's nlink here is reliable since builder re-constructs
+        // the entire tree and intends to layout all inodes into a plain array fetching
+        // from the previously applied tree.
+        if tree.node.is_dir() {
+            let parent_dir = &mut nodes[tree.node.index as usize - 1];
+            parent_dir.inode.i_nlink = (2 + dirs.len()) as u32;
+        }
+
+        for dir in dirs {
+            self.build_rafs(dir, nodes)?;
         }
 
         Ok(())
