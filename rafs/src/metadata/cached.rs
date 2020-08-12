@@ -189,6 +189,7 @@ impl CachedInode {
             r.read_exact(name_buf.as_mut_slice())?;
             self.i_name = parse_file_name(&name_buf).to_os_string();
         }
+        r.try_seek_aligned(name_size);
         Ok(())
     }
 
@@ -198,6 +199,7 @@ impl CachedInode {
             r.read_exact(symbol_buf.as_mut_slice())?;
             self.i_target = parse_file_name(&symbol_buf).to_os_string();
         }
+        r.try_seek_aligned(symlink_size);
         Ok(())
     }
 

@@ -612,17 +612,19 @@ impl OndiskInode {
 
     #[inline]
     pub fn set_name_size(&mut self, name_len: usize) {
-        self.i_name_size = align_to_rafs(name_len) as u16;
+        self.i_name_size = name_len as u16;
     }
 
     #[inline]
     pub fn set_symlink_size(&mut self, symlink_len: usize) {
-        self.i_symlink_size = align_to_rafs(symlink_len) as u16;
+        self.i_symlink_size = symlink_len as u16;
     }
 
     #[inline]
     pub fn size(&self) -> usize {
-        size_of::<Self>() + (self.i_name_size + self.i_symlink_size) as usize
+        size_of::<Self>()
+            + (align_to_rafs(self.i_name_size as usize)
+                + align_to_rafs(self.i_symlink_size as usize)) as usize
     }
 
     pub fn load(&mut self, r: &mut RafsIoReader) -> Result<()> {
@@ -673,7 +675,7 @@ impl<'a> RafsStore for OndiskInodeWrapper<'a> {
         w.write_all(name)?;
         size += name.len();
 
-        let padding = self.inode.i_name_size as usize - name.len();
+        let padding = align_to_rafs(self.inode.i_name_size as usize) - name.len();
         w.write_padding(padding)?;
         size += padding;
 
@@ -681,7 +683,7 @@ impl<'a> RafsStore for OndiskInodeWrapper<'a> {
             let symlink_path = symlink.as_bytes();
             w.write_all(symlink_path)?;
             size += symlink_path.len();
-            let padding = self.inode.i_symlink_size as usize - symlink_path.len();
+            let padding = align_to_rafs(self.inode.i_symlink_size as usize) - symlink_path.len();
             w.write_padding(padding)?;
             size += padding;
         }

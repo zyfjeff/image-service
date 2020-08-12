@@ -444,8 +444,6 @@ impl RafsInode for OndiskInodeWrapper {
             || (inode.i_parent > inode.i_ino && inode.i_nlink == 1)
             || inode.i_nlink == 0
             || inode.i_name_size as usize > (RAFS_MAX_NAME + 1)
-            || inode.i_name_size & (RAFS_ALIGNMENT as u16 - 1) != 0
-            || inode.i_symlink_size & (RAFS_ALIGNMENT as u16 - 1) != 0
         {
             return Err(ebadf!(format!(
                 "inode validation failure, inode {:#?}",
@@ -499,7 +497,8 @@ impl RafsInode for OndiskInodeWrapper {
     fn get_symlink(&self) -> Result<OsString> {
         let state = self.state();
         let inode = self.inode(state.deref());
-        let offset = self.offset + size_of::<OndiskInode>() + inode.i_name_size as usize;
+        let offset =
+            self.offset + size_of::<OndiskInode>() + align_to_rafs(inode.i_name_size as usize);
         // TODO: the symlink is aligned, should we store raw size?
         let symlink = unsafe {
             let start = state.base.add(offset);

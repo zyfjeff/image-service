@@ -15,7 +15,7 @@ use std::io::Result;
 use std::io::{Read, Seek, Write};
 use std::os::unix::io::AsRawFd;
 
-use crate::metadata::layout::RAFS_ALIGNMENT;
+use crate::metadata::layout::{align_to_rafs, RAFS_ALIGNMENT};
 use nydus_utils::einval;
 
 #[macro_use]
@@ -23,6 +23,7 @@ mod error;
 pub mod fs;
 pub mod metadata;
 pub mod storage;
+use std::io::SeekFrom;
 
 #[macro_use]
 extern crate lazy_static;
@@ -52,6 +53,16 @@ impl dyn RafsIoWrite {
         }
         let padding = [0u8; RAFS_ALIGNMENT];
         self.write_all(&padding[0..size])
+    }
+}
+
+impl dyn RafsIoRead {
+    pub fn try_seek_aligned(&mut self, last_read_len: usize) {
+        // Seek should not fail otherwise rafs goes insane.
+        self.seek(SeekFrom::Current(
+            (align_to_rafs(last_read_len) - last_read_len) as i64,
+        ))
+        .unwrap();
     }
 }
 
