@@ -564,6 +564,7 @@ mod cached_tests {
     use std::fs::OpenOptions;
     use std::io::Seek;
     use std::io::SeekFrom::Start;
+    use std::os::unix::ffi::OsStrExt;
     use std::sync::Arc;
 
     #[test]
@@ -586,7 +587,7 @@ mod cached_tests {
         xattr
             .pairs
             .insert(String::from("k2"), vec![10u8, 11u8, 12u8]);
-        ondisk_inode.i_name_size = align_to_rafs(file_name.len()) as u16;
+        ondisk_inode.i_name_size = file_name.as_bytes().len() as u16;
         ondisk_inode.i_child_count = 1;
         ondisk_inode.i_ino = 3;
         ondisk_inode.i_size = 8192;
@@ -645,15 +646,15 @@ mod cached_tests {
         let mut writer = Box::new(f.try_clone().unwrap()) as RafsIoWriter;
         let mut reader = Box::new(f.try_clone().unwrap()) as RafsIoReader;
         let file_name = OsString::from("c_inode_2");
-        let symlink_name = "c_inode_1";
+        let symlink_name = OsString::from("c_inode_1");
         let mut ondisk_inode = OndiskInode::new();
-        ondisk_inode.i_name_size = align_to_rafs(file_name.len()) as u16;
-        ondisk_inode.i_symlink_size = align_to_rafs(symlink_name.len()) as u16;
+        ondisk_inode.i_name_size = file_name.as_bytes().len() as u16;
+        ondisk_inode.i_symlink_size = symlink_name.as_bytes().len() as u16;
         ondisk_inode.i_mode = libc::S_IFLNK;
 
         let inode = OndiskInodeWrapper {
             name: file_name.as_os_str(),
-            symlink: Some(symlink_name),
+            symlink: Some(symlink_name.as_os_str()),
             inode: &ondisk_inode,
         };
         inode.store(&mut writer).unwrap();
