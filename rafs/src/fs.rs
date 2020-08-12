@@ -413,10 +413,7 @@ impl FileSystem for Rafs {
                 0 => Ok(GetxattrReply::Count((value.len() + 1) as u32)),
                 _ => Ok(GetxattrReply::Value(value)),
             },
-            None => match size {
-                0 => Ok(GetxattrReply::Count(0)),
-                _ => Ok(GetxattrReply::Value(Vec::new())),
-            },
+            None => Err(std::io::Error::from_raw_os_error(libc::ENODATA)),
         }
     }
 
