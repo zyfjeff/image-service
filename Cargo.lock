@@ -902,6 +902,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "base64",
+ "bitflags",
  "blake3",
  "fuse-rs",
  "hmac",

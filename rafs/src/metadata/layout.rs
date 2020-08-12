@@ -33,6 +33,7 @@
 use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::io::{Error, Result};
 use std::mem::size_of;
 use std::os::unix::ffi::OsStrExt;
@@ -156,6 +157,77 @@ pub struct OndiskSuperBlock {
     s_reserved2: [u8; RAFS_SUPERBLOCK_RESERVED_SIZE],
 }
 
+bitflags! {
+    pub struct RafsSuperFlags: u64 {
+        const COMPRESS_NONE = 0x0000_0001;
+        const COMPRESS_LZ4_BLOCK = 0x0000_0002;
+        const DIGESTER_BLAKE3 = 0x0000_0004;
+        const DIGESTER_SHA256 = 0x0000_0008;
+    }
+}
+
+impl Default for RafsSuperFlags {
+    fn default() -> Self {
+        RafsSuperFlags::empty()
+    }
+}
+
+impl fmt::Display for RafsSuperFlags {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.contains(RafsSuperFlags::COMPRESS_NONE) {
+            write!(f, "COMPRESS_NONE ")?;
+        }
+        if self.contains(RafsSuperFlags::COMPRESS_LZ4_BLOCK) {
+            write!(f, "COMPRESS_LZ4_BLOCK ")?;
+        }
+        if self.contains(RafsSuperFlags::DIGESTER_BLAKE3) {
+            write!(f, "DIGESTER_BLAKE3 ")?;
+        }
+        if self.contains(RafsSuperFlags::DIGESTER_SHA256) {
+            write!(f, "DIGESTER_SHA256 ")?;
+        }
+        Ok(())
+    }
+}
+
+impl Into<digest::Algorithm> for RafsSuperFlags {
+    fn into(self) -> digest::Algorithm {
+        match self {
+            x if x.contains(RafsSuperFlags::DIGESTER_BLAKE3) => digest::Algorithm::Blake3,
+            x if x.contains(RafsSuperFlags::DIGESTER_SHA256) => digest::Algorithm::Sha256,
+            _ => digest::Algorithm::Blake3,
+        }
+    }
+}
+
+impl From<digest::Algorithm> for RafsSuperFlags {
+    fn from(d: digest::Algorithm) -> RafsSuperFlags {
+        match d {
+            digest::Algorithm::Blake3 => RafsSuperFlags::DIGESTER_BLAKE3,
+            digest::Algorithm::Sha256 => RafsSuperFlags::DIGESTER_SHA256,
+        }
+    }
+}
+
+impl Into<compress::Algorithm> for RafsSuperFlags {
+    fn into(self) -> compress::Algorithm {
+        match self {
+            x if x.contains(RafsSuperFlags::COMPRESS_NONE) => compress::Algorithm::None,
+            x if x.contains(RafsSuperFlags::COMPRESS_LZ4_BLOCK) => compress::Algorithm::LZ4Block,
+            _ => compress::Algorithm::LZ4Block,
+        }
+    }
+}
+
+impl From<compress::Algorithm> for RafsSuperFlags {
+    fn from(c: compress::Algorithm) -> RafsSuperFlags {
+        match c {
+            compress::Algorithm::None => RafsSuperFlags::COMPRESS_NONE,
+            compress::Algorithm::LZ4Block => RafsSuperFlags::COMPRESS_LZ4_BLOCK,
+        }
+    }
+}
+
 impl Default for OndiskSuperBlock {
     fn default() -> Self {
         Self {
@@ -219,11 +291,13 @@ impl OndiskSuperBlock {
     }
 
     pub fn set_compressor(&mut self, compressor: compress::Algorithm) {
-        self.s_flags |= compressor as u64
+        let c: RafsSuperFlags = compressor.into();
+        self.s_flags |= c.bits();
     }
 
     pub fn set_digester(&mut self, digester: digest::Algorithm) {
-        self.s_flags |= digester as u64
+        let c: RafsSuperFlags = digester.into();
+        self.s_flags |= c.bits();
     }
 
     impl_pub_getter_setter!(magic, set_magic, s_magic, u32);

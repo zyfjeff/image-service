@@ -16,18 +16,8 @@ const COMPRESSION_MINIMUM_RATIO: usize = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Algorithm {
-    None = 0x0000,
-    LZ4Block = 0x0001,
-}
-
-impl Into<Algorithm> for u8 {
-    fn into(self) -> Algorithm {
-        match self {
-            0x00 => Algorithm::None,
-            0x01 => Algorithm::LZ4Block,
-            _ => Algorithm::LZ4Block,
-        }
-    }
+    None,
+    LZ4Block,
 }
 
 impl fmt::Display for Algorithm {

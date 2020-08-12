@@ -77,7 +77,7 @@ pub struct RafsSuperMeta {
     pub block_size: u32,
     pub inodes_count: u64,
     // Use u64 as [u8; 8] => [.., digest::Algorithm, compress::Algorithm]
-    pub flags: u64,
+    pub flags: RafsSuperFlags,
     pub inode_table_entries: u32,
     pub inode_table_offset: u64,
     pub blob_table_size: u32,
@@ -92,10 +92,10 @@ pub struct RafsSuperMeta {
 
 impl RafsSuperMeta {
     pub fn get_compressor(&self) -> compress::Algorithm {
-        self.flags.to_le_bytes()[0].into()
+        self.flags.into()
     }
     pub fn get_digester(&self) -> digest::Algorithm {
-        self.flags.to_le_bytes()[1].into()
+        self.flags.into()
     }
 }
 
@@ -145,7 +145,7 @@ impl Default for RafsSuper {
                 inodes_count: 0,
                 root_inode: 0,
                 block_size: 0,
-                flags: 0,
+                flags: RafsSuperFlags::empty(),
                 inode_table_entries: 0,
                 inode_table_offset: 0,
                 blob_table_size: 0,
@@ -207,7 +207,8 @@ impl RafsSuper {
         self.meta.version = sb.version();
         self.meta.sb_size = sb.sb_size();
         self.meta.block_size = sb.block_size();
-        self.meta.flags = sb.flags();
+        self.meta.flags = RafsSuperFlags::from_bits(sb.flags())
+            .ok_or_else(|| einval!(format!("invalid super flags {:x}", sb.flags())))?;
         self.meta.prefetch_table_offset = sb.prefetch_table_offset();
         self.meta.prefetch_table_entries = sb.prefetch_table_entries();
 
@@ -264,7 +265,7 @@ impl RafsSuper {
         sb.set_version(self.meta.version);
         sb.set_sb_size(self.meta.sb_size);
         sb.set_block_size(self.meta.block_size);
-        sb.set_flags(self.meta.flags);
+        sb.set_flags(self.meta.flags.bits());
 
         match self.meta.version {
             RAFS_SUPER_VERSION_V4 => {}

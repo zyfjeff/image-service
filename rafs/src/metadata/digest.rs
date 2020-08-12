@@ -20,18 +20,8 @@ type DigestData = [u8; RAFS_DIGEST_LENGTH];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Algorithm {
-    Blake3 = 0x0000,
-    Sha256 = 0x0100,
-}
-
-impl Into<Algorithm> for u8 {
-    fn into(self) -> Algorithm {
-        match self {
-            0x00 => Algorithm::Blake3,
-            0x01 => Algorithm::Sha256,
-            _ => Algorithm::Blake3,
-        }
-    }
+    Blake3,
+    Sha256,
 }
 
 impl FromStr for Algorithm {

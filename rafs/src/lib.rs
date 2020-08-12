@@ -8,6 +8,8 @@
 extern crate log;
 #[macro_use]
 extern crate serde;
+#[macro_use]
+extern crate bitflags;
 
 use std::any::Any;
 use std::fs::File;
