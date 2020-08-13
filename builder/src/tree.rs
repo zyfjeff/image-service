@@ -93,11 +93,11 @@ impl<'a> MetadataTreeBuilder<'a> {
             pairs: HashMap::new(),
         };
         for name in inode.get_xattrs()? {
-            let (name, _) = parse_string(&name)?;
+            let name = bytes_to_os_str(&name);
             let value = inode.get_xattr(name)?;
             xattrs
                 .pairs
-                .insert(name.to_string(), value.unwrap_or_else(Vec::new));
+                .insert(name.to_os_string(), value.unwrap_or_else(Vec::new));
         }
 
         // Get OndiskInode

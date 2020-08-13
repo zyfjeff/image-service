@@ -124,7 +124,6 @@ impl Node {
         let file_xattrs = xattr::list(&self.path)?;
 
         for key in file_xattrs {
-            let key = key.to_str().ok_or_else(|| einval!())?.to_string();
             let value = xattr::get(&self.path, &key)?;
             self.xattrs.pairs.insert(key, value.unwrap_or_default());
         }

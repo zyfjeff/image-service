@@ -32,7 +32,7 @@
 
 use std::convert::TryFrom;
 use std::convert::TryInto;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::io::{Error, Result};
 use std::mem::size_of;
 use std::os::unix::ffi::OsStrExt;
@@ -831,7 +831,7 @@ pub type XattrValue = Vec<u8>;
 
 #[derive(Clone, Default)]
 pub struct XAttrs {
-    pub pairs: HashMap<String, XattrValue>,
+    pub pairs: HashMap<OsString, XattrValue>,
 }
 
 impl XAttrs {
@@ -906,14 +906,14 @@ pub fn parse_string(buf: &[u8]) -> Result<(&str, &str)> {
         .map_err(|e| einval!(format!("failed in parsing string, {:?}", e)))
 }
 
-pub fn parse_file_name(buf: &[u8]) -> &OsStr {
+pub fn bytes_to_os_str(buf: &[u8]) -> &OsStr {
     OsStr::from_bytes(buf)
 }
 
 /// Parse a 'buf' to xattr pair then callback.
 pub fn parse_xattr<F>(data: &[u8], size: usize, mut cb: F) -> Result<()>
 where
-    F: FnMut(&str, XattrValue) -> bool,
+    F: FnMut(&OsStr, XattrValue) -> bool,
 {
     let mut i: usize = 0;
     let mut rest_data = &data[0..size];
@@ -930,8 +930,7 @@ where
         let (pair, rest) = rest.split_at(pair_size);
         if let Some(pos) = pair.iter().position(|&c| c == 0) {
             let (name, value) = pair.split_at(pos);
-            let name =
-                std::str::from_utf8(name).map_err(|_| einval!("failed to convert xattr name"))?;
+            let name = OsStr::from_bytes(name);
             let value = value[1..].to_vec();
             if !cb(name, value) {
                 break;
@@ -958,7 +957,7 @@ pub fn parse_xattr_names(data: &[u8], size: usize) -> Result<Vec<XattrName>> {
 }
 
 /// Parse a 'buf' to xattr value by xattr name.
-pub fn parse_xattr_value(data: &[u8], size: usize, name: &str) -> Result<Option<XattrValue>> {
+pub fn parse_xattr_value(data: &[u8], size: usize, name: &OsStr) -> Result<Option<XattrValue>> {
     let mut value = None;
 
     parse_xattr(data, size, |_name, _value| {

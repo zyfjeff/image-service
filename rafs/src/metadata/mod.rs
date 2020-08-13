@@ -447,7 +447,7 @@ pub trait RafsInode {
     fn get_chunk_blob_id(&self, idx: u32) -> Result<String>;
     fn get_entry(&self) -> Entry;
     fn get_attr(&self) -> Attr;
-    fn get_xattr(&self, name: &str) -> Result<Option<XattrValue>>;
+    fn get_xattr(&self, name: &OsStr) -> Result<Option<XattrValue>>;
     fn get_xattrs(&self) -> Result<Vec<XattrName>>;
     fn alloc_bio_desc(&self, offset: u64, size: usize) -> Result<RafsBioDesc>;
     fn collect_descendants_inodes(

@@ -29,7 +29,7 @@ use crate::storage::device;
 use crate::storage::*;
 use crate::*;
 
-use nydus_utils::{eacces, ealready, einval, enoent, eother};
+use nydus_utils::{eacces, ealready, enoent, eother};
 
 /// Type of RAFS fuse handle.
 pub type Handle = u64;
@@ -406,7 +406,7 @@ impl FileSystem for Rafs {
     }
 
     fn getxattr(&self, _ctx: Context, inode: u64, name: &CStr, size: u32) -> Result<GetxattrReply> {
-        let name = name.to_str().map_err(|_| einval!("invalid xattr name"))?;
+        let name = OsStr::from_bytes(name.to_bytes());
         let inode = self.sb.get_inode(inode, false)?;
 
         let value = inode.get_xattr(name)?;

@@ -167,7 +167,7 @@ pub struct CachedInode {
     // extra info need cache
     i_blksize: u32,
 
-    i_xattr: HashMap<String, Vec<u8>>,
+    i_xattr: HashMap<OsString, Vec<u8>>,
     i_data: Vec<Arc<CachedChunkInfo>>,
     i_child: Vec<Arc<CachedInode>>,
     i_blob_table: Arc<OndiskBlobTable>,
@@ -187,7 +187,7 @@ impl CachedInode {
         if name_size > 0 {
             let mut name_buf = vec![0u8; name_size];
             r.read_exact(name_buf.as_mut_slice())?;
-            self.i_name = parse_file_name(&name_buf).to_os_string();
+            self.i_name = bytes_to_os_str(&name_buf).to_os_string();
         }
         r.try_seek_aligned(name_size);
         Ok(())
@@ -197,7 +197,7 @@ impl CachedInode {
         if self.is_symlink() && symlink_size > 0 {
             let mut symbol_buf = vec![0u8; symlink_size];
             r.read_exact(symbol_buf.as_mut_slice())?;
-            self.i_target = parse_file_name(&symbol_buf).to_os_string();
+            self.i_target = bytes_to_os_str(&symbol_buf).to_os_string();
         }
         r.try_seek_aligned(symlink_size);
         Ok(())
@@ -210,7 +210,7 @@ impl CachedInode {
             let mut xattr_buf = vec![0u8; xattrs.aligned_size()];
             r.read_exact(xattr_buf.as_mut_slice())?;
             parse_xattr(&xattr_buf, xattrs.size(), |name, value| {
-                self.i_xattr.insert(name.to_string(), value);
+                self.i_xattr.insert(name.to_os_string(), value);
                 true
             })?;
         }
@@ -353,7 +353,7 @@ impl RafsInode for CachedInode {
     }
 
     #[inline]
-    fn get_xattr(&self, name: &str) -> Result<Option<XattrValue>> {
+    fn get_xattr(&self, name: &OsStr) -> Result<Option<XattrValue>> {
         Ok(self.i_xattr.get(name).cloned())
     }
 
@@ -624,7 +624,7 @@ mod cached_tests {
         assert_eq!(cached_chunk.decompress_offset(), 0);
         let c_xattr = cached_inode.get_xattrs().unwrap();
         for k in c_xattr.iter() {
-            let k = std::str::from_utf8(k.as_slice()).unwrap();
+            let k = OsStr::from_bytes(&k);
             let v = cached_inode.get_xattr(k).unwrap();
             assert_eq!(xattr.pairs.get(k).cloned().unwrap(), v.unwrap());
         }

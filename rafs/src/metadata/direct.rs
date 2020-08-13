@@ -383,7 +383,7 @@ impl OndiskInodeWrapper {
             slice::from_raw_parts(start, self.inode(state).i_name_size as usize)
         };
 
-        Ok(parse_file_name(name))
+        Ok(bytes_to_os_str(name))
     }
 
     #[allow(clippy::cast_ptr_alignment)]
@@ -505,7 +505,7 @@ impl RafsInode for OndiskInodeWrapper {
             slice::from_raw_parts(start, inode.i_symlink_size as usize)
         };
 
-        Ok(parse_file_name(symlink).to_os_string())
+        Ok(bytes_to_os_str(symlink).to_os_string())
     }
 
     /// Get the child with the specified name.
@@ -634,7 +634,7 @@ impl RafsInode for OndiskInodeWrapper {
         }
     }
 
-    fn get_xattr(&self, name: &str) -> Result<Option<XattrValue>> {
+    fn get_xattr(&self, name: &OsStr) -> Result<Option<XattrValue>> {
         let (xattr_data, xattr_size) = self.get_xattr_data()?;
         parse_xattr_value(xattr_data, xattr_size, name)
     }
