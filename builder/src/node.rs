@@ -101,10 +101,16 @@ pub struct Node {
     pub symlink: Option<OsString>,
     /// Xattr list of file
     pub xattrs: XAttrs,
+    pub explicit_uidgid: bool,
 }
 
 impl Node {
-    pub fn new(source: PathBuf, path: PathBuf, overlay: Overlay) -> Result<Node> {
+    pub fn new(
+        source: PathBuf,
+        path: PathBuf,
+        overlay: Overlay,
+        explicit_uidgid: bool,
+    ) -> Result<Node> {
         let mut node = Node {
             index: 0,
             real_ino: 0,
@@ -115,6 +121,7 @@ impl Node {
             chunks: Vec::new(),
             symlink: None,
             xattrs: XAttrs::default(),
+            explicit_uidgid,
         };
         node.build_inode()?;
         Ok(node)
@@ -266,6 +273,10 @@ impl Node {
         let meta = self.meta()?;
 
         self.inode.i_mode = meta.st_mode();
+        if self.explicit_uidgid {
+            self.inode.i_uid = meta.st_uid();
+            self.inode.i_gid = meta.st_gid();
+        }
         self.inode.i_projid = 0;
         self.inode.i_size = meta.st_size();
         // Ignore actual nlink value and calculate from rootfs directory instead

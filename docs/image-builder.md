@@ -33,6 +33,7 @@ cargo build --release
             --parent-bootstrap $PARENT_BOOTSTRAP_PATH \
             --backend-type $BACKEND_TYPE \
             --backend-config $BACKEND_CONFIG \
+            --repeatable \
             $SOURCE
 ```
 

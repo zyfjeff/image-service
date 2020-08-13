@@ -97,6 +97,9 @@ impl RafsSuperMeta {
     pub fn get_digester(&self) -> digest::Algorithm {
         self.flags.into()
     }
+    pub fn explicit_uidgid(&self) -> bool {
+        self.flags.contains(RafsSuperFlags::EXPLICIT_UID_GID)
+    }
 }
 
 pub enum RafsMode {
@@ -211,6 +214,8 @@ impl RafsSuper {
             .ok_or_else(|| einval!(format!("invalid super flags {:x}", sb.flags())))?;
         self.meta.prefetch_table_offset = sb.prefetch_table_offset();
         self.meta.prefetch_table_entries = sb.prefetch_table_entries();
+
+        info!("rafs superblock features: {}", self.meta.flags);
 
         match self.meta.version {
             RAFS_SUPER_VERSION_V4 => {

@@ -107,6 +107,7 @@ impl<'a> MetadataTreeBuilder<'a> {
             index: 0,
             real_ino: ondisk_inode.i_ino,
             overlay: Overlay::Lower,
+            explicit_uidgid: self.rs.meta.explicit_uidgid(),
             source: PathBuf::from_str("/").unwrap(),
             path,
             inode: ondisk_inode,
@@ -145,7 +146,12 @@ impl FilesystemTreeBuilder {
 
         for child in children {
             let path = child.path();
-            let child = Node::new(self.root_path.clone(), path.clone(), Overlay::UpperAddition)?;
+            let child = Node::new(
+                self.root_path.clone(),
+                path.clone(),
+                Overlay::UpperAddition,
+                parent.explicit_uidgid,
+            )?;
 
             // Ignore special file
             if child.file_type() == "" {
@@ -214,10 +220,19 @@ impl Tree {
     }
 
     /// Build node tree from a filesystem directory
-    pub fn from_filesystem(root_path: &PathBuf, overlay: bool) -> Result<Self> {
+    pub fn from_filesystem(
+        root_path: &PathBuf,
+        overlay: bool,
+        explicit_uidgid: bool,
+    ) -> Result<Self> {
         let tree_builder = FilesystemTreeBuilder::new(root_path.clone());
 
-        let node = Node::new(root_path.clone(), root_path.clone(), Overlay::UpperAddition)?;
+        let node = Node::new(
+            root_path.clone(),
+            root_path.clone(),
+            Overlay::UpperAddition,
+            explicit_uidgid,
+        )?;
         let mut tree = Tree::new(node);
 
         tree.children = tree_builder.load_children(&mut tree.node, overlay)?;

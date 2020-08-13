@@ -260,8 +260,11 @@ impl Rafs {
     fn get_inode_attr(&self, ino: u64) -> Result<Attr> {
         let inode = self.sb.get_inode(ino, false)?;
         let mut attr = inode.get_attr();
-        attr.uid = self.i_uid;
-        attr.gid = self.i_gid;
+        // override uid/gid if there is no explicit inode uid/gid
+        if !self.sb.meta.explicit_uidgid() {
+            attr.uid = self.i_uid;
+            attr.gid = self.i_gid;
+        }
         attr.rdev = self.i_rdev;
         attr.atime = self.i_time;
         attr.ctime = self.i_time;
@@ -272,8 +275,11 @@ impl Rafs {
 
     fn get_inode_entry(&self, inode: Arc<dyn RafsInode>) -> Entry {
         let mut entry = inode.get_entry();
-        entry.attr.st_uid = self.i_uid;
-        entry.attr.st_gid = self.i_gid;
+        // override uid/gid if there is no explicit inode uid/gid
+        if !self.sb.meta.explicit_uidgid() {
+            entry.attr.st_uid = self.i_uid;
+            entry.attr.st_gid = self.i_gid;
+        }
         entry.attr.st_rdev = self.i_rdev as u64;
         entry.attr.st_atime = self.i_time as i64;
         entry.attr.st_ctime = self.i_time as i64;

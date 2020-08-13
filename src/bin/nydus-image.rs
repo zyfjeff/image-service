@@ -204,7 +204,14 @@ fn main() -> Result<()> {
                         .takes_value(true)
                         .required(false)
                         .default_value("none"),
-                ),
+                )
+                .arg(
+                    Arg::with_name("repeatable")
+                    .long("repeatable")
+                    .help("Produce environment independent image")
+                    .takes_value(false)
+                    .required(false),
+                )
         )
         .arg(
             Arg::with_name("log-level")
@@ -250,6 +257,7 @@ fn main() -> Result<()> {
 
         let compressor = matches.value_of("compressor").unwrap_or_default().parse()?;
         let digester = matches.value_of("digester").unwrap_or_default().parse()?;
+        let repeatable = matches.is_present("repeatable");
 
         let temp_blob_file = TempFile::new_with_prefix("").unwrap();
 
@@ -285,6 +293,7 @@ fn main() -> Result<()> {
             digester,
             hint_readahead_files,
             prefetch_policy,
+            !repeatable,
         )?;
         let (blob_ids, blob_size) = ib.build()?;
 

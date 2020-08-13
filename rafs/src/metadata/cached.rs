@@ -156,6 +156,8 @@ pub struct CachedInode {
     i_parent: u64,
     i_mode: u32,
     i_projid: u32,
+    i_uid: u32,
+    i_gid: u32,
     i_flags: u64,
     i_size: u64,
     i_nlink: u64,
@@ -252,6 +254,8 @@ impl CachedInode {
         self.i_parent = inode.i_parent;
         self.i_mode = inode.i_mode;
         self.i_projid = inode.i_projid;
+        self.i_uid = inode.i_uid;
+        self.i_gid = inode.i_gid;
         self.i_flags = inode.i_flags;
         self.i_size = inode.i_size;
         self.i_nlink = inode.i_nlink;
@@ -443,6 +447,8 @@ impl RafsInode for CachedInode {
             i_parent: self.i_parent,
             i_ino: self.i_ino,
             i_projid: self.i_projid,
+            i_uid: self.i_uid,
+            i_gid: self.i_gid,
             i_mode: self.i_mode,
             i_size: self.i_size,
             i_nlink: self.i_nlink,
@@ -452,7 +458,7 @@ impl RafsInode for CachedInode {
             i_child_count: self.i_child_cnt,
             i_name_size: self.i_name.len() as u16,
             i_symlink_size: self.get_symlink()?.len() as u16,
-            i_reserved: [0; 28],
+            i_reserved: [0; 20],
         })
     }
 

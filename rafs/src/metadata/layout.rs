@@ -163,6 +163,7 @@ bitflags! {
         const COMPRESS_LZ4_BLOCK = 0x0000_0002;
         const DIGESTER_BLAKE3 = 0x0000_0004;
         const DIGESTER_SHA256 = 0x0000_0008;
+        const EXPLICIT_UID_GID = 0x0000_0010;
     }
 }
 
@@ -185,6 +186,9 @@ impl fmt::Display for RafsSuperFlags {
         }
         if self.contains(RafsSuperFlags::DIGESTER_SHA256) {
             write!(f, "DIGESTER_SHA256 ")?;
+        }
+        if self.contains(RafsSuperFlags::EXPLICIT_UID_GID) {
+            write!(f, "EXPLICIT_UID_GID ")?;
         }
         Ok(())
     }
@@ -300,6 +304,10 @@ impl OndiskSuperBlock {
         self.s_flags |= c.bits();
     }
 
+    pub fn set_explicit_uidgid(&mut self) {
+        self.s_flags |= RafsSuperFlags::EXPLICIT_UID_GID.bits();
+    }
+
     impl_pub_getter_setter!(magic, set_magic, s_magic, u32);
     impl_pub_getter_setter!(version, set_version, s_fs_version, u32);
     impl_pub_getter_setter!(sb_size, set_sb_size, s_sb_size, u32);
@@ -345,6 +353,10 @@ impl OndiskSuperBlock {
 
 impl RafsStore for OndiskSuperBlock {
     fn store_inner(&self, w: &mut RafsIoWriter) -> Result<usize> {
+        info!(
+            "rafs superblock features: {}",
+            RafsSuperFlags::from_bits(self.s_flags).unwrap_or_default()
+        );
         w.write_all(self.as_ref())?;
         Ok(self.as_ref().len())
     }
@@ -660,23 +672,25 @@ pub struct OndiskInode {
     pub i_parent: u64,
     /// from fs stat()
     pub i_ino: u64,
+    pub i_uid: u32,
+    pub i_gid: u32,
     pub i_projid: u32,
-    pub i_mode: u32,
-    pub i_size: u64, // 64
+    pub i_mode: u32, // 64
+    pub i_size: u64,
     pub i_nlink: u64,
     pub i_blocks: u64,
     /// HARDLINK | SYMLINK | PREFETCH_HINT
-    pub i_flags: u64,
+    pub i_flags: u64, // 96
     /// for dir, child start index
     pub i_child_index: u32,
     /// for dir, means child count.
     /// for regular file, means chunk info count.
-    pub i_child_count: u32, // 96
+    pub i_child_count: u32,
     /// file name size, [char; i_name_size]
     pub i_name_size: u16,
     /// symlink path size, [char; i_symlink_size]
-    pub i_symlink_size: u16, // 100
-    pub i_reserved: [u8; 28], // 128
+    pub i_symlink_size: u16, // 108
+    pub i_reserved: [u8; 20], // 128
 }
 
 impl OndiskInode {

@@ -39,6 +39,8 @@ pub struct Builder {
     compressor: compress::Algorithm,
     /// Inode and chunk digest algorithm flag.
     digester: digest::Algorithm,
+    /// Save host uid gid in each inode.
+    explicit_uidgid: bool,
     /// Cache node index for hardlinks, HashMap<Inode, Vec<index>>.
     lower_inode_map: HashMap<Inode, Vec<u64>>,
     upper_inode_map: HashMap<Inode, Vec<u64>>,
@@ -94,6 +96,7 @@ impl Builder {
         digester: digest::Algorithm,
         hint_readahead_files: BTreeMap<PathBuf, Option<u64>>,
         prefetch_policy: PrefetchPolicy,
+        explicit_uidgid: bool,
     ) -> Result<Builder> {
         let f_blob = Box::new(
             OpenOptions::new()
@@ -129,6 +132,7 @@ impl Builder {
             f_parent_bootstrap,
             compressor,
             digester,
+            explicit_uidgid,
             lower_inode_map: HashMap::new(),
             upper_inode_map: HashMap::new(),
             chunk_cache: HashMap::new(),
@@ -300,7 +304,7 @@ impl Builder {
 
     /// Build node tree of upper layer from a filesystem directory
     pub fn build_from_filesystem(&mut self, overlay: bool) -> Result<()> {
-        let mut tree = Tree::from_filesystem(&self.root, overlay)?;
+        let mut tree = Tree::from_filesystem(&self.root, overlay, self.explicit_uidgid)?;
 
         self.build_rafs_wrap(&mut tree)?;
 
@@ -345,6 +349,9 @@ impl Builder {
         super_block.set_prefetch_table_offset(prefetch_table_offset as u64);
         super_block.set_compressor(self.compressor);
         super_block.set_digester(self.digester);
+        if self.explicit_uidgid {
+            super_block.set_explicit_uidgid();
+        }
         super_block.set_prefetch_table_entries(prefetch_table_entries);
 
         let mut compress_offset = 0u64;
