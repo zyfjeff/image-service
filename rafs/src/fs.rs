@@ -413,6 +413,7 @@ impl FileSystem for Rafs {
         match value {
             Some(value) => match size {
                 0 => Ok(GetxattrReply::Count((value.len() + 1) as u32)),
+                x if x < value.len() as u32 => Err(std::io::Error::from_raw_os_error(libc::ERANGE)),
                 _ => Ok(GetxattrReply::Value(value)),
             },
             None => Err(std::io::Error::from_raw_os_error(libc::ENODATA)),
@@ -426,17 +427,16 @@ impl FileSystem for Rafs {
         let mut buf = Vec::new();
 
         for mut name in inode.get_xattrs()? {
-            match size {
-                0 => count += name.len() + 1,
-                _ => {
-                    buf.append(&mut name);
-                    buf.append(&mut vec![0u8; 1])
-                }
+            count += name.len() + 1;
+            if size != 0 {
+                buf.append(&mut name);
+                buf.append(&mut vec![0u8; 1]);
             }
         }
 
         match size {
             0 => Ok(ListxattrReply::Count(count as u32)),
+            x if x < count as u32 => Err(std::io::Error::from_raw_os_error(libc::ERANGE)),
             _ => Ok(ListxattrReply::Names(buf)),
         }
     }
