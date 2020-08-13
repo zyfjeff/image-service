@@ -121,21 +121,17 @@ impl Node {
     }
 
     fn build_inode_xattr(&mut self) -> Result<()> {
-        let mut file_xattrs = xattr::list(&self.path)?.peekable();
+        let file_xattrs = xattr::list(&self.path)?;
 
-        if file_xattrs.peek().is_none() {
-            return Ok(());
-        }
-
-        let mut xattrs = XAttrs::default();
-        for (_, key) in file_xattrs.enumerate() {
+        for key in file_xattrs {
             let key = key.to_str().ok_or_else(|| einval!())?.to_string();
             let value = xattr::get(&self.path, &key)?;
-            xattrs.pairs.insert(key, value.unwrap_or_default());
+            self.xattrs.pairs.insert(key, value.unwrap_or_default());
         }
 
-        self.xattrs = xattrs;
-        self.inode.i_flags |= INO_FLAG_XATTR as u64;
+        if !self.xattrs.pairs.is_empty() {
+            self.inode.i_flags |= INO_FLAG_XATTR;
+        }
 
         Ok(())
     }
