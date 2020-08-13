@@ -98,12 +98,6 @@ pub fn new(
     })
 }
 
-impl Drop for Nydusd {
-    fn drop(&mut self) {
-        exec(format!("umount {:?}", self.mount_path).as_str()).unwrap();
-    }
-}
-
 impl Nydusd {
     pub fn start(&self) -> Result<()> {
         let work_dir = self.work_dir.clone();
@@ -127,5 +121,8 @@ impl Nydusd {
         sleep(time::Duration::from_secs(1));
 
         Ok(())
+    }
+    pub fn stop(&self) {
+        exec(format!("umount {:?}", self.mount_path).as_str()).unwrap();
     }
 }

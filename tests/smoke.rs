@@ -30,8 +30,8 @@ fn test(enable_compress: bool, enable_cache: bool, rafs_mode: &str) -> Result<()
             "bootstrap-lower".to_string(),
         )?;
         nydusd.start()?;
-
         builder.mount_check("lower")?;
+        nydusd.stop();
     }
 
     // Mount upper rootfs and check
@@ -48,8 +48,8 @@ fn test(enable_compress: bool, enable_cache: bool, rafs_mode: &str) -> Result<()
             "bootstrap-overlay".to_string(),
         )?;
         nydusd.start()?;
-
         builder.mount_check("overlay")?;
+        nydusd.stop();
     }
 
     // Test blob cache recovery if enable cache
@@ -62,6 +62,7 @@ fn test(enable_compress: bool, enable_cache: bool, rafs_mode: &str) -> Result<()
         )?;
         nydusd.start()?;
         builder.mount_check("overlay")?;
+        nydusd.stop();
     }
 
     Ok(())
