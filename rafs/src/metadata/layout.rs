@@ -677,20 +677,20 @@ pub struct OndiskInode {
     pub i_projid: u32,
     pub i_mode: u32, // 64
     pub i_size: u64,
-    pub i_nlink: u64,
     pub i_blocks: u64,
     /// HARDLINK | SYMLINK | PREFETCH_HINT
-    pub i_flags: u64, // 96
+    pub i_flags: u64,
+    pub i_nlink: u32,
     /// for dir, child start index
-    pub i_child_index: u32,
+    pub i_child_index: u32, // 96
     /// for dir, means child count.
     /// for regular file, means chunk info count.
     pub i_child_count: u32,
     /// file name size, [char; i_name_size]
     pub i_name_size: u16,
     /// symlink path size, [char; i_symlink_size]
-    pub i_symlink_size: u16, // 108
-    pub i_reserved: [u8; 20], // 128
+    pub i_symlink_size: u16, // 104
+    pub i_reserved: [u8; 24], // 128
 }
 
 impl OndiskInode {

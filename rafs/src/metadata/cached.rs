@@ -160,15 +160,13 @@ pub struct CachedInode {
     i_gid: u32,
     i_flags: u64,
     i_size: u64,
-    i_nlink: u64,
     i_blocks: u64,
+    i_nlink: u32,
     i_child_idx: u32,
     i_child_cnt: u32,
-    i_target: OsString, // for symbol link
-
     // extra info need cache
     i_blksize: u32,
-
+    i_target: OsString, // for symbol link
     i_xattr: HashMap<OsString, Vec<u8>>,
     i_data: Vec<Arc<CachedChunkInfo>>,
     i_child: Vec<Arc<CachedInode>>,
@@ -458,7 +456,7 @@ impl RafsInode for CachedInode {
             i_child_count: self.i_child_cnt,
             i_name_size: self.i_name.len() as u16,
             i_symlink_size: self.get_symlink()?.len() as u16,
-            i_reserved: [0; 20],
+            i_reserved: [0; 24],
         })
     }
 

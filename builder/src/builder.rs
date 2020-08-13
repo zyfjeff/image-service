@@ -207,7 +207,7 @@ impl Builder {
             if let Some(indexes) = inode_map.get_mut(&child.node.real_ino) {
                 indexes.push(index);
                 let first_index = indexes.first().unwrap();
-                let nlink = indexes.len() as u64;
+                let nlink = indexes.len() as u32;
                 child.node.inode.i_ino = *first_index;
                 // Store node for bootstrap & blob dump
                 nodes.push(child.node.clone());
