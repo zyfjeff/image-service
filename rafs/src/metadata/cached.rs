@@ -560,7 +560,7 @@ mod cached_tests {
     use crate::metadata::{align_to_rafs, RafsInode, RafsStore, RafsSuperMeta};
     use crate::{RafsIoReader, RafsIoWriter};
     use std::cmp;
-    use std::ffi::OsString;
+    use std::ffi::{OsStr, OsString};
     use std::fs::OpenOptions;
     use std::io::Seek;
     use std::io::SeekFrom::Start;
@@ -583,10 +583,10 @@ mod cached_tests {
         let mut xattr = XAttrs::default();
         xattr
             .pairs
-            .insert(String::from("k1"), vec![1u8, 2u8, 3u8, 4u8]);
+            .insert(OsString::from("k1"), vec![1u8, 2u8, 3u8, 4u8]);
         xattr
             .pairs
-            .insert(String::from("k2"), vec![10u8, 11u8, 12u8]);
+            .insert(OsString::from("k2"), vec![10u8, 11u8, 12u8]);
         ondisk_inode.i_name_size = file_name.as_bytes().len() as u16;
         ondisk_inode.i_child_count = 1;
         ondisk_inode.i_ino = 3;
