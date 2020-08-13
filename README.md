@@ -63,8 +63,8 @@ localfs backend:
       "type": "localfs",
       "config": {
         "dir": "/path/to/blobs/",
-        "readahead": "true",
-        "readahead_sec": "10"
+        "readahead": true,
+        "readahead_sec": 10
       }
     },
     "cache": {}
