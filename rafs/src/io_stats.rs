@@ -118,6 +118,7 @@ pub struct InodeIOStats {
 ///
 #[derive(Default, Debug, Serialize)]
 pub struct AccessPattern {
+    ino: u64,
     nr_read: AtomicUsize,
     /// In unit of seconds.
     last_access_tp: AtomicUsize,
@@ -228,7 +229,13 @@ impl GlobalIOStats {
         if self.access_pattern_enabled() {
             let mut records = self.access_patterns.write().unwrap();
             if records.get(&ino).is_none() {
-                records.insert(ino, Arc::new(AccessPattern::default()));
+                records.insert(
+                    ino,
+                    Arc::new(AccessPattern {
+                        ino,
+                        ..Default::default()
+                    }),
+                );
             }
         }
     }
@@ -345,6 +352,19 @@ impl GlobalIOStats {
         serde_json::to_string(&*self.file_counters.read().unwrap()).unwrap()
     }
 
+    pub fn export_files_access_patterns(&self) -> String {
+        serde_json::to_string(
+            &*self
+                .access_patterns
+                .read()
+                .unwrap()
+                .values()
+                .filter(|r| r.nr_read.load(Ordering::Relaxed) != 0)
+                .collect::<Vec<&Arc<AccessPattern>>>(),
+        )
+        .unwrap()
+    }
+
     pub fn export_global_stats(&self) -> String {
         match serde_json::to_string(self) {
             Ok(s) => s,
@@ -368,6 +388,25 @@ pub fn export_files_stats(name: &Option<String>) -> Result<String, String> {
                 }
             }
             Err("No metrics counter was specified.".to_string())
+        }
+    }
+}
+
+pub fn export_files_access_pattern(name: &Option<String>) -> Result<String, String> {
+    let ios_set = IOS_SET.read().unwrap();
+
+    match name {
+        Some(k) => ios_set
+            .get(k)
+            .ok_or_else(|| "No such Id".to_string())
+            .map(|v| v.export_files_access_patterns()),
+        None => {
+            if ios_set.len() == 1 {
+                if let Some(ios) = ios_set.values().next() {
+                    return Ok(ios.export_files_stats());
+                }
+            }
+            Err("No records was specified.".to_string())
         }
     }
 }
