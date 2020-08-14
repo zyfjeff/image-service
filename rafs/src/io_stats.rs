@@ -53,6 +53,7 @@ pub struct GlobalIOStats {
     // As fop accounting might consume much memory space, it is disabled by default.
     // But global fop accounting is always working within each Rafs.
     files_account_enabled: AtomicBool,
+    access_pattern_enabled: AtomicBool,
     // Given the fact that we don't have to measure latency all the time,
     // use this to turn it off.
     measure_latency: AtomicBool,
@@ -86,6 +87,8 @@ pub struct GlobalIOStats {
     // Rwlock closes the race that more than one threads are creating counters concurrently.
     #[serde(skip_serializing, skip_deserializing)]
     file_counters: RwLock<HashMap<Inode, Arc<InodeIOStats>>>,
+    #[serde(skip_serializing, skip_deserializing)]
+    access_patterns: RwLock<HashMap<Inode, Arc<AccessPattern>>>,
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -99,6 +102,25 @@ pub struct InodeIOStats {
     block_count_read: [AtomicUsize; BLOCK_READ_COUNT_MAX],
     fop_hits: [AtomicUsize; StatsFop::Max as usize],
     fop_errors: [AtomicUsize; StatsFop::Max as usize],
+}
+
+/// Records how a file is accessed.
+/// For security sake, each file can associate an access pattern recorder, which
+/// is globally configured through nydusd configuration file.
+/// For now, the pattern is composed of:
+///     1. How many times a file is read regardless of io block size and request offset.
+///        And this counter can not be cleared.
+///     2. Last time point at which this file is read. It's wall-time in unit of seconds.
+///     3. File inode number to identify which file is against.
+///
+/// Yes, we now don't have an abundant pattern recorder now. It can be negotiated in the
+/// future about how to enrich it.
+///
+#[derive(Default, Debug, Serialize)]
+pub struct AccessPattern {
+    nr_read: AtomicUsize,
+    /// In unit of seconds.
+    last_access_tp: AtomicUsize,
 }
 
 pub trait InodeStatsCounter {
@@ -181,8 +203,16 @@ impl GlobalIOStats {
         self.files_account_enabled.load(Ordering::Relaxed)
     }
 
+    pub fn access_pattern_enabled(&self) -> bool {
+        self.access_pattern_enabled.load(Ordering::Relaxed)
+    }
+
     pub fn toggle_files_recording(&self, switch: bool) {
         self.files_account_enabled.store(switch, Ordering::Relaxed)
+    }
+
+    pub fn toggle_access_pattern(&self, switch: bool) {
+        self.access_pattern_enabled.store(switch, Ordering::Relaxed)
     }
 
     /// For now, each inode has its iostats counter regardless whether it is
@@ -205,11 +235,29 @@ impl GlobalIOStats {
 
         if self.files_enabled() {
             let counters = self.file_counters.read().unwrap();
-            if counters.get(&ino).is_some() {
-                counters.get(&ino).unwrap().stats_fop_inc(fop);
-                counters.get(&ino).unwrap().stats_cumulative(fop, bsize);
-            } else {
-                warn!("No iostats counter for file {}", ino);
+            match counters.get(&ino) {
+                Some(c) => {
+                    c.stats_fop_inc(fop);
+                    c.stats_cumulative(fop, bsize);
+                }
+                None => warn!("No iostats counter for file {}", ino),
+            }
+        }
+
+        if self.access_pattern_enabled() && fop == StatsFop::Read {
+            let records = self.access_patterns.read().unwrap();
+            match records.get(&ino) {
+                Some(r) => {
+                    r.nr_read.fetch_add(1, Ordering::Relaxed);
+                    r.last_access_tp.store(
+                        SystemTime::now()
+                            .duration_since(SystemTime::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs() as usize,
+                        Ordering::Relaxed,
+                    );
+                }
+                None => warn!("No pattern record for file {}", ino),
             }
         }
     }

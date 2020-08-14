@@ -55,6 +55,8 @@ pub struct RafsConfig {
     pub fs_prefetch: bool,
     #[serde(default)]
     pub enable_xattr: bool,
+    #[serde(default)]
+    pub access_pattern: bool,
 }
 
 impl RafsConfig {
@@ -111,6 +113,7 @@ impl Rafs {
         };
 
         rafs.ios.toggle_files_recording(conf.iostats_files);
+        rafs.ios.toggle_access_pattern(conf.access_pattern);
 
         Ok(rafs)
     }
