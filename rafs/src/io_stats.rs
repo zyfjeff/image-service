@@ -224,6 +224,13 @@ impl GlobalIOStats {
                 counters.insert(ino, Arc::new(InodeIOStats::default()));
             }
         }
+
+        if self.access_pattern_enabled() {
+            let mut records = self.access_patterns.write().unwrap();
+            if records.get(&ino).is_none() {
+                records.insert(ino, Arc::new(AccessPattern::default()));
+            }
+        }
     }
 
     pub fn file_stats_update<T>(
