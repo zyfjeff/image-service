@@ -218,9 +218,11 @@ impl GlobalIOStats {
     /// For now, each inode has its iostats counter regardless whether it is
     /// enabled per rafs.
     pub fn new_file_counter(&self, ino: Inode) {
-        let mut counters = self.file_counters.write().unwrap();
-        if self.files_enabled() && counters.get(&ino).is_none() {
-            counters.insert(ino, Arc::new(InodeIOStats::default()));
+        if self.files_enabled() {
+            let mut counters = self.file_counters.write().unwrap();
+            if counters.get(&ino).is_none() {
+                counters.insert(ino, Arc::new(InodeIOStats::default()));
+            }
         }
     }
 
