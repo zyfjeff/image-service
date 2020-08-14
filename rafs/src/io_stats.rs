@@ -394,7 +394,6 @@ pub fn export_files_stats(name: &Option<String>) -> Result<String, String> {
 
 pub fn export_files_access_pattern(name: &Option<String>) -> Result<String, String> {
     let ios_set = IOS_SET.read().unwrap();
-
     match name {
         Some(k) => ios_set
             .get(k)
@@ -403,7 +402,7 @@ pub fn export_files_access_pattern(name: &Option<String>) -> Result<String, Stri
         None => {
             if ios_set.len() == 1 {
                 if let Some(ios) = ios_set.values().next() {
-                    return Ok(ios.export_files_stats());
+                    return Ok(ios.export_files_access_patterns());
                 }
             }
             Err("No records was specified.".to_string())

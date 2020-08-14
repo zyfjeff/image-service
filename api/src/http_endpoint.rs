@@ -47,6 +47,7 @@ pub enum ApiResponsePayload {
 
     /// Nydus filesystem per-file metrics
     FsFilesMetrics(String),
+    FsFilesPatterns(String),
 }
 
 /// This is the response sent by the API server through the mpsc channel.
@@ -60,6 +61,7 @@ pub enum ApiRequest {
     ConfigureDaemon(DaemonConf, Sender<ApiResponse>),
     ExportGlobalMetrics(Sender<ApiResponse>, Option<String>),
     ExportFilesMetrics(Sender<ApiResponse>, Option<String>),
+    ExportAccessPatterns(Sender<ApiResponse>, Option<String>),
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -180,6 +182,26 @@ pub fn export_files_stats(
 
     match info {
         ApiResponsePayload::FsFilesMetrics(info) => Ok(info),
+        _ => Err(ApiError::ResponsePayloadType),
+    }
+}
+
+pub fn export_files_patterns(
+    api_evt: EventFd,
+    api_sender: Sender<ApiRequest>,
+    id: Option<String>,
+) -> ApiResult<String> {
+    let (response_sender, response_receiver) = channel();
+
+    api_sender
+        .send(ApiRequest::ExportAccessPatterns(response_sender, id))
+        .map_err(ApiError::RequestSend)?;
+    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
+
+    let info = response_receiver.recv().map_err(ApiError::ResponseRecv)??;
+
+    match info {
+        ApiResponsePayload::FsFilesPatterns(info) => Ok(info),
         _ => Err(ApiError::ResponsePayloadType),
     }
 }
@@ -326,6 +348,32 @@ impl EndpointHandler for MetricsFilesHandler {
             Method::Get => {
                 let id = extract_query_part(req, &"id");
                 match export_files_stats(api_notifier, api_sender, id).map_err(HttpError::Info) {
+                    Ok(info) => {
+                        let mut response = Response::new(Version::Http11, StatusCode::OK);
+                        response.set_body(Body::new(info));
+                        response
+                    }
+                    Err(e) => error_response(e, StatusCode::InternalServerError),
+                }
+            }
+            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+        }
+    }
+}
+
+pub struct MetricsPatternHandler {}
+
+impl EndpointHandler for MetricsPatternHandler {
+    fn handle_request(
+        &self,
+        req: &Request,
+        api_notifier: EventFd,
+        api_sender: Sender<ApiRequest>,
+    ) -> Response {
+        match req.method() {
+            Method::Get => {
+                let id = extract_query_part(req, &"id");
+                match export_files_patterns(api_notifier, api_sender, id).map_err(HttpError::Info) {
                     Ok(info) => {
                         let mut response = Response::new(Version::Http11, StatusCode::OK);
                         response.set_body(Body::new(info));

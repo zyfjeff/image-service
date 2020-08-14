@@ -676,6 +676,16 @@ impl ApiServer {
                     error!("send API response failed {}", e);
                 }
             }
+            ApiRequest::ExportAccessPatterns(sender, id) => {
+                let resp;
+                match io_stats::export_files_access_pattern(&id) {
+                    Ok(m) => resp = m,
+                    Err(e) => resp = e,
+                }
+                if let Err(e) = sender.send(Ok(ApiResponsePayload::FsFilesPatterns(resp))) {
+                    error!("send API response failed {}", e);
+                }
+            }
         };
 
         Ok(())
