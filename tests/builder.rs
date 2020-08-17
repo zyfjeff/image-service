@@ -257,7 +257,7 @@ impl<'a> Builder<'a> {
     pub fn mount_check(&mut self, expect_texture: &str) -> Result<()> {
         let mount_path = self.work_dir.join("mnt");
 
-        let tree_ret = exec(format!("tree -a -J --sort=name {:?}", mount_path).as_str())?;
+        let tree_ret = exec(format!("tree -a -J -v {:?}", mount_path).as_str())?;
         let md5_ret =
             exec(format!("find {:?} -type f -exec md5sum {{}} + | sort", mount_path).as_str())?;
 
