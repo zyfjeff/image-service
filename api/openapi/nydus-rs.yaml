@@ -127,6 +127,30 @@ paths:
                 $ref: "#/components/schemas/Error"
           description: Internal Server Error
       summary: Returns Rafs files' fop stats
+  /metrics/pattern:
+    get:
+      operationId: exportRafsFilesAccessPattern
+      parameters:
+        - name: id
+          in: query
+          description: "Specify rafs id to get its all files access patterns"
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RafsFilesAccessPatterns"
+          description: Rafs access pattern exporting
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+          description: Internal Server Error
+      summary: Returns Rafs files' access patterns
 components:
   schemas:
     DaemonInfo:
@@ -268,3 +292,18 @@ components:
           type: array
         fop_errors:
           type: array
+    RafsFilesAccessPatterns:
+      example:
+        ino: 100
+        nr_read: 1200
+        last_access_tp: 1597664322
+      properties:
+        ino:
+          type: integer
+          description: File inode number to identify which file is against
+        nr_read:
+          type: integer
+          description: How many times a file is read regardless of io block size and request offset
+        last_access_tp:
+          type: integer
+          description: Last time point at which this file is read. It's wall-time in unit of seconds
