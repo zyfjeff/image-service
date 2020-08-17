@@ -105,7 +105,7 @@ fn test_compact() -> Result<()> {
 }
 
 #[test]
-fn run() -> Result<()> {
+fn integration_run() -> Result<()> {
     test_compact()?;
 
     test(true, true, "direct")?;
