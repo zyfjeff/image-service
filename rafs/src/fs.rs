@@ -84,7 +84,6 @@ pub struct Rafs {
     // static inode attributes
     i_uid: u32,
     i_gid: u32,
-    i_rdev: u32,
     i_time: u64,
 }
 
@@ -101,7 +100,6 @@ impl Rafs {
             fs_prefetch: conf.fs_prefetch,
             i_uid: geteuid().into(),
             i_gid: getegid().into(),
-            i_rdev: 0,
             i_time: SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()
@@ -265,7 +263,8 @@ impl Rafs {
             attr.uid = self.i_uid;
             attr.gid = self.i_gid;
         }
-        attr.rdev = self.i_rdev;
+        // Rafs does not accommodate special files, so `rdev` can always be 0.
+        attr.rdev = 0;
         attr.atime = self.i_time;
         attr.ctime = self.i_time;
         attr.mtime = self.i_time;
@@ -280,7 +279,9 @@ impl Rafs {
             entry.attr.st_uid = self.i_uid;
             entry.attr.st_gid = self.i_gid;
         }
-        entry.attr.st_rdev = self.i_rdev as u64;
+
+        // Rafs does not accommodate special files, so `rdev` can always be 0.
+        entry.attr.st_rdev = 0u64;
         entry.attr.st_atime = self.i_time as i64;
         entry.attr.st_ctime = self.i_time as i64;
         entry.attr.st_mtime = self.i_time as i64;
