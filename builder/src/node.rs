@@ -40,10 +40,7 @@ pub enum Overlay {
 
 impl Overlay {
     pub fn lower_layer(&self) -> bool {
-        if self == &Overlay::Lower {
-            return true;
-        }
-        false
+        self == &Overlay::Lower
     }
 }
 
