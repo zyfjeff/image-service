@@ -82,16 +82,19 @@ pub struct Node {
     pub index: u64,
     /// Inode number in local filesystem
     pub real_ino: Inode,
+    /// dev number is required because a source root directory can have multiple
+    /// partitions mounted. Files from different partition can have unique inode number.
     pub dev: u64,
     /// Overlay type for layered build
     pub overlay: Overlay,
-    /// Source directory path in local filesystem
+    /// Absolute path to root directory where start to build image.
     /// For example: /home/source
     pub source: PathBuf,
-    /// File path in local filesystem
-    /// For example: /home/source/a/b
+    /// Absolute path to each file within build context directory.
+    /// Together with `source`, we can easily get relative path to `source`.
+    /// For example: /home/source/foo/bar
     pub path: PathBuf,
-    /// File inode info
+    /// Define a disk inode structure to persist to disk.
     pub inode: OndiskInode,
     /// Chunks info list of regular file
     pub chunks: Vec<OndiskChunkInfo>,
