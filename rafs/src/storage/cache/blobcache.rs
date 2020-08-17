@@ -469,6 +469,7 @@ mod blob_cache_tests {
     use std::sync::Arc;
 
     use vm_memory::{VolatileMemory, VolatileSlice};
+    use vmm_sys_util::tempdir::TempDir;
 
     use crate::metadata::digest::{self, RafsDigest};
     use crate::metadata::layout::OndiskChunkInfo;
@@ -502,11 +503,20 @@ mod blob_cache_tests {
     #[test]
     fn test_add() {
         // new blob cache
-        let s = r#"{"work_dir":"/tmp"}"#;
+        let tmp_dir = TempDir::new().unwrap();
+        let s = format!(
+            r###"
+        {{
+            "work_dir": {:?}
+        }}
+        "###,
+            tmp_dir.as_path().to_path_buf(),
+        );
+
         let cache_config = CacheConfig {
             cache_validate: true,
             cache_type: String::from("blobcache"),
-            cache_config: serde_json::from_str(s).unwrap(),
+            cache_config: serde_json::from_str(&s).unwrap(),
         };
         let blob_cache = blobcache::new(
             cache_config,
@@ -563,7 +573,5 @@ mod blob_cache_tests {
 
         assert_eq!(r1, &expect[50..]);
         assert_eq!(r2, &expect[50..]);
-
-        std::fs::remove_file("/tmp/blobcache").expect("remove test file err!");
     }
 }

@@ -32,6 +32,9 @@ vm-memory = ">=0.2.0"
 
 nydus-utils = { path = "../utils" }
 
+[dev-dependencies]
+vmm-sys-util = ">=0.3.1"
+
 [features]
 fusedev = ["fuse-rs/fusedev"]
 virtio-fs = ["fuse-rs/virtiofs"]

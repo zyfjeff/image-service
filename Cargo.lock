@@ -921,6 +921,7 @@ dependencies = [
  "spmc",
  "url",
  "vm-memory",
+ "vmm-sys-util",
 ]
 
 [[package]]
