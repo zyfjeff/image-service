@@ -647,11 +647,10 @@ impl RafsInode for OndiskInodeWrapper {
     }
 
     #[inline]
-    fn get_digest(&self) -> Result<RafsDigest> {
+    fn get_digest(&self) -> RafsDigest {
         let state = self.state();
         let inode = self.inode(state.deref());
-
-        Ok(inode.i_digest)
+        inode.i_digest
     }
 
     #[inline]

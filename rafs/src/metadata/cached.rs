@@ -306,8 +306,8 @@ impl RafsInode for CachedInode {
     }
 
     #[inline]
-    fn get_digest(&self) -> Result<RafsDigest> {
-        Ok(self.i_digest)
+    fn get_digest(&self) -> RafsDigest {
+        self.i_digest
     }
 
     #[inline]

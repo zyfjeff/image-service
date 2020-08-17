@@ -391,7 +391,7 @@ pub trait RafsSuperInodes {
     ) -> Result<bool> {
         let child_count = inode.get_child_count()?;
 
-        let expected_digest = inode.get_digest()?;
+        let expected_digest = inode.get_digest();
         let mut hasher = RafsDigest::hasher(digester);
 
         if inode.is_symlink() {
@@ -407,7 +407,7 @@ pub trait RafsSuperInodes {
                     {
                         return Ok(false);
                     }
-                    let child_digest = child.get_digest()?;
+                    let child_digest = child.get_digest();
                     let child_digest = child_digest.as_ref().as_ref();
                     hasher.digest_update(child_digest);
                 } else {
@@ -444,7 +444,7 @@ pub trait RafsInode {
 
     fn name(&self) -> Result<OsString>;
     fn get_symlink(&self) -> Result<OsString>;
-    fn get_digest(&self) -> Result<RafsDigest>;
+    fn get_digest(&self) -> RafsDigest;
     fn get_child_by_name(&self, name: &OsStr) -> Result<Arc<dyn RafsInode>>;
     fn get_child_by_index(&self, idx: Inode) -> Result<Arc<dyn RafsInode>>;
     fn get_child_index(&self) -> Result<u32>;
