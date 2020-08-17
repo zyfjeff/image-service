@@ -151,7 +151,7 @@ impl<'a> Builder<'a> {
             b"lower:more-sub-1",
         )?;
 
-        let long_name = &"😉-name.".repeat(100)[..255];
+        let long_name = &"test-😉-name.".repeat(100)[..255];
         self.create_file(&dir.join(long_name), b"lower:long-name")?;
 
         self.set_xattr(
@@ -208,7 +208,7 @@ impl<'a> Builder<'a> {
 
         self.create_dir(&self.work_dir.join("blobs"))?;
 
-        let tree_ret = exec(format!("tree -a {:?}", lower_dir).as_str())?;
+        let tree_ret = exec(format!("tree -a -J --sort=name {:?}", lower_dir).as_str())?;
         let md5_ret =
             exec(format!("find {:?} -type f -exec md5sum {{}} + | sort", lower_dir).as_str())?;
 
@@ -257,7 +257,7 @@ impl<'a> Builder<'a> {
     pub fn mount_check(&mut self, expect_texture: &str) -> Result<()> {
         let mount_path = self.work_dir.join("mnt");
 
-        let tree_ret = exec(format!("tree -a {:?}", mount_path).as_str())?;
+        let tree_ret = exec(format!("tree -a -J --sort=name {:?}", mount_path).as_str())?;
         let md5_ret =
             exec(format!("find {:?} -type f -exec md5sum {{}} + | sort", mount_path).as_str())?;
 
