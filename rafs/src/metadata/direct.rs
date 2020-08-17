@@ -662,11 +662,10 @@ impl RafsInode for OndiskInodeWrapper {
     }
 
     #[inline]
-    fn get_child_count(&self) -> Result<u32> {
+    fn get_child_count(&self) -> u32 {
         let state = self.state();
         let inode = self.inode(state.deref());
-
-        Ok(inode.i_child_count)
+        inode.i_child_count
     }
 
     fn alloc_bio_desc(&self, offset: u64, size: usize) -> Result<RafsBioDesc> {

@@ -389,7 +389,7 @@ pub trait RafsSuperInodes {
         recursive: bool,
         digester: digest::Algorithm,
     ) -> Result<bool> {
-        let child_count = inode.get_child_count()?;
+        let child_count = inode.get_child_count();
 
         let expected_digest = inode.get_digest();
         let mut hasher = RafsDigest::hasher(digester);
@@ -448,7 +448,7 @@ pub trait RafsInode {
     fn get_child_by_name(&self, name: &OsStr) -> Result<Arc<dyn RafsInode>>;
     fn get_child_by_index(&self, idx: Inode) -> Result<Arc<dyn RafsInode>>;
     fn get_child_index(&self) -> Result<u32>;
-    fn get_child_count(&self) -> Result<u32>;
+    fn get_child_count(&self) -> u32;
     fn get_chunk_info(&self, idx: u32) -> Result<Arc<dyn RafsChunkInfo>>;
     fn get_chunk_blob_id(&self, idx: u32) -> Result<String>;
     fn get_entry(&self) -> Entry;

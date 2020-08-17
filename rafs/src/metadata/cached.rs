@@ -316,8 +316,8 @@ impl RafsInode for CachedInode {
     }
 
     #[inline]
-    fn get_child_count(&self) -> Result<u32> {
-        Ok(self.i_child_cnt)
+    fn get_child_count(&self) -> u32 {
+        self.i_child_cnt
     }
 
     #[inline]

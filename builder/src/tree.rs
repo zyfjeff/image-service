@@ -45,7 +45,7 @@ impl<'a> MetadataTreeBuilder<'a> {
     fn load_children(&self, ino: Inode, parent: Option<&PathBuf>) -> Result<Vec<Tree>> {
         let inode = self.rs.get_inode(ino, true)?;
         let child_index = inode.get_child_index()?;
-        let child_count = inode.get_child_count()?;
+        let child_count = inode.get_child_count();
 
         let parent_path = if let Some(parent) = parent {
             parent.join(inode.name()?)
@@ -71,7 +71,7 @@ impl<'a> MetadataTreeBuilder<'a> {
     /// Parse ondisk inode in RAFS to Node in builder
     fn parse_node(&self, inode: Arc<dyn RafsInode>, path: PathBuf) -> Result<Node> {
         // Parse chunks info
-        let child_count = inode.get_child_count()?;
+        let child_count = inode.get_child_count();
         let mut chunks = Vec::new();
         if inode.is_reg() {
             let chunk_count = child_count;

@@ -193,7 +193,7 @@ impl Rafs {
         }
 
         let mut idx = offset as u32;
-        while idx < parent.get_child_count()? {
+        while idx < parent.get_child_count() {
             let child = parent.get_child_by_index(idx as u64)?;
             match add_entry(DirEntry {
                 ino: child.ino(),
