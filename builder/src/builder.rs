@@ -42,8 +42,8 @@ pub struct Builder {
     /// Save host uid gid in each inode.
     explicit_uidgid: bool,
     /// Cache node index for hardlinks, HashMap<Inode, Vec<index>>.
-    lower_inode_map: HashMap<Inode, Vec<u64>>,
-    upper_inode_map: HashMap<Inode, Vec<u64>>,
+    lower_inode_map: HashMap<(Inode, u64), Vec<u64>>,
+    upper_inode_map: HashMap<(Inode, u64), Vec<u64>>,
     /// Store all chunk digest for chunk deduplicate during build.
     chunk_cache: HashMap<RafsDigest, OndiskChunkInfo>,
     /// Store all blob id entry during build.
@@ -204,7 +204,7 @@ impl Builder {
             } else {
                 &mut self.upper_inode_map
             };
-            if let Some(indexes) = inode_map.get_mut(&child.node.real_ino) {
+            if let Some(indexes) = inode_map.get_mut(&(child.node.real_ino, child.node.dev)) {
                 indexes.push(index);
                 let first_index = indexes.first().unwrap();
                 let nlink = indexes.len() as u32;
@@ -219,7 +219,10 @@ impl Builder {
                 child.node.inode.i_ino = index;
                 child.node.inode.i_nlink = 1;
                 // Store inode real ino
-                inode_map.insert(child.node.real_ino, vec![child.node.index]);
+                inode_map.insert(
+                    (child.node.real_ino, child.node.dev),
+                    vec![child.node.index],
+                );
                 // Store node for bootstrap & blob dump
                 nodes.push(child.node.clone());
             }

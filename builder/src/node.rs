@@ -82,6 +82,7 @@ pub struct Node {
     pub index: u64,
     /// Inode number in local filesystem
     pub real_ino: Inode,
+    pub dev: u64,
     /// Overlay type for layered build
     pub overlay: Overlay,
     /// Source directory path in local filesystem
@@ -111,6 +112,7 @@ impl Node {
         let mut node = Node {
             index: 0,
             real_ino: 0,
+            dev: u64::MAX,
             source,
             path,
             overlay,
@@ -282,6 +284,7 @@ impl Node {
         self.inode.i_blocks = div_round_up(self.inode.i_size, 512);
 
         self.real_ino = meta.st_ino();
+        self.dev = meta.st_dev();
 
         Ok(())
     }

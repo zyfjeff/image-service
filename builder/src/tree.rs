@@ -103,9 +103,12 @@ impl<'a> MetadataTreeBuilder<'a> {
         // Get OndiskInode
         let ondisk_inode = inode.cast_ondisk()?;
 
+        // Inodes from parent bootstrap can't have nodes with unique inode number.
+        // So we assign an invalid dev here.
         Ok(Node {
             index: 0,
             real_ino: ondisk_inode.i_ino,
+            dev: u64::MAX,
             overlay: Overlay::Lower,
             explicit_uidgid: self.rs.meta.explicit_uidgid(),
             source: PathBuf::from_str("/").unwrap(),
