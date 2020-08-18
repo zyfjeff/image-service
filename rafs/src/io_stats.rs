@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::io::Error;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::SystemTime;
@@ -111,14 +112,14 @@ pub struct InodeIOStats {
 ///     1. How many times a file is read regardless of io block size and request offset.
 ///        And this counter can not be cleared.
 ///     2. Last time point at which this file is read. It's wall-time in unit of seconds.
-///     3. File inode number to identify which file is against.
+///     3. File path relative to current rafs root.
 ///
 /// Yes, we now don't have an abundant pattern recorder now. It can be negotiated in the
 /// future about how to enrich it.
 ///
 #[derive(Default, Debug, Serialize)]
 pub struct AccessPattern {
-    ino: u64,
+    file_path: PathBuf,
     nr_read: AtomicUsize,
     /// In unit of seconds.
     last_access_tp: AtomicUsize,
@@ -218,7 +219,7 @@ impl GlobalIOStats {
 
     /// For now, each inode has its iostats counter regardless whether it is
     /// enabled per rafs.
-    pub fn new_file_counter(&self, ino: Inode) {
+    pub fn new_file_counter(&self, ino: Inode, file_path: PathBuf) {
         if self.files_enabled() {
             let mut counters = self.file_counters.write().unwrap();
             if counters.get(&ino).is_none() {
@@ -232,7 +233,7 @@ impl GlobalIOStats {
                 records.insert(
                     ino,
                     Arc::new(AccessPattern {
-                        ino,
+                        file_path,
                         ..Default::default()
                     }),
                 );

@@ -12,6 +12,7 @@ use std::ffi::OsStr;
 use std::fmt;
 use std::io::Result;
 use std::os::unix::ffi::OsStrExt;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -211,12 +212,14 @@ impl Rafs {
                 name: child.name()?.as_bytes(),
             }) {
                 Ok(0) => {
-                    self.ios.new_file_counter(child.ino());
+                    self.ios
+                        .new_file_counter(child.ino(), self.path_from_ino(child.ino())?);
                     break;
                 }
                 Ok(_) => {
                     idx += 1;
-                    self.ios.new_file_counter(child.ino())
+                    self.ios
+                        .new_file_counter(child.ino(), self.path_from_ino(child.ino())?)
                 } // TODO: should we check `size` here?
                 Err(r) => return Err(r),
             }
@@ -259,7 +262,11 @@ impl Rafs {
             Ok(parent
                 .get_child_by_name(target)
                 .map(|i| {
-                    self.ios.new_file_counter(i.ino());
+                    self.ios.new_file_counter(
+                        i.ino(),
+                        self.path_from_ino(i.ino())
+                            .expect("ino passed from get_child_by_name() must be legal"),
+                    );
                     self.get_inode_entry(i)
                 })
                 .unwrap_or_else(|_| self.negative_entry()))
@@ -299,12 +306,36 @@ impl Rafs {
 
         entry
     }
+
+    fn path_from_ino(&self, ino: Inode) -> Result<PathBuf> {
+        if ino == ROOT_ID {
+            return Ok(self.sb.get_inode(ino, false)?.name()?.into());
+        }
+
+        let mut p = PathBuf::new();
+        p = p.join(self.sb.get_inode(ino, false)?.name()?);
+
+        let mut parent = self
+            .sb
+            .get_inode(self.sb.get_inode(ino, false)?.parent(), false)?;
+        let e: PathBuf = parent.name()?.into();
+        p = e.join(p);
+
+        while parent.ino() != ROOT_ID {
+            parent = self.sb.get_inode(parent.parent(), false)?;
+            let e: PathBuf = parent.name()?.into();
+            p = e.join(p);
+        }
+
+        Ok(p)
+    }
 }
 
 impl BackendFileSystem for Rafs {
     fn mount(&self) -> Result<(Entry, u64)> {
         let root_inode = self.sb.get_inode(ROOT_ID, self.digest_validate)?;
-        self.ios.new_file_counter(root_inode.ino());
+        self.ios
+            .new_file_counter(root_inode.ino(), self.path_from_ino(ROOT_ID)?);
         let entry = self.get_inode_entry(root_inode);
         Ok((entry, self.sb.get_max_ino()))
     }
