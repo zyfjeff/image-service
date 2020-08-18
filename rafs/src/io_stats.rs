@@ -111,7 +111,7 @@ pub struct InodeIOStats {
 /// For now, the pattern is composed of:
 ///     1. How many times a file is read regardless of io block size and request offset.
 ///        And this counter can not be cleared.
-///     2. Last time point at which this file is read. It's wall-time in unit of seconds.
+///     2. First time point at which this file is read. It's wall-time in unit of seconds.
 ///     3. File path relative to current rafs root.
 ///
 /// Yes, we now don't have an abundant pattern recorder now. It can be negotiated in the
@@ -122,7 +122,7 @@ pub struct AccessPattern {
     file_path: PathBuf,
     nr_read: AtomicUsize,
     /// In unit of seconds.
-    last_access_tp: AtomicUsize,
+    first_access_time: AtomicUsize,
 }
 
 pub trait InodeStatsCounter {
@@ -266,13 +266,15 @@ impl GlobalIOStats {
             match records.get(&ino) {
                 Some(r) => {
                     r.nr_read.fetch_add(1, Ordering::Relaxed);
-                    r.last_access_tp.store(
-                        SystemTime::now()
-                            .duration_since(SystemTime::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs() as usize,
-                        Ordering::Relaxed,
-                    );
+                    if r.first_access_time.load(Ordering::Relaxed) == 0 {
+                        r.first_access_time.store(
+                            SystemTime::now()
+                                .duration_since(SystemTime::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs() as usize,
+                            Ordering::Relaxed,
+                        );
+                    }
                 }
                 None => warn!("No pattern record for file {}", ino),
             }

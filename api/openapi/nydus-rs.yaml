@@ -296,7 +296,7 @@ components:
       example:
         ino: 100
         nr_read: 1200
-        last_access_tp: 1597664322
+        first_access_time: 1597664322
       properties:
         ino:
           type: integer
@@ -304,6 +304,6 @@ components:
         nr_read:
           type: integer
           description: How many times a file is read regardless of io block size and request offset
-        last_access_tp:
+        first_access_time:
           type: integer
           description: Last time point at which this file is read. It's wall-time in unit of seconds
