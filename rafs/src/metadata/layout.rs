@@ -536,18 +536,6 @@ impl OndiskBlobTable {
         }
     }
 
-    #[inline]
-    pub fn predicted_size(&self, added_blob_id_size: usize) -> usize {
-        let current_size = if self.entries.is_empty() {
-            0
-        } else {
-            self.entries
-                .iter()
-                .fold(0usize, |size, entry| size + entry.size() + 1)
-        };
-        align_to_rafs(current_size + size_of::<u32>() * 2 + added_blob_id_size)
-    }
-
     /// Get blob table size, aligned with RAFS_ALIGNMENT bytes
     pub fn size(&self) -> usize {
         // Blob entry split with '\0'

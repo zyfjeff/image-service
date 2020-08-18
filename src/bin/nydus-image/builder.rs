@@ -326,66 +326,10 @@ impl Builder {
 
     /// Dump bootstrap and blob file, return (Vec<blob_id>, blob_size)
     fn dump_to_file(&mut self) -> Result<(Vec<String>, usize)> {
-        // Inode table
-        let super_block_size = size_of::<OndiskSuperBlock>();
-        let inode_table_entries = self.nodes.len() as u32;
-        let mut inode_table = OndiskInodeTable::new(inode_table_entries as usize);
-        let inode_table_size = inode_table.size();
-        let mut prefetch_table_size = 0;
-        let mut prefetch_table = PrefetchTable::new();
-        let prefetch_table_entries = if self.prefetch_policy == PrefetchPolicy::Fs {
-            prefetch_table_size = align_to_rafs(self.hint_readahead_files.len() * size_of::<u32>());
-            self.hint_readahead_files.len() as u32
-        } else {
-            0u32
-        };
-
-        // Blob table, use sha256 string (length 64) as blob id if not specified
-        let blob_id_size = if self.blob_id != "" {
-            self.blob_id.len()
-        } else {
-            64
-        };
-        let blob_table_size = self.blob_table.predicted_size(blob_id_size);
-        let prefetch_table_offset = super_block_size + inode_table_size;
-        let blob_table_offset = (prefetch_table_offset + prefetch_table_size) as u64;
-        let blob_new_index = self.blob_table.entries.len() as u32;
-
-        // Super block
-        let mut super_block = OndiskSuperBlock::new();
-        let inodes_count = (self.lower_inode_map.len() + self.upper_inode_map.len()) as u64;
-        super_block.set_inodes_count(inodes_count);
-        super_block.set_inode_table_offset(super_block_size as u64);
-        super_block.set_inode_table_entries(inode_table_entries);
-        super_block.set_blob_table_offset(blob_table_offset);
-        super_block.set_blob_table_size(blob_table_size as u32);
-        super_block.set_prefetch_table_offset(prefetch_table_offset as u64);
-        super_block.set_compressor(self.compressor);
-        super_block.set_digester(self.digester);
-        if self.explicit_uidgid {
-            super_block.set_explicit_uidgid();
-        }
-        super_block.set_prefetch_table_entries(prefetch_table_entries);
-
         let mut compress_offset = 0u64;
         let mut decompress_offset = 0u64;
         let mut blob_hash = Sha256::new();
-        let mut inode_offset =
-            (super_block_size + inode_table_size + prefetch_table_size + blob_table_size) as u32;
-
-        for node in &mut self.nodes {
-            inode_table.set(node.index, inode_offset)?;
-            // Add inode size
-            inode_offset += node.inode.size() as u32;
-            if node.inode.has_xattr() && !node.xattrs.pairs.is_empty() {
-                inode_offset += (size_of::<OndiskXAttrs>() + node.xattrs.aligned_size()) as u32;
-            }
-            // Add chunks size
-            if node.is_reg() {
-                inode_offset +=
-                    (node.inode.i_child_count as usize * size_of::<OndiskChunkInfo>()) as u32;
-            }
-        }
+        let blob_new_index = self.blob_table.entries.len() as u32;
 
         // Sort readahead list by file size for better prefetch
         let mut readahead_files = self
@@ -458,6 +402,58 @@ impl Builder {
         // Set inode digest, use reverse iteration order to reduce repeated digest calculations.
         for idx in (0..self.nodes.len()).rev() {
             self.nodes[idx].inode.i_digest = self.digest_node(&self.nodes[idx])?;
+        }
+
+        // Set inode table
+        let super_block_size = size_of::<OndiskSuperBlock>();
+        let inode_table_entries = self.nodes.len() as u32;
+        let mut inode_table = OndiskInodeTable::new(inode_table_entries as usize);
+        let inode_table_size = inode_table.size();
+        let mut prefetch_table_size = 0;
+        let mut prefetch_table = PrefetchTable::new();
+        let prefetch_table_entries = if self.prefetch_policy == PrefetchPolicy::Fs {
+            prefetch_table_size = align_to_rafs(self.hint_readahead_files.len() * size_of::<u32>());
+            self.hint_readahead_files.len() as u32
+        } else {
+            0u32
+        };
+
+        // Set blob table, use sha256 string (length 64) as blob id if not specified
+        let blob_table_size = self.blob_table.size();
+        let prefetch_table_offset = super_block_size + inode_table_size;
+        let blob_table_offset = (prefetch_table_offset + prefetch_table_size) as u64;
+
+        // Set super block
+        let mut super_block = OndiskSuperBlock::new();
+        let inodes_count = (self.lower_inode_map.len() + self.upper_inode_map.len()) as u64;
+        super_block.set_inodes_count(inodes_count);
+        super_block.set_inode_table_offset(super_block_size as u64);
+        super_block.set_inode_table_entries(inode_table_entries);
+        super_block.set_blob_table_offset(blob_table_offset);
+        super_block.set_blob_table_size(blob_table_size as u32);
+        super_block.set_prefetch_table_offset(prefetch_table_offset as u64);
+        super_block.set_compressor(self.compressor);
+        super_block.set_digester(self.digester);
+        if self.explicit_uidgid {
+            super_block.set_explicit_uidgid();
+        }
+        super_block.set_prefetch_table_entries(prefetch_table_entries);
+
+        let mut inode_offset =
+            (super_block_size + inode_table_size + prefetch_table_size + blob_table_size) as u32;
+
+        for node in &mut self.nodes {
+            inode_table.set(node.index, inode_offset)?;
+            // Add inode size
+            inode_offset += node.inode.size() as u32;
+            if node.inode.has_xattr() && !node.xattrs.pairs.is_empty() {
+                inode_offset += (size_of::<OndiskXAttrs>() + node.xattrs.aligned_size()) as u32;
+            }
+            // Add chunks size
+            if node.is_reg() {
+                inode_offset +=
+                    (node.inode.i_child_count as usize * size_of::<OndiskChunkInfo>()) as u32;
+            }
         }
 
         // Dump bootstrap
