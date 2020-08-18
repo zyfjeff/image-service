@@ -446,7 +446,12 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
 }
 
 #[cfg(feature = "virtiofsd")]
-fn create_nydus_daemon(sock: &str, fs: Arc<Vfs>, _evtfd: EventFd) -> Result<Box<dyn NydusDaemon>> {
+fn create_nydus_daemon(
+    sock: &str,
+    fs: Arc<Vfs>,
+    _evtfd: EventFd,
+    _readonly: bool,
+) -> Result<Box<dyn NydusDaemon>> {
     let daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),
         Arc::new(RwLock::new(VhostUserFsBackendHandler::new(fs)?)),
@@ -558,9 +563,10 @@ fn create_nydus_daemon(
     mountpoint: &str,
     fs: Arc<Vfs>,
     evtfd: EventFd,
+    readonly: bool,
 ) -> Result<Box<dyn NydusDaemon>> {
     Ok(Box::new(FusedevDaemon {
-        session: FuseSession::new(Path::new(mountpoint), "nydusfs", "")?,
+        session: FuseSession::new(Path::new(mountpoint), "nydusfs", "", readonly)?,
         server: Arc::new(Server::new(fs)),
         threads: Vec::new(),
         event_fd: evtfd,
@@ -970,9 +976,9 @@ fn main() -> Result<()> {
     let exit_evtfd = evtfd.try_clone()?;
     let mut daemon = {
         if !vu_sock.is_empty() {
-            create_nydus_daemon(vu_sock, vfs, evtfd)
+            create_nydus_daemon(vu_sock, vfs, evtfd, !bootstrap.is_empty())
         } else {
-            create_nydus_daemon(mountpoint, vfs, evtfd)
+            create_nydus_daemon(mountpoint, vfs, evtfd, !bootstrap.is_empty())
         }
     }?;
     info!("starting fuse daemon");

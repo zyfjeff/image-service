@@ -38,7 +38,12 @@ pub struct FuseSession {
 
 impl FuseSession {
     /// create a new fuse session
-    pub fn new(mountpoint: &Path, fsname: &str, subtype: &str) -> io::Result<FuseSession> {
+    pub fn new(
+        mountpoint: &Path,
+        fsname: &str,
+        subtype: &str,
+        readonly: bool,
+    ) -> io::Result<FuseSession> {
         let dest = mountpoint.canonicalize()?;
         if !dest.is_dir() {
             return Err(einval!(format!(
@@ -46,12 +51,11 @@ impl FuseSession {
                 dest.to_str().unwrap()
             )));
         }
-        let file = fuse_kern_mount(
-            &dest,
-            fsname,
-            subtype,
-            MsFlags::MS_NOSUID | MsFlags::MS_NODEV,
-        )?;
+        let mut flags = MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOATIME;
+        if readonly {
+            flags |= MsFlags::MS_RDONLY;
+        }
+        let file = fuse_kern_mount(&dest, fsname, subtype, flags)?;
         Ok(FuseSession {
             mountpoint: dest,
             fsname: fsname.to_owned(),
