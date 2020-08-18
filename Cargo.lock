@@ -733,18 +733,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nydus-builder"
-version = "0.1.0"
-dependencies = [
- "libc",
- "log",
- "nydus-utils",
- "rafs",
- "sha2",
- "xattr",
-]
-
-[[package]]
 name = "nydus-rs"
 version = "0.1.0"
 dependencies = [
@@ -757,7 +745,6 @@ dependencies = [
  "log",
  "nix",
  "nydus-api",
- "nydus-builder",
  "nydus-utils",
  "rafs",
  "rlimit",

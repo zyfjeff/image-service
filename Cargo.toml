@@ -22,7 +22,6 @@ nix = "0.17"
 uuid = { version = "0.8", features = ["serde", "v4"] }
 rafs = { path = "rafs", features = ["backend-localfs", "backend-oss", "backend-registry"] }
 nydus-utils = { path = "utils" }
-nydus-builder = { path = "builder" }
 nydus-api = { path = "api" }
 vm-memory = { version = ">=0.2.0", optional = true }
 fuse-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.git", optional = true }
@@ -38,7 +37,6 @@ virtiofsd = ["fuse-rs/vhost-user-fs", "vm-memory/backend-mmap", "vhost-rs/vhost-
 members = [
     "utils",
     "rafs",
-    "builder",
     "api",
 ]
 

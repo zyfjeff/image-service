@@ -6,6 +6,10 @@
 extern crate clap;
 extern crate stderrlog;
 
+mod builder;
+mod node;
+mod tree;
+
 #[macro_use]
 extern crate log;
 
@@ -21,7 +25,6 @@ use std::os::linux::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use nydus_builder::builder;
 use nydus_utils::einval;
 use nydus_utils::log_level_to_verbosity;
 use rafs::storage::{backend, factory};
