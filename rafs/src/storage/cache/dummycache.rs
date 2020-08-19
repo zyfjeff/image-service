@@ -19,6 +19,7 @@ use crate::storage::utils::{alloc_buf, copyv};
 pub struct DummyCache {
     pub backend: Arc<dyn BlobBackend + Sync + Send>,
     validate: bool,
+    prefetch_worker: PrefetchWorker,
 }
 
 impl RafsCache for DummyCache {
@@ -132,7 +133,7 @@ impl RafsCache for DummyCache {
     /// Prefetch works when blobcache is enabled
     fn prefetch(&self, bios: &mut [RafsBio]) -> Result<usize> {
         let (mut tx, rx) = spmc::channel::<MergedBackendRequest>();
-        for num in 0..2 {
+        for num in 0..self.prefetch_worker.threads_count {
             let backend = Arc::clone(&self.backend);
             let rx = rx.clone();
             let _thread = thread::Builder::new()
@@ -166,9 +167,10 @@ impl RafsCache for DummyCache {
         }
 
         let mut bios = bios.to_vec();
+        let merging_size = self.prefetch_worker.merging_size;
         let _thread = thread::Builder::new().spawn({
             move || {
-                generate_merged_requests(bios.as_mut_slice(), &mut tx);
+                generate_merged_requests(bios.as_mut_slice(), &mut tx, merging_size);
             }
         });
 
@@ -186,5 +188,6 @@ pub fn new(config: CacheConfig, backend: Arc<dyn BlobBackend + Sync + Send>) -> 
     Ok(DummyCache {
         backend,
         validate: config.cache_validate,
+        prefetch_worker: config.prefetch_worker,
     })
 }

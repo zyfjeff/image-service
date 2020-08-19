@@ -38,6 +38,8 @@ pub struct CacheConfig {
     pub cache_type: String,
     #[serde(default, rename = "config")]
     pub cache_config: Value,
+    #[serde(skip_serializing, skip_deserializing)]
+    pub prefetch_worker: PrefetchWorker,
 }
 
 pub fn new_backend(config: BackendConfig) -> Result<Arc<dyn BlobBackend + Send + Sync>> {

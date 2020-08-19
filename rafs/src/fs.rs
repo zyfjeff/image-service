@@ -43,6 +43,24 @@ pub const RAFS_DEFAULT_ENTRY_TIMEOUT: u64 = RAFS_DEFAULT_ATTR_TIMEOUT;
 const DOT: &str = ".";
 const DOTDOT: &str = "..";
 
+fn default_threads_count() -> usize {
+    8
+}
+
+fn default_merging_size() -> usize {
+    128 * 1024
+}
+
+#[derive(Clone, Default, Deserialize)]
+pub struct FsPrefetchControl {
+    #[serde(default)]
+    enable: bool,
+    #[serde(default = "default_threads_count")]
+    threads_count: usize,
+    #[serde(default = "default_merging_size")]
+    merging_size: usize,
+}
+
 /// Rafs storage backend configuration information.
 #[derive(Clone, Default, Deserialize)]
 pub struct RafsConfig {
@@ -53,7 +71,7 @@ pub struct RafsConfig {
     #[serde(default)]
     pub iostats_files: bool,
     #[serde(default)]
-    pub fs_prefetch: bool,
+    pub fs_prefetch: FsPrefetchControl,
     #[serde(default)]
     pub enable_xattr: bool,
     #[serde(default)]
@@ -97,13 +115,15 @@ impl Rafs {
     pub fn new(conf: RafsConfig, id: &str) -> Result<Self> {
         let mut device_conf = conf.device.clone();
         device_conf.cache.cache_validate = conf.digest_validate;
+        device_conf.cache.prefetch_worker.threads_count = conf.fs_prefetch.threads_count;
+        device_conf.cache.prefetch_worker.merging_size = conf.fs_prefetch.merging_size;
         let rafs = Rafs {
             device: device::RafsDevice::new(device_conf)?,
             sb: RafsSuper::new(&conf)?,
             initialized: false,
             ios: io_stats::new(id),
             digest_validate: conf.digest_validate,
-            fs_prefetch: conf.fs_prefetch,
+            fs_prefetch: conf.fs_prefetch.enable,
             xattr_enabled: conf.enable_xattr,
             i_uid: geteuid().into(),
             i_gid: getegid().into(),

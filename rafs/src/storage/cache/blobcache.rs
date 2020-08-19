@@ -143,6 +143,7 @@ pub struct BlobCache {
     cache: Arc<RwLock<BlobCacheState>>,
     validate: bool,
     pub backend: Arc<dyn BlobBackend + Sync + Send>,
+    prefetch_worker: PrefetchWorker,
 }
 
 impl BlobCache {
@@ -349,7 +350,7 @@ impl RafsCache for BlobCache {
         let (mut tx, rx) = spmc::channel::<MergedBackendRequest>();
 
         // TODO: Make thread count configurable.
-        for num in 0..8 {
+        for num in 0..self.prefetch_worker.threads_count {
             let backend = Arc::clone(&self.backend);
             let cache = Arc::clone(&self.cache);
             let rx = rx.clone();
@@ -410,9 +411,10 @@ impl RafsCache for BlobCache {
         // However, due to current implementation, doing so needs modifying key data structure like
         // `Superblock` on `Rafs`. So let's suspend this action.
         let mut bios = bios.to_vec();
+        let merging_size = self.prefetch_worker.merging_size;
         let _thread = thread::Builder::new().spawn({
             move || {
-                generate_merged_requests(bios.as_mut_slice(), &mut tx);
+                generate_merged_requests(bios.as_mut_slice(), &mut tx, merging_size);
             }
         });
 
@@ -463,6 +465,7 @@ pub fn new(config: CacheConfig, backend: Arc<dyn BlobBackend + Sync + Send>) -> 
         })),
         validate: config.cache_validate,
         backend,
+        prefetch_worker: config.prefetch_worker,
     })
 }
 

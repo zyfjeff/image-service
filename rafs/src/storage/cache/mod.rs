@@ -64,7 +64,11 @@ fn is_chunk_continuous(prior: &RafsBio, cur: &RafsBio) -> bool {
     false
 }
 
-fn generate_merged_requests(bios: &mut [RafsBio], tx: &mut spmc::Sender<MergedBackendRequest>) {
+fn generate_merged_requests(
+    bios: &mut [RafsBio],
+    tx: &mut spmc::Sender<MergedBackendRequest>,
+    merging_size: usize,
+) {
     bios.sort_by_key(|entry| entry.chunkinfo.compress_offset());
     let mut index: usize = 1;
     if bios.is_empty() {
@@ -86,9 +90,7 @@ fn generate_merged_requests(bios: &mut [RafsBio], tx: &mut spmc::Sender<MergedBa
 
         // Even more chunks are continuous, still split them per as certain size.
         // So that to achieve an appropriate request size to backend.
-        // TODO: Try to make `certain size` configurable?
-        const MERGE_SIZE: u32 = 128 * 1024;
-        if is_chunk_continuous(prior_bio, cur_bio) && mr.blob_size <= MERGE_SIZE {
+        if is_chunk_continuous(prior_bio, cur_bio) && mr.blob_size <= merging_size as u32 {
             mr.merge_one_chunk(Arc::clone(&cki));
         } else {
             // New a MR if a non-continuous chunk is met.
@@ -104,6 +106,12 @@ fn generate_merged_requests(bios: &mut [RafsBio], tx: &mut spmc::Sender<MergedBa
             break;
         }
     }
+}
+
+#[derive(Clone, Default, Deserialize)]
+pub struct PrefetchWorker {
+    pub threads_count: usize,
+    pub merging_size: usize,
 }
 
 pub trait RafsCache {
