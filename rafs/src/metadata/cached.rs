@@ -480,7 +480,7 @@ pub struct CachedChunkInfo {
     // size of the block, compressed
     c_compr_size: u32,
     c_decompress_size: u32,
-    c_flags: u32,
+    c_flags: RafsChunkFlags,
 }
 
 impl CachedChunkInfo {
@@ -522,7 +522,7 @@ impl RafsChunkInfo for CachedChunkInfo {
     }
 
     fn is_compressed(&self) -> bool {
-        self.c_flags & CHUNK_FLAG_COMPRESSED == CHUNK_FLAG_COMPRESSED
+        self.c_flags.contains(RafsChunkFlags::COMPRESSED)
     }
 
     fn cast_ondisk(&self) -> Result<OndiskChunkInfo> {

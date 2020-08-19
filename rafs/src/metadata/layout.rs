@@ -42,8 +42,6 @@ use nydus_utils::{einval, enoent};
 
 use super::*;
 
-pub const CHUNK_FLAG_COMPRESSED: u32 = 0x1;
-
 pub const RAFS_SUPERBLOCK_SIZE: usize = 8192;
 pub const RAFS_SUPERBLOCK_RESERVED_SIZE: usize = RAFS_SUPERBLOCK_SIZE - 72;
 pub const RAFS_SUPER_MAGIC: u32 = 0x5241_4653;
@@ -802,14 +800,14 @@ impl_bootstrap_converter!(OndiskInode);
 
 /// On disk Rafs data chunk information.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Default, Clone, Copy)]
 pub struct OndiskChunkInfo {
     /// sha256(chunk), [char; RAFS_SHA256_LENGTH]
     pub block_id: RafsDigest,
     /// blob index (blob_id = blob_table[blob_index])
     pub blob_index: u32,
-    /// CHUNK_FLAG_COMPRESSED
-    pub flags: u32,
+    /// chunk flags
+    pub flags: RafsChunkFlags,
 
     /// compressed size in blob
     pub compress_size: u32,
@@ -824,6 +822,19 @@ pub struct OndiskChunkInfo {
     pub file_offset: u64,
     /// reserved
     pub reserved: u64,
+}
+
+bitflags! {
+    pub struct RafsChunkFlags: u32 {
+        /// chunk is compressed
+        const COMPRESSED = 0x0000_0001;
+    }
+}
+
+impl Default for RafsChunkFlags {
+    fn default() -> Self {
+        RafsChunkFlags::empty()
+    }
 }
 
 impl OndiskChunkInfo {
@@ -855,7 +866,7 @@ impl RafsChunkInfo for OndiskChunkInfo {
 
     #[inline]
     fn is_compressed(&self) -> bool {
-        self.flags & CHUNK_FLAG_COMPRESSED == CHUNK_FLAG_COMPRESSED
+        self.flags.contains(RafsChunkFlags::COMPRESSED)
     }
 
     fn cast_ondisk(&self) -> Result<OndiskChunkInfo> {
@@ -871,22 +882,6 @@ impl RafsChunkInfo for OndiskChunkInfo {
 }
 
 impl_bootstrap_converter!(OndiskChunkInfo);
-
-impl Default for OndiskChunkInfo {
-    fn default() -> Self {
-        OndiskChunkInfo {
-            block_id: RafsDigest::default(),
-            blob_index: 0,
-            file_offset: 0,
-            compress_size: 0,
-            decompress_size: 0,
-            compress_offset: 0,
-            decompress_offset: 0,
-            flags: 0,
-            reserved: 0,
-        }
-    }
-}
 
 impl fmt::Display for OndiskChunkInfo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

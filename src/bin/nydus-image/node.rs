@@ -209,7 +209,7 @@ impl Node {
             let (compressed, is_compressed) = compress::compress(&chunk_data, compressor)?;
             let compressed_size = compressed.len();
             if is_compressed {
-                chunk.flags |= CHUNK_FLAG_COMPRESSED;
+                chunk.flags |= RafsChunkFlags::COMPRESSED;
             }
 
             chunk.blob_index = blob_index;
