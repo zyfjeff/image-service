@@ -369,12 +369,34 @@ impl RafsInode for CachedInode {
 
     fn alloc_bio_desc(&self, offset: u64, size: usize) -> Result<RafsBioDesc> {
         let mut desc = RafsBioDesc::new();
-        let end = cmp::min(offset + size as u64, self.i_size);
-        let blksize = self.i_blksize;
+        let blksize = self.i_blksize as u64;
+        let end = offset
+            .checked_add(size as u64)
+            .ok_or_else(|| einval!("invalid read size"))?;
 
-        trace!("inode {:?} offset:{} size:{}", self.i_name, offset, size);
-        for blk in self.i_data.iter() {
-            if (blk.file_offset() + blksize as u64) <= offset {
+        let index_start = if !self.has_hole() {
+            (offset / blksize) as usize
+        } else {
+            0
+        };
+
+        let index_end = if !self.has_hole() {
+            cmp::min((end / blksize) as usize + 1, self.i_data.len())
+        } else {
+            self.i_data.len()
+        };
+
+        trace!(
+            "inode {:?} offset:{} size:{} index_start:{} index_end:{} i_data_len:{}",
+            self.i_name,
+            offset,
+            size,
+            index_start,
+            index_end,
+            self.i_data.len()
+        );
+        for blk in self.i_data[index_start..index_end].iter() {
+            if (blk.file_offset() + blksize) <= offset {
                 continue;
             } else if blk.file_offset() >= end {
                 break;
@@ -387,10 +409,10 @@ impl RafsInode for CachedInode {
                 self.i_meta.get_digester(),
                 (bio_offset - blk.file_offset()) as u32,
                 cmp::min(
-                    end - bio_offset,
-                    blk.file_offset() + blksize as u64 - bio_offset,
+                    cmp::min(end, self.i_size) - bio_offset,
+                    blk.file_offset() + blksize - bio_offset,
                 ) as usize,
-                blksize,
+                self.i_blksize,
             );
             desc.bi_size += bio.size;
             desc.bi_vec.push(bio);
