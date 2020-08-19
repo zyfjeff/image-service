@@ -484,6 +484,7 @@ mod blob_cache_tests {
     use crate::metadata::RAFS_DEFAULT_BLOCK_SIZE;
     use crate::storage::backend::BlobBackend;
     use crate::storage::cache::blobcache;
+    use crate::storage::cache::PrefetchWorker;
     use crate::storage::cache::RafsCache;
     use crate::storage::compress;
     use crate::storage::device::RafsBio;
@@ -525,6 +526,7 @@ mod blob_cache_tests {
             cache_validate: true,
             cache_type: String::from("blobcache"),
             cache_config: serde_json::from_str(&s).unwrap(),
+            prefetch_worker: PrefetchWorker::default(),
         };
         let blob_cache = blobcache::new(
             cache_config,
