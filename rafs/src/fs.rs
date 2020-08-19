@@ -233,13 +233,13 @@ impl Rafs {
             }) {
                 Ok(0) => {
                     self.ios
-                        .new_file_counter(child.ino(), self.path_from_ino(child.ino())?);
+                        .new_file_counter(child.ino(), |i| self.path_from_ino(i).unwrap());
                     break;
                 }
                 Ok(_) => {
                     idx += 1;
                     self.ios
-                        .new_file_counter(child.ino(), self.path_from_ino(child.ino())?)
+                        .new_file_counter(child.ino(), |i| self.path_from_ino(i).unwrap())
                 } // TODO: should we check `size` here?
                 Err(r) => return Err(r),
             }
@@ -282,11 +282,8 @@ impl Rafs {
             Ok(parent
                 .get_child_by_name(target)
                 .map(|i| {
-                    self.ios.new_file_counter(
-                        i.ino(),
-                        self.path_from_ino(i.ino())
-                            .expect("ino passed from get_child_by_name() must be legal"),
-                    );
+                    self.ios
+                        .new_file_counter(i.ino(), |i| self.path_from_ino(i).unwrap());
                     self.get_inode_entry(i)
                 })
                 .unwrap_or_else(|_| self.negative_entry()))
@@ -355,7 +352,7 @@ impl BackendFileSystem for Rafs {
     fn mount(&self) -> Result<(Entry, u64)> {
         let root_inode = self.sb.get_inode(ROOT_ID, self.digest_validate)?;
         self.ios
-            .new_file_counter(root_inode.ino(), self.path_from_ino(ROOT_ID)?);
+            .new_file_counter(root_inode.ino(), |i| self.path_from_ino(i).unwrap());
         let entry = self.get_inode_entry(root_inode);
         Ok((entry, self.sb.get_max_ino()))
     }

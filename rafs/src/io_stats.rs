@@ -84,7 +84,6 @@ pub struct GlobalIOStats {
     // inside dead-lock, etc.
     // TODO: To be implemented, should not be hard.
     last_fop_tp: AtomicUsize,
-
     // Rwlock closes the race that more than one threads are creating counters concurrently.
     #[serde(skip_serializing, skip_deserializing)]
     file_counters: RwLock<HashMap<Inode, Arc<InodeIOStats>>>,
@@ -219,7 +218,10 @@ impl GlobalIOStats {
 
     /// For now, each inode has its iostats counter regardless whether it is
     /// enabled per rafs.
-    pub fn new_file_counter(&self, ino: Inode, file_path: PathBuf) {
+    pub fn new_file_counter<F>(&self, ino: Inode, path_getter: F)
+    where
+        F: Fn(u64) -> PathBuf,
+    {
         if self.files_enabled() {
             let mut counters = self.file_counters.write().unwrap();
             if counters.get(&ino).is_none() {
@@ -233,7 +235,7 @@ impl GlobalIOStats {
                 records.insert(
                     ino,
                     Arc::new(AccessPattern {
-                        file_path,
+                        file_path: path_getter(ino),
                         ..Default::default()
                     }),
                 );
