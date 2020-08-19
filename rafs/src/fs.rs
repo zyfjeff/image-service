@@ -329,22 +329,23 @@ impl Rafs {
             return Ok(self.sb.get_inode(ino, false)?.name()?.into());
         }
 
-        let mut p = PathBuf::new();
-        p = p.join(self.sb.get_inode(ino, false)?.name()?);
+        let mut path = PathBuf::new();
+        let mut cur_ino = ino;
+        let mut inode;
 
-        let mut parent = self
-            .sb
-            .get_inode(self.sb.get_inode(ino, false)?.parent(), false)?;
-        let e: PathBuf = parent.name()?.into();
-        p = e.join(p);
+        loop {
+            inode = self.sb.get_inode(cur_ino, false)?;
+            let e: PathBuf = inode.name()?.into();
+            path = e.join(path);
 
-        while parent.ino() != ROOT_ID {
-            parent = self.sb.get_inode(parent.parent(), false)?;
-            let e: PathBuf = parent.name()?.into();
-            p = e.join(p);
+            if inode.ino() == ROOT_ID {
+                break;
+            } else {
+                cur_ino = inode.parent();
+            }
         }
 
-        Ok(p)
+        Ok(path)
     }
 }
 
