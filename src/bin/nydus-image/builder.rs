@@ -359,6 +359,7 @@ impl Builder {
 
         // Dump other nodes
         let mut blob_size = blob_readahead_size;
+        let mut has_xattr = false;
         for node in &mut self.nodes {
             if let Some(Some(_)) = self.readahead_files.get(&node.rootfs()) {
                 // Prepare readahead node for bootstrap dump
@@ -381,6 +382,9 @@ impl Builder {
                         blob_new_index,
                     )?;
                 }
+            }
+            if node.inode.has_xattr() {
+                has_xattr = true;
             }
         }
 
@@ -436,6 +440,9 @@ impl Builder {
         super_block.set_digester(self.digester);
         if self.explicit_uidgid {
             super_block.set_explicit_uidgid();
+        }
+        if has_xattr {
+            super_block.set_has_xattr();
         }
         super_block.set_prefetch_table_entries(prefetch_table_entries);
 

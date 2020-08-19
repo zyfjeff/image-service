@@ -159,11 +159,22 @@ pub struct OndiskSuperBlock {
 
 bitflags! {
     pub struct RafsSuperFlags: u64 {
+        /// Data chunks are not compressed.
         const COMPRESS_NONE = 0x0000_0001;
+        /// Data chunks are compressed with lz4_block.
         const COMPRESS_LZ4_BLOCK = 0x0000_0002;
+        /// Use blake3 hash algorithm to calculate digest.
         const DIGESTER_BLAKE3 = 0x0000_0004;
+        /// Use sha256 hash algorithm to calculate digest.
         const DIGESTER_SHA256 = 0x0000_0008;
+        /// Inode has explicit uid gid fields.
+        /// If unset, use nydusd process euid/egid for all
+        /// inodes at runtime.
         const EXPLICIT_UID_GID = 0x0000_0010;
+        /// Some inode has xattr.
+        /// If unset, nydusd may return ENOSYS for getxattr/listxattr
+        /// calls.
+        const HAS_XATTR = 0x0000_0020;
     }
 }
 
@@ -189,6 +200,9 @@ impl fmt::Display for RafsSuperFlags {
         }
         if self.contains(RafsSuperFlags::EXPLICIT_UID_GID) {
             write!(f, "EXPLICIT_UID_GID ")?;
+        }
+        if self.contains(RafsSuperFlags::HAS_XATTR) {
+            write!(f, "HAS_XATTR ")?;
         }
         Ok(())
     }
@@ -306,6 +320,10 @@ impl OndiskSuperBlock {
 
     pub fn set_explicit_uidgid(&mut self) {
         self.s_flags |= RafsSuperFlags::EXPLICIT_UID_GID.bits();
+    }
+
+    pub fn set_has_xattr(&mut self) {
+        self.s_flags |= RafsSuperFlags::HAS_XATTR.bits();
     }
 
     impl_pub_getter_setter!(magic, set_magic, s_magic, u32);
