@@ -138,7 +138,7 @@ impl Node {
         }
 
         if !self.xattrs.pairs.is_empty() {
-            self.inode.i_flags |= INO_FLAG_XATTR;
+            self.inode.i_flags |= RafsInodeFlags::XATTR;
         }
 
         Ok(())
@@ -299,7 +299,7 @@ impl Node {
         if self.is_reg() {
             self.inode.i_child_count = self.chunk_count() as u32;
         } else if self.is_symlink() {
-            self.inode.i_flags |= INO_FLAG_SYMLINK as u64;
+            self.inode.i_flags |= RafsInodeFlags::SYMLINK;
             let target_path = fs::read_link(&self.path)?;
             self.symlink = Some(target_path.into());
             self.inode

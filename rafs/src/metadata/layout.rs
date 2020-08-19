@@ -42,11 +42,6 @@ use nydus_utils::{einval, enoent};
 
 use super::*;
 
-pub const INO_FLAG_SYMLINK: u64 = 0x1;
-pub const INO_FLAG_HARDLINK: u64 = 0x2;
-pub const INO_FLAG_XATTR: u64 = 0x4;
-pub const INO_FLAG_ALL: u64 = INO_FLAG_HARDLINK | INO_FLAG_SYMLINK | INO_FLAG_XATTR;
-
 pub const CHUNK_FLAG_COMPRESSED: u32 = 0x1;
 
 pub const RAFS_SUPERBLOCK_SIZE: usize = 8192;
@@ -685,7 +680,7 @@ pub struct OndiskInode {
     pub i_size: u64,
     pub i_blocks: u64,
     /// HARDLINK | SYMLINK | PREFETCH_HINT
-    pub i_flags: u64,
+    pub i_flags: RafsInodeFlags,
     pub i_nlink: u32,
     /// for dir, child start index
     pub i_child_index: u32, // 96
@@ -697,6 +692,23 @@ pub struct OndiskInode {
     /// symlink path size, [char; i_symlink_size]
     pub i_symlink_size: u16, // 104
     pub i_reserved: [u8; 24], // 128
+}
+
+bitflags! {
+    pub struct RafsInodeFlags: u64 {
+        /// Inode is a symlink.
+        const SYMLINK = 0x0000_0001;
+        /// Inode has hardlinks.
+        const HARDLINK = 0x0000_0002;
+        /// Inode has extended attributes.
+        const XATTR = 0x0000_0004;
+   }
+}
+
+impl Default for RafsInodeFlags {
+    fn default() -> Self {
+        RafsInodeFlags::empty()
+    }
 }
 
 impl OndiskInode {
@@ -747,7 +759,7 @@ impl OndiskInode {
 
     #[inline]
     pub fn has_xattr(&self) -> bool {
-        self.i_flags & INO_FLAG_XATTR == INO_FLAG_XATTR
+        self.i_flags.contains(RafsInodeFlags::XATTR)
     }
 }
 

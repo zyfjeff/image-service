@@ -158,7 +158,7 @@ pub struct CachedInode {
     i_projid: u32,
     i_uid: u32,
     i_gid: u32,
-    i_flags: u64,
+    i_flags: RafsInodeFlags,
     i_size: u64,
     i_blocks: u64,
     i_nlink: u32,
@@ -416,7 +416,7 @@ impl RafsInode for CachedInode {
     }
 
     fn has_xattr(&self) -> bool {
-        self.i_flags & INO_FLAG_XATTR == INO_FLAG_XATTR
+        self.i_flags.contains(RafsInodeFlags::XATTR)
     }
 
     fn collect_descendants_inodes(
