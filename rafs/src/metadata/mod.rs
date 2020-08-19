@@ -469,6 +469,7 @@ pub trait RafsInode {
     fn is_reg(&self) -> bool;
     fn is_hardlink(&self) -> bool;
     fn has_xattr(&self) -> bool;
+    fn has_hole(&self) -> bool;
 
     fn ino(&self) -> u64;
     fn parent(&self) -> u64;

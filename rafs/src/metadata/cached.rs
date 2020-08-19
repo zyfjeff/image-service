@@ -419,6 +419,10 @@ impl RafsInode for CachedInode {
         self.i_flags.contains(RafsInodeFlags::XATTR)
     }
 
+    fn has_hole(&self) -> bool {
+        self.i_flags.contains(RafsInodeFlags::HAS_HOLE)
+    }
+
     fn collect_descendants_inodes(
         &self,
         descendants: &mut Vec<Arc<dyn RafsInode>>,

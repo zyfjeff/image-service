@@ -700,6 +700,8 @@ bitflags! {
         const HARDLINK = 0x0000_0002;
         /// Inode has extended attributes.
         const XATTR = 0x0000_0004;
+        /// Inode chunks has holes.
+        const HAS_HOLE = 0x0000_0008;
    }
 }
 
@@ -758,6 +760,11 @@ impl OndiskInode {
     #[inline]
     pub fn has_xattr(&self) -> bool {
         self.i_flags.contains(RafsInodeFlags::XATTR)
+    }
+
+    #[inline]
+    pub fn has_hole(&self) -> bool {
+        self.i_flags.contains(RafsInodeFlags::HAS_HOLE)
     }
 }
 

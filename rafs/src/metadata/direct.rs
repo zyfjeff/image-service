@@ -751,6 +751,7 @@ impl RafsInode for OndiskInodeWrapper {
     impl_inode_wrapper!(is_symlink, bool);
     impl_inode_wrapper!(is_hardlink, bool);
     impl_inode_wrapper!(has_xattr, bool);
+    impl_inode_wrapper!(has_hole, bool);
     impl_inode_getter!(ino, i_ino, u64);
     impl_inode_getter!(parent, i_parent, u64);
     impl_inode_getter!(size, i_size, u64);
