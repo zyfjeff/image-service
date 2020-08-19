@@ -868,10 +868,14 @@ fn main() -> Result<()> {
 
     stderrlog::new()
         .quiet(false)
-        .verbosity(log_level_to_verbosity(v))
+        .verbosity(log_level_to_verbosity(log::LevelFilter::Trace))
         .timestamp(stderrlog::Timestamp::Second)
         .init()
         .unwrap();
+    // We rely on `log` macro to limit current log level rather than `stderrlog`
+    // So we set stderrlog verbosity to TRACE which is High enough. Otherwise, we
+    // can't change log level to a higher level than what is passed to `stderrlog`.
+    log::set_max_level(v);
 
     // Retrieve arguments
     // sock means vhost-user-backend only
