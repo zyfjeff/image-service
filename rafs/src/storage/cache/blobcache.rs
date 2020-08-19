@@ -362,12 +362,35 @@ impl RafsCache for BlobCache {
                         let blob_size = mr.blob_size;
                         let continuous_chunks = &mr.chunks;
                         let blob_id = &mr.blob_id;
+
+                        if continuous_chunks.is_empty() {
+                            continue;
+                        }
+
                         trace!(
                             "Merged req id {} req offset {} size {}",
                             blob_id,
                             blob_offset,
                             blob_size
                         );
+
+                        let head_chunk = &continuous_chunks[0];
+                        let head_chunk_offset_decompressed = head_chunk.decompress_offset() as i64;
+
+                        let mut c_guard = cache.write().unwrap();
+                        let c = c_guard.get_blob_fd(blob_id.as_str()).unwrap();
+                        // TODO: Detect the blobcache file to see if it is already fulfilled.
+                        // It's rough now since the whole merged request may not be all fulfilled.
+                        // But we assume it is less likely.
+                        let data_offset = unsafe {
+                            libc::lseek(c, head_chunk_offset_decompressed, libc::SEEK_DATA)
+                        };
+                        if data_offset == head_chunk_offset_decompressed {
+                            continue;
+                        }
+
+                        drop(c_guard);
+
                         let mut c_buf = alloc_buf(blob_size as usize);
                         // Blob id must be unique.
                         // TODO: Currently, request length to backend may span a whole chunk,
