@@ -34,7 +34,10 @@ oss backend with blobcache:
     }
   },
   "mode": "direct",
-  "digest_validate": false
+  "digest_validate": false,
+  "iostats_files": false,
+  "fs_prefetch": false,
+  "enable_xattr": false
 }
 ```
 

@@ -100,6 +100,9 @@ impl RafsSuperMeta {
     pub fn explicit_uidgid(&self) -> bool {
         self.flags.contains(RafsSuperFlags::EXPLICIT_UID_GID)
     }
+    pub fn has_xattr(&self) -> bool {
+        self.flags.contains(RafsSuperFlags::HAS_XATTR)
+    }
 }
 
 pub enum RafsMode {

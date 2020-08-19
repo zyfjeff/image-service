@@ -53,6 +53,8 @@ pub struct RafsConfig {
     pub iostats_files: bool,
     #[serde(default)]
     pub fs_prefetch: bool,
+    #[serde(default)]
+    pub enable_xattr: bool,
 }
 
 impl RafsConfig {
@@ -80,6 +82,7 @@ pub struct Rafs {
     digest_validate: bool,
     fs_prefetch: bool,
     initialized: bool,
+    xattr_enabled: bool,
     ios: Arc<io_stats::GlobalIOStats>,
     // static inode attributes
     i_uid: u32,
@@ -98,6 +101,7 @@ impl Rafs {
             ios: io_stats::new(id),
             digest_validate: conf.digest_validate,
             fs_prefetch: conf.fs_prefetch,
+            xattr_enabled: conf.enable_xattr,
             i_uid: geteuid().into(),
             i_gid: getegid().into(),
             i_time: SystemTime::now()
@@ -175,6 +179,10 @@ impl Rafs {
         }
 
         Ok(())
+    }
+
+    fn xattr_supported(&self) -> bool {
+        self.xattr_enabled || self.sb.meta.has_xattr()
     }
 
     fn do_readdir<F>(&self, ino: Inode, size: u32, offset: u64, mut add_entry: F) -> Result<()>
@@ -413,6 +421,10 @@ impl FileSystem for Rafs {
     }
 
     fn getxattr(&self, _ctx: Context, inode: u64, name: &CStr, size: u32) -> Result<GetxattrReply> {
+        if !self.xattr_supported() {
+            return Err(std::io::Error::from_raw_os_error(libc::ENOSYS));
+        }
+
         let name = OsStr::from_bytes(name.to_bytes());
         let inode = self.sb.get_inode(inode, false)?;
 
@@ -428,6 +440,10 @@ impl FileSystem for Rafs {
     }
 
     fn listxattr(&self, _ctx: Context, inode: u64, size: u32) -> Result<ListxattrReply> {
+        if !self.xattr_supported() {
+            return Err(std::io::Error::from_raw_os_error(libc::ENOSYS));
+        }
+
         let inode = self.sb.get_inode(inode, false)?;
 
         let mut count = 0;
