@@ -954,9 +954,6 @@ fn main() -> Result<()> {
         info!("vfs mounted");
     }
 
-    nydus_utils::signal::register_signal_handler(signal::SIGINT, sig_exit);
-    nydus_utils::signal::register_signal_handler(signal::SIGTERM, sig_exit);
-
     let mut event_manager = EventManager::<Arc<dyn SubscriberWrapper>>::new().unwrap();
 
     let vfs = Arc::new(vfs);
@@ -998,6 +995,8 @@ fn main() -> Result<()> {
     info!("starting fuse daemon");
 
     *EXIT_EVTFD.lock().unwrap().deref_mut() = Some(exit_evtfd);
+    nydus_utils::signal::register_signal_handler(signal::SIGINT, sig_exit);
+    nydus_utils::signal::register_signal_handler(signal::SIGTERM, sig_exit);
 
     if let Err(e) = daemon.start(threads) {
         error!("Failed to start daemon: {:?}", e);
