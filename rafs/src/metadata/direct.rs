@@ -720,7 +720,7 @@ impl RafsInode for OndiskInodeWrapper {
             0
         };
         let index_end = if !self.has_hole() {
-            cmp::min((end / blksize) as u32, inode.i_child_count - 1) + 1
+            cmp::min((end / blksize) as u32 + 1, inode.i_child_count)
         } else {
             inode.i_child_count
         };
