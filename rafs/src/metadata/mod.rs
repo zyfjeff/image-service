@@ -5,7 +5,7 @@
 
 //! Structs and Traits for RAFS file system meta data management.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::{Error, Result, Seek, SeekFrom};
@@ -325,6 +325,10 @@ impl RafsSuper {
             bi_vec: Vec::new(),
         };
 
+        // No need to prefetch blob data for each alias as they share the same range,
+        // we do it once.
+        let mut hardlinks: HashSet<u64> = HashSet::new();
+
         for inode_idx in prefetch_table.inode_indexes.iter() {
             // index 0 is invalid, it was added because prefetch table has to be aligned.
             if *inode_idx == 0 {
@@ -342,15 +346,28 @@ impl RafsSuper {
                         let _ = inode.collect_descendants_inodes(&mut descendants)?;
 
                         for i in descendants {
+                            if i.is_hardlink() {
+                                if hardlinks.contains(&i.ino()) {
+                                    continue;
+                                } else {
+                                    hardlinks.insert(i.ino());
+                                }
+                            }
                             let mut desc = i.alloc_bio_desc(0, i.size() as usize)?;
                             head_desc.bi_vec.append(desc.bi_vec.as_mut());
                             head_desc.bi_size += desc.bi_size;
                         }
-
                         continue;
                     }
 
-                    // Per as get_child_count() implementation, it can't fail.
+                    if inode.is_hardlink() {
+                        if hardlinks.contains(&inode.ino()) {
+                            continue;
+                        } else {
+                            hardlinks.insert(inode.ino());
+                        }
+                    }
+
                     let mut desc = inode.alloc_bio_desc(0, inode.size() as usize)?;
                     head_desc.bi_vec.append(desc.bi_vec.as_mut());
                     head_desc.bi_size += desc.bi_size;
