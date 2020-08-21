@@ -345,16 +345,19 @@ impl Builder {
         for index in &readahead_files {
             let node = self.nodes.get_mut(**index as usize - 1).unwrap();
             debug!("readahead {}", node);
-            blob_readahead_size += node.dump_blob(
-                &mut self.f_blob,
-                &mut blob_hash,
-                &mut compress_offset,
-                &mut decompress_offset,
-                &mut self.chunk_cache,
-                self.compressor,
-                self.digester,
-                blob_new_index,
-            )?;
+            if node.overlay == Overlay::UpperAddition || node.overlay == Overlay::UpperModification
+            {
+                blob_readahead_size += node.dump_blob(
+                    &mut self.f_blob,
+                    &mut blob_hash,
+                    &mut compress_offset,
+                    &mut decompress_offset,
+                    &mut self.chunk_cache,
+                    self.compressor,
+                    self.digester,
+                    blob_new_index,
+                )?;
+            }
         }
 
         // Dump other nodes
