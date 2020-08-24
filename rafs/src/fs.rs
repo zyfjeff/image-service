@@ -12,7 +12,7 @@ use std::ffi::OsStr;
 use std::fmt;
 use std::io::Result;
 use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -164,7 +164,11 @@ impl Rafs {
     }
 
     /// Import an rafs bootstrap to initialize the filesystem instance.
-    pub fn import(&mut self, r: &mut RafsIoReader) -> Result<()> {
+    pub fn import(
+        &mut self,
+        r: &mut RafsIoReader,
+        prefetch_dirs: Option<Vec<&Path>>,
+    ) -> Result<()> {
         if self.initialized {
             return Err(ealready!("rafs already mounted"));
         }
@@ -179,7 +183,37 @@ impl Rafs {
 
         // Device should be ready before any prefetch.
         if self.fs_prefetch {
-            if let Ok(ref mut desc) = self.sb.prefetch_hint_files(r) {
+            let dir_inodes = match prefetch_dirs {
+                Some(dirs) => {
+                    let mut inodes = Vec::<Inode>::new();
+                    for d in dirs {
+                        let mut parent = self.sb.get_inode(ROOT_ID, self.digest_validate)?;
+                        for p in d
+                            .components()
+                            .map(|comp| match comp {
+                                Component::Normal(name) => name,
+                                Component::ParentDir => OsStr::from_bytes(DOTDOT.as_bytes()),
+                                Component::CurDir => OsStr::from_bytes(DOT.as_bytes()),
+                                _ => panic!("Illegal specified directory"),
+                            })
+                            .collect::<Vec<_>>()
+                        {
+                            parent = match parent.get_child_by_name(p) {
+                                Ok(i) => i,
+                                Err(_) => {
+                                    warn!("File {:?} not in rafs", p);
+                                    break;
+                                }
+                            }
+                        }
+                        inodes.push(parent.ino());
+                    }
+                    Some(inodes)
+                }
+                None => None,
+            };
+
+            if let Ok(ref mut desc) = self.sb.prefetch_hint_files(r, dir_inodes) {
                 if self.device.prefetch(desc).is_err() {
                     eother!("Prefetch error");
                 }

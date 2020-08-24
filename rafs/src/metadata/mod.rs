@@ -393,7 +393,7 @@ impl RafsSuper {
 
         if let Some(dirs) = dirs {
             for ino in dirs {
-                let mut dir_inode = self
+                let dir_inode = self
                     .inodes
                     .get_inode(ino as u64, self.digest_validate)
                     .expect("Can't find inode");

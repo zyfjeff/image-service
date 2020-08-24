@@ -19,6 +19,7 @@ use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 use std::fs::File;
 use std::io::{Read, Result};
 use std::ops::{Deref, DerefMut};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 
@@ -337,7 +338,7 @@ fn rafs_mount(info: MountInfo, default_rafs_conf: &RafsConfig, vfs: &Arc<Vfs>) -
             if let Some(source) = info.source.as_ref() {
                 let mut file = Box::new(File::open(source).map_err(|e| eother!(e))?)
                     as Box<dyn rafs::RafsIoRead>;
-                rafs.import(&mut file)?;
+                rafs.import(&mut file, None)?;
 
                 match vfs.mount(Box::new(rafs), &info.mountpoint) {
                     Ok(()) => {
@@ -467,6 +468,15 @@ fn main() -> Result<()> {
                 .required(false)
                 .global(true),
         )
+        .arg(
+            Arg::with_name("prefetch-files")
+                .long("prefetch-files")
+                .help("Specify a files list hinting which files should be prefetched.")
+                .takes_value(true)
+                .required(false)
+                .multiple(true)
+                .global(true),
+        )
         .get_matches();
 
     let v = cmd_arguments
@@ -485,6 +495,23 @@ fn main() -> Result<()> {
     // So we set stderrlog verbosity to TRACE which is High enough. Otherwise, we
     // can't change log level to a higher level than what is passed to `stderrlog`.
     log::set_max_level(v);
+    // A string including multiple directories and regular files should be separated by white-space, e.g.
+    //      <path1> <path2> <path3>
+    // And each path should be relative to rafs root, e.g.
+    //      /foo1/bar1 /foo2/bar2
+    // Specifying both regular file and directory are supported.
+    let prefetch_files: Vec<&Path>;
+    if let Some(files) = cmd_arguments.values_of("prefetch-files") {
+        prefetch_files = files.map(|s| Path::new(s)).collect();
+        // Sanity check
+        for d in &prefetch_files {
+            if !d.starts_with(Path::new("/")) {
+                return Err(einval!(format!("Illegal prefetch files input {:?}", d)));
+            }
+        }
+    } else {
+        prefetch_files = Vec::new();
+    }
 
     // Retrieve arguments
     // sock means vhost-user-backend only
@@ -557,7 +584,7 @@ fn main() -> Result<()> {
     } else if !bootstrap.is_empty() {
         let mut rafs = Rafs::new(rafs_conf.clone(), &"/".to_string())?;
         let mut file = Box::new(File::open(bootstrap)?) as Box<dyn rafs::RafsIoRead>;
-        rafs.import(&mut file)?;
+        rafs.import(&mut file, Some(prefetch_dirs))?;
         info!("rafs mounted: {}", rafs_conf);
         vfs.mount(Box::new(rafs), "/")?;
         info!("vfs mounted");
