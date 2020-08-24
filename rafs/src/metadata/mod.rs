@@ -301,10 +301,22 @@ impl RafsSuper {
         self.inodes.get_max_ino()
     }
 
-    pub fn prefetch_hint_files(&self, r: &mut RafsIoReader) -> Result<RafsBioDesc> {
+    /// This is fs layer prefetch entry point where 2 kinds of prefetch can be started:
+    /// 1. Static method from prefetch table hint:
+    ///     Base on prefetch table which is persisted to bootstrap when building image.
+    /// 2. Dynamic method from hint directory list specified when nydusd starts.
+    ///     Specify as a directory list when rafs is being imported. No prefetch table has to be
+    ///     involved.
+    /// Each inode passed into should correspond to directory. And it already does the file type
+    /// check inside.
+    pub fn prefetch_hint_files(
+        &self,
+        r: &mut RafsIoReader,
+        dirs: Option<Vec<Inode>>,
+    ) -> Result<RafsBioDesc> {
         let hint_entries = self.meta.prefetch_table_entries as usize;
 
-        if hint_entries == 0 {
+        if hint_entries == 0 && dirs.is_none() {
             return Err(enoent!("Prefetch table is empty!"));
         }
 
@@ -375,6 +387,23 @@ impl RafsSuper {
                 Err(_) => {
                     enoent!("Can't find inode");
                     continue;
+                }
+            }
+        }
+
+        if let Some(dirs) = dirs {
+            for ino in dirs {
+                let mut dir_inode = self
+                    .inodes
+                    .get_inode(ino as u64, self.digest_validate)
+                    .expect("Can't find inode");
+                let mut descendants = Vec::new();
+                let _ = dir_inode.collect_descendants_inodes(&mut descendants)?;
+
+                for i in descendants {
+                    let mut desc = i.alloc_bio_desc(0, i.size() as usize)?;
+                    head_desc.bi_vec.append(desc.bi_vec.as_mut());
+                    head_desc.bi_size += desc.bi_size;
                 }
             }
         }
