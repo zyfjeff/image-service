@@ -167,7 +167,7 @@ impl Rafs {
     pub fn import(
         &mut self,
         r: &mut RafsIoReader,
-        prefetch_dirs: Option<Vec<&Path>>,
+        prefetch_files: Option<Vec<&Path>>,
     ) -> Result<()> {
         if self.initialized {
             return Err(ealready!("rafs already mounted"));
@@ -183,37 +183,22 @@ impl Rafs {
 
         // Device should be ready before any prefetch.
         if self.fs_prefetch {
-            let dir_inodes = match prefetch_dirs {
-                Some(dirs) => {
+            let inodes = match prefetch_files {
+                Some(files) => {
                     let mut inodes = Vec::<Inode>::new();
-                    for d in dirs {
-                        let mut parent = self.sb.get_inode(ROOT_ID, self.digest_validate)?;
-                        for p in d
-                            .components()
-                            .map(|comp| match comp {
-                                Component::Normal(name) => name,
-                                Component::ParentDir => OsStr::from_bytes(DOTDOT.as_bytes()),
-                                Component::CurDir => OsStr::from_bytes(DOT.as_bytes()),
-                                _ => panic!("Illegal specified directory"),
-                            })
-                            .collect::<Vec<_>>()
-                        {
-                            parent = match parent.get_child_by_name(p) {
-                                Ok(i) => i,
-                                Err(_) => {
-                                    warn!("File {:?} not in rafs", p);
-                                    break;
-                                }
-                            }
+                    for f in files {
+                        if let Ok(inode) = self.ino_from_path(f) {
+                            inodes.push(inode);
+                        } else {
+                            continue;
                         }
-                        inodes.push(parent.ino());
                     }
                     Some(inodes)
                 }
                 None => None,
             };
 
-            if let Ok(ref mut desc) = self.sb.prefetch_hint_files(r, dir_inodes) {
+            if let Ok(ref mut desc) = self.sb.prefetch_hint_files(r, inodes) {
                 if self.device.prefetch(desc).is_err() {
                     eother!("Prefetch error");
                 }
@@ -380,6 +365,52 @@ impl Rafs {
         }
 
         Ok(path)
+    }
+
+    fn ino_from_path(&self, f: &Path) -> Result<u64> {
+        if f == Path::new("/") {
+            return Ok(ROOT_ID);
+        }
+
+        if !f.starts_with("/") {
+            return Err(einval!());
+        }
+
+        let mut parent = self.sb.get_inode(ROOT_ID, self.digest_validate)?;
+
+        let entries = f
+            .components()
+            .filter(|comp| *comp != Component::RootDir)
+            .map(|comp| match comp {
+                Component::Normal(name) => Some(name),
+                Component::ParentDir => Some(OsStr::from_bytes(DOTDOT.as_bytes())),
+                Component::CurDir => Some(OsStr::from_bytes(DOT.as_bytes())),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        if entries.is_empty() {
+            warn!("Path can't be parsed {:?}", f);
+            return Err(enoent!());
+        }
+
+        for p in entries {
+            if p.is_none() {
+                error!("Illegal specified path {:?}", f);
+                return Err(einval!());
+            }
+
+            // Safe because it already checks if p is None above.
+            match parent.get_child_by_name(p.unwrap()) {
+                Ok(p) => parent = p,
+                Err(_) => {
+                    warn!("File {:?} not in rafs", p);
+                    return Err(enoent!());
+                }
+            }
+        }
+
+        Ok(parent.ino())
     }
 }
 

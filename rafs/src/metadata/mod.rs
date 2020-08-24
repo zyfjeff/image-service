@@ -301,6 +301,50 @@ impl RafsSuper {
         self.inodes.get_max_ino()
     }
 
+    fn build_prefetch_desc(
+        &self,
+        ino: u64,
+        head_desc: &mut RafsBioDesc,
+        hardlinks: &mut HashSet<u64>,
+    ) -> Result<()> {
+        match self.inodes.get_inode(ino, self.digest_validate) {
+            Ok(inode) => {
+                if inode.is_dir() {
+                    let mut descendants = Vec::new();
+                    let _ = inode.collect_descendants_inodes(&mut descendants)?;
+                    for i in descendants {
+                        if i.is_hardlink() {
+                            if hardlinks.contains(&i.ino()) {
+                                continue;
+                            } else {
+                                hardlinks.insert(i.ino());
+                            }
+                        }
+                        let mut desc = i.alloc_bio_desc(0, i.size() as usize)?;
+                        head_desc.bi_vec.append(desc.bi_vec.as_mut());
+                        head_desc.bi_size += desc.bi_size;
+                    }
+                } else {
+                    if inode.is_hardlink() {
+                        if hardlinks.contains(&inode.ino()) {
+                            return Ok(());
+                        } else {
+                            hardlinks.insert(inode.ino());
+                        }
+                    }
+                    let mut desc = inode.alloc_bio_desc(0, inode.size() as usize)?;
+                    head_desc.bi_vec.append(desc.bi_vec.as_mut());
+                    head_desc.bi_size += desc.bi_size;
+                }
+            }
+            Err(_) => {
+                return Err(enoent!("Can't find inode"));
+            }
+        }
+
+        Ok(())
+    }
+
     /// This is fs layer prefetch entry point where 2 kinds of prefetch can be started:
     /// 1. Static method from prefetch table hint:
     ///     Base on prefetch table which is persisted to bootstrap when building image.
@@ -312,11 +356,11 @@ impl RafsSuper {
     pub fn prefetch_hint_files(
         &self,
         r: &mut RafsIoReader,
-        dirs: Option<Vec<Inode>>,
+        files: Option<Vec<Inode>>,
     ) -> Result<RafsBioDesc> {
         let hint_entries = self.meta.prefetch_table_entries as usize;
 
-        if hint_entries == 0 && dirs.is_none() {
+        if hint_entries == 0 && files.is_none() {
             return Err(enoent!("Prefetch table is empty!"));
         }
 
@@ -346,65 +390,13 @@ impl RafsSuper {
             if *inode_idx == 0 {
                 break;
             }
-
             debug!("hint prefetch inode {}", inode_idx);
-            match self
-                .inodes
-                .get_inode(*inode_idx as u64, self.digest_validate)
-            {
-                Ok(inode) => {
-                    if inode.is_dir() {
-                        let mut descendants = Vec::new();
-                        let _ = inode.collect_descendants_inodes(&mut descendants)?;
-
-                        for i in descendants {
-                            if i.is_hardlink() {
-                                if hardlinks.contains(&i.ino()) {
-                                    continue;
-                                } else {
-                                    hardlinks.insert(i.ino());
-                                }
-                            }
-                            let mut desc = i.alloc_bio_desc(0, i.size() as usize)?;
-                            head_desc.bi_vec.append(desc.bi_vec.as_mut());
-                            head_desc.bi_size += desc.bi_size;
-                        }
-                        continue;
-                    }
-
-                    if inode.is_hardlink() {
-                        if hardlinks.contains(&inode.ino()) {
-                            continue;
-                        } else {
-                            hardlinks.insert(inode.ino());
-                        }
-                    }
-
-                    let mut desc = inode.alloc_bio_desc(0, inode.size() as usize)?;
-                    head_desc.bi_vec.append(desc.bi_vec.as_mut());
-                    head_desc.bi_size += desc.bi_size;
-                }
-                Err(_) => {
-                    enoent!("Can't find inode");
-                    continue;
-                }
-            }
+            self.build_prefetch_desc(*inode_idx as u64, &mut head_desc, &mut hardlinks)?;
         }
 
-        if let Some(dirs) = dirs {
-            for ino in dirs {
-                let dir_inode = self
-                    .inodes
-                    .get_inode(ino as u64, self.digest_validate)
-                    .expect("Can't find inode");
-                let mut descendants = Vec::new();
-                let _ = dir_inode.collect_descendants_inodes(&mut descendants)?;
-
-                for i in descendants {
-                    let mut desc = i.alloc_bio_desc(0, i.size() as usize)?;
-                    head_desc.bi_vec.append(desc.bi_vec.as_mut());
-                    head_desc.bi_size += desc.bi_size;
-                }
+        if let Some(files) = files {
+            for f_ino in files {
+                self.build_prefetch_desc(f_ino, &mut head_desc, &mut hardlinks)?;
             }
         }
 
