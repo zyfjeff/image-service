@@ -198,6 +198,7 @@ impl BlobCache {
     ) -> Result<usize> {
         let mut cache_entry = entry.lock().unwrap();
         let chunk = &cache_entry.chunk;
+        let mut reuse = false;
 
         let c_size = chunk.compress_size() as usize;
         let d_size = chunk.decompress_size() as usize;
@@ -208,83 +209,44 @@ impl BlobCache {
             if !self.validate {
                 return cache_entry.readv(bufs, offset + chunk.decompress_offset(), bio.size);
             }
-            // We need read whole chunk to validate digest.
-            let mut src_buf = alloc_buf(d_size);
-            // chge TODO: Read penalty? No need to read the whole chunk.
-            cache_entry.read(&mut src_buf, bio.digester)?;
-            return copyv(&src_buf, bufs, offset, bio.size);
         }
 
         let digester = if validate { Some(bio.digester) } else { None };
 
-        // Optimize for the case where the first VolatileSlice covers the whole chunk.
-        if bufs.len() == 1 && bufs[0].len() >= d_size as usize && offset == 0 {
+        let mut d;
+        let one_chunk_buf = if bufs.len() == 1 && bufs[0].len() >= d_size as usize && offset == 0 {
+            // Optimize for the case where the first VolatileSlice covers the whole chunk.
             // Reuse the destination data buffer.
-            let one_chunk_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) };
-
-            // Try to recover cache from disk
-            if cache_entry.read(one_chunk_buf, bio.digester).is_ok() {
-                trace!(
-                    "recover blob cache {} {}",
-                    chunk.block_id().to_string(),
-                    c_size
-                );
-                cache_entry.status = CacheStatus::Ready;
-                return Ok(d_size);
-            }
-
-            // Non-compressed source data is easy to handle
-            if !chunk.is_compressed() {
-                // read from backend into the destination buffer
-                self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf, digester)?;
-                cache_entry.cache(one_chunk_buf, d_size);
-                return Ok(d_size);
-            }
-
-            self.read_by_chunk(
-                blob_id,
-                chunk.as_ref(),
-                one_chunk_buf,
-                digester,
-            )?;
-            cache_entry.cache(one_chunk_buf, d_size);
-            return Ok(d_size);
-        }
+            reuse = true;
+            unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) }
+        } else {
+            d = alloc_buf(d_size);
+            d.as_mut_slice()
+        };
 
         // Try to recover cache from disk
-        let mut one_chunk_buf = alloc_buf(d_size);
-        if cache_entry
-            .read(one_chunk_buf.as_mut_slice(), bio.digester)
-            .is_ok()
-        {
+        if cache_entry.read(one_chunk_buf, bio.digester).is_ok() {
             trace!(
                 "recover blob cache {} {}",
                 chunk.block_id().to_string(),
                 c_size
             );
             cache_entry.status = CacheStatus::Ready;
-            return copyv(one_chunk_buf.as_mut_slice(), bufs, offset, bio.size);
+            return if reuse {
+                Ok(one_chunk_buf.len())
+            } else {
+                copyv(one_chunk_buf, bufs, offset, bio.size)
+            };
         }
 
-        if !chunk.is_compressed() {
-            self.read_by_chunk(
-                blob_id,
-                chunk.as_ref(),
-                one_chunk_buf.as_mut_slice(),
-                digester,
-            )?;
-            cache_entry.cache(one_chunk_buf.as_mut_slice(), d_size);
-            return copyv(one_chunk_buf.as_mut_slice(), bufs, offset, bio.size);
-        }
+        self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf, digester)?;
+        cache_entry.cache(one_chunk_buf, d_size);
 
-        self.read_by_chunk(
-            blob_id,
-            chunk.as_ref(),
-            one_chunk_buf.as_mut_slice(),
-            digester,
-        )?;
-        cache_entry.cache(one_chunk_buf.as_mut_slice(), d_size);
-        copyv(one_chunk_buf.as_mut_slice(), bufs, offset, bio.size)
+        if reuse {
+            Ok(one_chunk_buf.len())
+        } else {
+            copyv(one_chunk_buf, bufs, offset, bio.size)
+        }
     }
 }
 

@@ -82,7 +82,12 @@ impl RafsCache for DummyCache {
             if bufs[0].len() >= c_size as usize {
                 // Reuse the destination buffer to received the compressed data.
                 let mut one_chunk_buf = alloc_buf(d_size);
-                self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf.as_mut_slice(), digester)?;
+                self.read_by_chunk(
+                    blob_id,
+                    chunk.as_ref(),
+                    one_chunk_buf.as_mut_slice(),
+                    digester,
+                )?;
                 return copyv(one_chunk_buf.as_mut_slice(), bufs, offset, bio.size);
             } else {
                 // Allocate a buffer to received the compressed data without zeroing
@@ -99,7 +104,12 @@ impl RafsCache for DummyCache {
         }
 
         let mut one_chunk_buf = alloc_buf(d_size);
-        self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf.as_mut_slice(), digester)?;
+        self.read_by_chunk(
+            blob_id,
+            chunk.as_ref(),
+            one_chunk_buf.as_mut_slice(),
+            digester,
+        )?;
         copyv(one_chunk_buf.as_mut_slice(), bufs, offset, bio.size)
     }
 
