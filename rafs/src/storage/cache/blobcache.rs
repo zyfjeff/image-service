@@ -47,6 +47,8 @@ impl BlobCacheEntry {
         }
     }
 
+    // chge TODO: Seems that this method only serves an entire chunk, do sanity check inside?
+    // Better to extend the usage by allowing it reading fragment of a chunk.
     fn read(&self, buf: &mut [u8], digester: digest::Algorithm) -> Result<usize> {
         let d_offset = self.chunk.decompress_offset() as i64;
         let d_size = self.chunk.decompress_size();
@@ -58,11 +60,16 @@ impl BlobCacheEntry {
             return Err(einval!());
         }
 
+        // chge TODO: This is not reliable! Because it assumes that length of `buf`
+        // must be compressed chunk size.
         let nr_read = uio::pread(self.fd, buf, d_offset).map_err(|_| last_error!())?;
         if nr_read == 0 || nr_read != d_size as usize {
             return Err(einval!());
         }
 
+        // chge TODO: We don't have to verify block digest all the time since this should
+        // be just a underlying low-level interface for loading data from blobcache file. Benefit is
+        // that we can save many cpu cycles.
         if !digest_check(buf, &self.chunk.block_id(), digester) {
             return Err(einval!());
         }
@@ -100,6 +107,7 @@ impl BlobCacheEntry {
                 warn!("Cache write blob file failed: {}", err);
                 err
             }) {
+                // chge TODO: We should try to write the left data if written size is less.
                 if w_size == sz {
                     self.status = CacheStatus::Ready;
                     return;
@@ -202,6 +210,7 @@ impl BlobCache {
             }
             // We need read whole chunk to validate digest.
             let mut src_buf = alloc_buf(d_size);
+            // chge TODO: Read penalty? No need to read the whole chunk.
             cache_entry.read(&mut src_buf, bio.digester)?;
             return copyv(&src_buf, bufs, offset, bio.size);
         }
@@ -330,6 +339,8 @@ impl RafsCache for BlobCache {
         let blob_id = &bio.blob_id;
         let chunk = bio.chunkinfo.clone();
 
+        // chge TODO: This can't guarantee atomicity. So a read code path could waste cpu cycles and
+        // reads from backend afterwards.
         if let Some(entry) = self.get(chunk.clone()) {
             self.entry_read(blob_id, &entry, bio, bufs, offset, self.validate)
         } else {
