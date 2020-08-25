@@ -73,61 +73,34 @@ impl RafsCache for DummyCache {
                 );
             }
             // We need read whole chunk to validate digest.
-            let mut src_buf = alloc_buf(c_size);
-            self.read_by_chunk(blob_id, chunk.as_ref(), &mut src_buf, &mut [], digester)?;
-            return copyv(&src_buf, bufs, offset, bio.size);
+            let mut one_chunk_buf = alloc_buf(d_size);
+            self.read_by_chunk(blob_id, chunk.as_ref(), &mut one_chunk_buf, digester)?;
+            return copyv(&one_chunk_buf, bufs, offset, bio.size);
         }
 
         if bufs.len() == 1 && offset == 0 {
             if bufs[0].len() >= c_size as usize {
                 // Reuse the destination buffer to received the compressed data.
-                let src_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), c_size) };
-                let mut dst_buf = alloc_buf(d_size);
-                self.read_by_chunk(
-                    blob_id,
-                    chunk.as_ref(),
-                    src_buf,
-                    dst_buf.as_mut_slice(),
-                    digester,
-                )?;
-                return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
+                let mut one_chunk_buf = alloc_buf(d_size);
+                self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf.as_mut_slice(), digester)?;
+                return copyv(one_chunk_buf.as_mut_slice(), bufs, offset, bio.size);
             } else {
                 // Allocate a buffer to received the compressed data without zeroing
-                let mut src_buf = alloc_buf(c_size);
                 if bufs[0].len() >= d_size {
                     // Use the destination buffer to received the decompressed data.
                     let dst_buf =
                         unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) };
-                    return Ok(self.read_by_chunk(
-                        blob_id,
-                        chunk.as_ref(),
-                        src_buf.as_mut_slice(),
-                        dst_buf,
-                        digester,
-                    )?);
+                    return Ok(self.read_by_chunk(blob_id, chunk.as_ref(), dst_buf, digester)?);
                 }
                 let mut dst_buf = alloc_buf(d_size);
-                self.read_by_chunk(
-                    blob_id,
-                    chunk.as_ref(),
-                    src_buf.as_mut_slice(),
-                    dst_buf.as_mut_slice(),
-                    digester,
-                )?;
+                self.read_by_chunk(blob_id, chunk.as_ref(), dst_buf.as_mut_slice(), digester)?;
                 return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
             }
         }
 
-        let mut src_buf = alloc_buf(c_size);
-        let mut dst_buf = alloc_buf(d_size);
-        self.read_by_chunk(
-            blob_id,
-            chunk.as_ref(),
-            src_buf.as_mut_slice(),
-            dst_buf.as_mut_slice(),
-            digester,
-        )?;
-        copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
+        let mut one_chunk_buf = alloc_buf(d_size);
+        self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf.as_mut_slice(), digester)?;
+        copyv(one_chunk_buf.as_mut_slice(), bufs, offset, bio.size)
     }
 
     /// Prefetch works when blobcache is enabled

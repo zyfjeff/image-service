@@ -13,7 +13,7 @@ use crate::metadata::{RafsChunkInfo, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
 use crate::storage::compress;
 use crate::storage::device::RafsBio;
-use crate::storage::utils::digest_check;
+use crate::storage::utils::{alloc_buf, digest_check};
 
 use nydus_utils::eio;
 
@@ -143,23 +143,28 @@ pub trait RafsCache {
     /// 1. Read a chunk from backend
     /// 2. Decompress chunk if necessary
     /// 3. Validate chunk digest if necessary
-    fn read_by_chunk<'a>(
+    fn read_by_chunk(
         &self,
         blob_id: &str,
         chunk: &dyn RafsChunkInfo,
-        src_buf: &'a mut [u8],
-        mut dst_buf: &'a mut [u8],
+        dst_buf: &mut [u8],
         digester: Option<digest::Algorithm>,
     ) -> Result<usize> {
         let c_offset = chunk.compress_offset();
         let d_size = chunk.decompress_size() as usize;
 
-        self.backend().read(blob_id, src_buf, c_offset)?;
-        if dst_buf.is_empty() {
-            dst_buf = src_buf;
+        if chunk.is_compressed() {
+            let c_size = chunk.compress_size() as usize;
+            // Need to put compressed data into a temporary buffer so as to perform
+            // decompression.
+            // TODO: Use a buffer pool for lower latency?
+            let mut d = alloc_buf(c_size);
+            let d_buf = d.as_mut_slice();
+            self.backend().read(blob_id, d_buf, c_offset)?;
+            compress::decompress(d_buf, dst_buf)?;
         } else {
-            compress::decompress(src_buf, dst_buf)?;
-        }
+            self.backend().read(blob_id, dst_buf, c_offset)?;
+        };
 
         if dst_buf.len() != d_size {
             return Err(eio!(format!(

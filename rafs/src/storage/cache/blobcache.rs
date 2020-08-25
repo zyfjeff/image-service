@@ -220,10 +220,10 @@ impl BlobCache {
         // Optimize for the case where the first VolatileSlice covers the whole chunk.
         if bufs.len() == 1 && bufs[0].len() >= d_size as usize && offset == 0 {
             // Reuse the destination data buffer.
-            let dst_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) };
+            let one_chunk_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) };
 
             // Try to recover cache from disk
-            if cache_entry.read(dst_buf, bio.digester).is_ok() {
+            if cache_entry.read(one_chunk_buf, bio.digester).is_ok() {
                 trace!(
                     "recover blob cache {} {}",
                     chunk.block_id().to_string(),
@@ -236,27 +236,25 @@ impl BlobCache {
             // Non-compressed source data is easy to handle
             if !chunk.is_compressed() {
                 // read from backend into the destination buffer
-                self.read_by_chunk(blob_id, chunk.as_ref(), dst_buf, &mut [], digester)?;
-                cache_entry.cache(dst_buf, d_size);
+                self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf, digester)?;
+                cache_entry.cache(one_chunk_buf, d_size);
                 return Ok(d_size);
             }
 
-            let mut src_buf = alloc_buf(c_size);
             self.read_by_chunk(
                 blob_id,
                 chunk.as_ref(),
-                src_buf.as_mut_slice(),
-                dst_buf,
+                one_chunk_buf,
                 digester,
             )?;
-            cache_entry.cache(dst_buf, d_size);
+            cache_entry.cache(one_chunk_buf, d_size);
             return Ok(d_size);
         }
 
         // Try to recover cache from disk
-        let mut dst_buf = alloc_buf(d_size);
+        let mut one_chunk_buf = alloc_buf(d_size);
         if cache_entry
-            .read(dst_buf.as_mut_slice(), bio.digester)
+            .read(one_chunk_buf.as_mut_slice(), bio.digester)
             .is_ok()
         {
             trace!(
@@ -265,32 +263,28 @@ impl BlobCache {
                 c_size
             );
             cache_entry.status = CacheStatus::Ready;
-            return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
+            return copyv(one_chunk_buf.as_mut_slice(), bufs, offset, bio.size);
         }
 
         if !chunk.is_compressed() {
-            let mut dst_buf = alloc_buf(c_size);
             self.read_by_chunk(
                 blob_id,
                 chunk.as_ref(),
-                dst_buf.as_mut_slice(),
-                &mut [],
+                one_chunk_buf.as_mut_slice(),
                 digester,
             )?;
-            cache_entry.cache(dst_buf.as_mut_slice(), d_size);
-            return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
+            cache_entry.cache(one_chunk_buf.as_mut_slice(), d_size);
+            return copyv(one_chunk_buf.as_mut_slice(), bufs, offset, bio.size);
         }
 
-        let mut src_buf = alloc_buf(c_size);
         self.read_by_chunk(
             blob_id,
             chunk.as_ref(),
-            src_buf.as_mut_slice(),
-            dst_buf.as_mut_slice(),
+            one_chunk_buf.as_mut_slice(),
             digester,
         )?;
-        cache_entry.cache(dst_buf.as_mut_slice(), d_size);
-        copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size)
+        cache_entry.cache(one_chunk_buf.as_mut_slice(), d_size);
+        copyv(one_chunk_buf.as_mut_slice(), bufs, offset, bio.size)
     }
 }
 
