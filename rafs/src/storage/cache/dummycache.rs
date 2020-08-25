@@ -53,8 +53,8 @@ impl RafsCache for DummyCache {
     fn read(&self, bio: &RafsBio, bufs: &[VolatileSlice], offset: u64) -> Result<usize> {
         let blob_id = &bio.blob_id;
         let chunk = &bio.chunkinfo;
+        let mut reuse = false;
 
-        let c_size = chunk.compress_size() as usize;
         let d_size = chunk.decompress_size() as usize;
 
         let digester = if self.validate {
@@ -63,54 +63,23 @@ impl RafsCache for DummyCache {
             None
         };
 
-        if !chunk.is_compressed() {
-            if !self.validate {
-                return self.backend.readv(
-                    blob_id,
-                    bufs,
-                    offset + chunk.compress_offset(),
-                    bio.size,
-                );
-            }
-            // We need read whole chunk to validate digest.
-            let mut one_chunk_buf = alloc_buf(d_size);
-            self.read_by_chunk(blob_id, chunk.as_ref(), &mut one_chunk_buf, digester)?;
-            return copyv(&one_chunk_buf, bufs, offset, bio.size);
-        }
+        let mut d;
+        let one_chunk_buf = if bufs.len() == 1 && offset == 0 && bufs[0].len() >= d_size {
+            // Use the destination buffer to received the decompressed data.
+            reuse = true;
+            unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) }
+        } else {
+            d = alloc_buf(d_size);
+            d.as_mut_slice()
+        };
 
-        if bufs.len() == 1 && offset == 0 {
-            if bufs[0].len() >= c_size as usize {
-                // Reuse the destination buffer to received the compressed data.
-                let mut one_chunk_buf = alloc_buf(d_size);
-                self.read_by_chunk(
-                    blob_id,
-                    chunk.as_ref(),
-                    one_chunk_buf.as_mut_slice(),
-                    digester,
-                )?;
-                return copyv(one_chunk_buf.as_mut_slice(), bufs, offset, bio.size);
-            } else {
-                // Allocate a buffer to received the compressed data without zeroing
-                if bufs[0].len() >= d_size {
-                    // Use the destination buffer to received the decompressed data.
-                    let dst_buf =
-                        unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) };
-                    return Ok(self.read_by_chunk(blob_id, chunk.as_ref(), dst_buf, digester)?);
-                }
-                let mut dst_buf = alloc_buf(d_size);
-                self.read_by_chunk(blob_id, chunk.as_ref(), dst_buf.as_mut_slice(), digester)?;
-                return copyv(dst_buf.as_mut_slice(), bufs, offset, bio.size);
-            }
-        }
+        self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf, digester)?;
 
-        let mut one_chunk_buf = alloc_buf(d_size);
-        self.read_by_chunk(
-            blob_id,
-            chunk.as_ref(),
-            one_chunk_buf.as_mut_slice(),
-            digester,
-        )?;
-        copyv(one_chunk_buf.as_mut_slice(), bufs, offset, bio.size)
+        if reuse {
+            Ok(one_chunk_buf.len())
+        } else {
+            copyv(one_chunk_buf, bufs, offset, bio.size)
+        }
     }
 
     /// Prefetch works when blobcache is enabled
