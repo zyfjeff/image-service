@@ -222,10 +222,10 @@ impl BlobCache {
             // Reuse the destination data buffer.
             let dst_buf = unsafe { std::slice::from_raw_parts_mut(bufs[0].as_ptr(), d_size) };
 
-            // Try to recovery cache from disk
+            // Try to recover cache from disk
             if cache_entry.read(dst_buf, bio.digester).is_ok() {
                 trace!(
-                    "recovery blob cache {} {}",
+                    "recover blob cache {} {}",
                     chunk.block_id().to_string(),
                     c_size
                 );
@@ -253,14 +253,14 @@ impl BlobCache {
             return Ok(d_size);
         }
 
-        // Try to recovery cache from disk
+        // Try to recover cache from disk
         let mut dst_buf = alloc_buf(d_size);
         if cache_entry
             .read(dst_buf.as_mut_slice(), bio.digester)
             .is_ok()
         {
             trace!(
-                "recovery blob cache {} {}",
+                "recover blob cache {} {}",
                 chunk.block_id().to_string(),
                 c_size
             );
