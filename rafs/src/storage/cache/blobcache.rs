@@ -19,7 +19,6 @@ use crate::metadata::{RafsChunkInfo, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::RafsCache;
 use crate::storage::cache::*;
-use crate::storage::compress;
 use crate::storage::device::RafsBio;
 use crate::storage::factory::CacheConfig;
 use crate::storage::utils::{alloc_buf, copyv, digest_check, readv};
@@ -169,6 +168,7 @@ impl BlobCacheState {
     }
 }
 
+#[derive(Clone)]
 pub struct BlobCache {
     cache: Arc<RwLock<BlobCacheState>>,
     validate: bool,
@@ -312,8 +312,10 @@ impl RafsCache for BlobCache {
 
         // TODO: Make thread count configurable.
         for num in 0..self.prefetch_worker.threads_count {
-            let backend = Arc::clone(&self.backend);
             let cache = Arc::clone(&self.cache);
+            // Clone cache fulfils our requirement that invoke `read_chunks` and it's
+            // hard to move `self` into closure.
+            let cache_cloned = Arc::new(self.clone());
             let rx = rx.clone();
             let _thread = thread::Builder::new()
                 .name(format!("prefetch_thread_{}", num))
@@ -331,38 +333,23 @@ impl RafsCache for BlobCache {
                             blob_size
                         );
 
-                        let mut c_buf = alloc_buf(blob_size as usize);
-                        // Blob id must be unique.
-                        // TODO: Currently, request length to backend may span a whole chunk,
-                        // Do we need to split it into smaller pieces?
-                        let _ = backend.read(blob_id.as_str(), c_buf.as_mut_slice(), blob_offset);
-                        for c in continuous_chunks {
-                            // Deal with mixture of compressed and uncompressed chunks.
-                            let offset_merged = c.compress_offset() - blob_offset;
-                            let fd = cache
-                                .write()
-                                .unwrap()
-                                .get_blob_fd(blob_id.as_str())
-                                .unwrap();
-                            if c.is_compressed() {
-                                // Decompression failure can't be handled, panic helps us note it in the first place.
-                                let mut d_buf = alloc_buf(c.decompress_size() as usize);
-                                compress::decompress(
-                                    &c_buf[offset_merged as usize
-                                        ..(offset_merged as usize + c.compress_size() as usize)],
-                                    d_buf.as_mut_slice(),
-                                )
-                                .unwrap();
-                                let _ = uio::pwrite(fd, &d_buf, c.decompress_offset() as i64)
-                                    .map_err(|_| last_error!());
-                            } else {
-                                let _ = uio::pwrite(
-                                    fd,
-                                    &c_buf[offset_merged as usize
-                                        ..(offset_merged as usize + c.compress_size() as usize)],
-                                    c.decompress_offset() as i64,
-                                )
-                                .map_err(|_| last_error!());
+                        if let Ok(chunks) = cache_cloned.read_chunks(
+                            blob_id,
+                            blob_offset,
+                            blob_size as usize,
+                            &continuous_chunks,
+                        ) {
+                            for (i, c) in continuous_chunks.iter().enumerate() {
+                                let mut cache_guard =
+                                    cache.write().expect("Expect cache lock not poisoned");
+                                if let Ok(entry) = cache_guard.set(blob_id, c.clone()) {
+                                    entry
+                                        .lock()
+                                        .unwrap()
+                                        .cache(chunks[i].as_slice(), chunks[i].len());
+                                } else {
+                                    error!("Set cache index error!");
+                                }
                             }
                         }
                     }

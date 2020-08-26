@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::io::Result;
+use std::slice;
 use std::sync::Arc;
 
 use vm_memory::VolatileSlice;
@@ -146,43 +147,114 @@ pub trait RafsCache {
     fn read_by_chunk(
         &self,
         blob_id: &str,
-        chunk: &dyn RafsChunkInfo,
-        dst_buf: &mut [u8],
+        cki: &dyn RafsChunkInfo,
+        chunk: &mut [u8],
         digester: Option<digest::Algorithm>,
     ) -> Result<usize> {
-        let c_offset = chunk.compress_offset();
-        let d_size = chunk.decompress_size() as usize;
+        let c_offset = cki.compress_offset();
+        let d_size = cki.decompress_size() as usize;
+        let mut d;
 
-        if chunk.is_compressed() {
-            let c_size = chunk.compress_size() as usize;
-            // Need to put compressed data into a temporary buffer so as to perform
-            // decompression.
+        let raw_chunk = if cki.is_compressed() {
+            // Need to put compressed data into a temporary buffer so as to perform decompression.
             // TODO: Use a buffer pool for lower latency?
-            let mut d = alloc_buf(c_size);
-            let d_buf = d.as_mut_slice();
-            self.backend().read(blob_id, d_buf, c_offset)?;
-            compress::decompress(d_buf, dst_buf)?;
+            let c_size = cki.compress_size() as usize;
+            d = alloc_buf(c_size);
+            d.as_mut_slice()
         } else {
-            self.backend().read(blob_id, dst_buf, c_offset)?;
+            // We have to this unsafe assignment as it can directly store data into call's buffer.
+            unsafe { slice::from_raw_parts_mut(chunk.as_mut_ptr(), chunk.len()) }
         };
 
-        if dst_buf.len() != d_size {
+        self.read_raw_chunk(blob_id, c_offset, raw_chunk)?;
+        // Try to validate data just fetched from backend.
+        self.process_raw_chunk(cki, raw_chunk, chunk)?;
+
+        Ok(d_size)
+    }
+
+    fn read_raw_chunk(&self, blob_id: &str, offset: u64, raw_chunk: &mut [u8]) -> Result<usize> {
+        self.backend().read(blob_id, raw_chunk, offset)
+    }
+
+    fn process_raw_chunk(
+        &self,
+        cki: &dyn RafsChunkInfo,
+        raw_chunk: &[u8],
+        chunk: &mut [u8],
+        digester: Option<digest::Algorithm>,
+    ) -> Result<usize> {
+        if cki.is_compressed() {
+            compress::decompress(raw_chunk, chunk)?;
+        } else if raw_chunk.as_ptr() != chunk.as_ptr() {
+            // Sometimes, caller directly put data into consumer provided buffer.
+            // Then we don't have to copy data between slices.
+            chunk.copy_from_slice(raw_chunk);
+        }
+
+        let d_size = cki.decompress_size() as usize;
+
+        if chunk.len() != d_size {
             return Err(eio!(format!(
                 "invalid chunk data, expected size: {} != {}",
                 d_size,
-                dst_buf.len(),
+                chunk.len(),
             )));
         }
 
         if let Some(digester) = digester {
-            if !digest_check(dst_buf, &chunk.block_id(), digester) {
+            if !digest_check(chunk, &cki.block_id(), digester) {
                 return Err(eio!(format!(
                     "invalid chunk data, expected digest: {}",
-                    chunk.block_id()
+                    cki.block_id()
                 )));
             }
         }
 
-        Ok(dst_buf.len())
+        Ok(chunk.len())
+    }
+
+    /// Read multiple complete chunks from backend in batch. Caller must ensure that
+    /// range [`blob_offset`..`blob_offset` + `blob_size`] exactly covers more than one
+    /// chunks and `cki_set` can correctly describe how to extract chunk from batched buffer.
+    /// Afterwards, several chunks are returned, caller does not have to decompress them.
+    fn read_chunks(
+        &self,
+        blob_id: &str,
+        blob_offset: u64,
+        blob_size: usize,
+        cki_set: &[Arc<dyn RafsChunkInfo>],
+        _digester: Option<digest::Algorithm>,
+    ) -> Result<Vec<Vec<u8>>> {
+        let mut c_buf = alloc_buf(blob_size);
+        let mut chunks: Vec<Vec<u8>> = Vec::new();
+        // TODO: Currently, request length to backend may span a whole chunk,
+        // Do we need to split it into smaller pieces like 128K or 256K?
+        let nr_read = self
+            .backend()
+            .read(blob_id, c_buf.as_mut_slice(), blob_offset)?;
+
+        if nr_read != blob_size {
+            return Err(eio!(format!(
+                "request for {} bytes but got {} bytes",
+                blob_size, nr_read
+            )));
+        }
+
+        for cki in cki_set {
+            // TODO: Also check if adjacent here?
+            let offset_merged = (cki.compress_offset() - blob_offset) as usize;
+            let size_merged = cki.compress_size() as usize;
+            let mut chunk = alloc_buf(cki.decompress_size() as usize);
+            self.process_raw_chunk(
+                cki.as_ref(),
+                &c_buf[offset_merged..(offset_merged + size_merged)],
+                &mut chunk,
+                None,
+            )?;
+            chunks.push(chunk);
+        }
+
+        Ok(chunks)
     }
 }
