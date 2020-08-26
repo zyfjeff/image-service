@@ -145,6 +145,28 @@ impl BlobCacheState {
 
         Ok(fd)
     }
+
+    fn get(&self, blk: Arc<dyn RafsChunkInfo>) -> Option<Arc<Mutex<BlobCacheEntry>>> {
+        // Do not expect poisoned lock here.
+        self.chunk_map.get(&blk.block_id()).cloned()
+    }
+
+    fn set(
+        &mut self,
+        blob_id: &str,
+        cki: Arc<dyn RafsChunkInfo>,
+    ) -> Result<Arc<Mutex<BlobCacheEntry>>> {
+        let block_id = cki.block_id();
+        // Double check if someone else has inserted the blob chunk concurrently.
+        if let Some(entry) = self.chunk_map.get(&block_id) {
+            Ok(entry.clone())
+        } else {
+            let fd = self.get_blob_fd(blob_id)?;
+            let entry = Arc::new(Mutex::new(BlobCacheEntry::new(cki, fd)));
+            self.chunk_map.insert(*block_id, entry.clone());
+            Ok(entry)
+        }
+    }
 }
 
 pub struct BlobCache {
@@ -155,38 +177,6 @@ pub struct BlobCache {
 }
 
 impl BlobCache {
-    fn get(&self, blk: Arc<dyn RafsChunkInfo>) -> Option<Arc<Mutex<BlobCacheEntry>>> {
-        // Do not expect poisoned lock here.
-        self.cache
-            .read()
-            .unwrap()
-            .chunk_map
-            .get(&blk.block_id())
-            .cloned()
-    }
-
-    fn set(
-        &self,
-        blob_id: &str,
-        blk: Arc<dyn RafsChunkInfo>,
-    ) -> Result<Arc<Mutex<BlobCacheEntry>>> {
-        let block_id = blk.block_id();
-        // Do not expect poisoned lock here.
-        let mut cache = self.cache.write().unwrap();
-
-        // Double check if someone else has inserted the blob chunk concurrently.
-        if let Some(entry) = cache.chunk_map.get(&block_id) {
-            Ok(entry.clone())
-        } else {
-            let fd = cache.get_blob_fd(blob_id)?;
-            let entry = Arc::new(Mutex::new(BlobCacheEntry::new(blk, fd)));
-
-            cache.chunk_map.insert(*block_id.clone(), entry.clone());
-
-            Ok(entry)
-        }
-    }
-
     fn entry_read(
         &self,
         blob_id: &str,
@@ -298,10 +288,13 @@ impl RafsCache for BlobCache {
 
         // chge TODO: This can't guarantee atomicity. So a read code path could waste cpu cycles and
         // reads from backend afterwards.
-        if let Some(entry) = self.get(chunk.clone()) {
+        let cache_read_guard = self.cache.read().unwrap();
+        if let Some(entry) = cache_read_guard.get(chunk.clone()) {
             self.entry_read(blob_id, &entry, bufs, offset, bio.size, bio.digester)
         } else {
-            let entry = self.set(blob_id, chunk)?;
+            drop(cache_read_guard);
+            let mut cache_write_guard = self.cache.write().unwrap();
+            let entry = cache_write_guard.set(blob_id, chunk)?;
             self.entry_read(blob_id, &entry, bufs, offset, bio.size, bio.digester)
         }
     }
