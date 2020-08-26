@@ -107,7 +107,7 @@ impl BlobCacheEntry {
                 warn!("Cache write blob file failed: {}", err);
                 err
             }) {
-                // chge TODO: We should try to write the left data if written size is less.
+                // chge TODO: We should try to write the left data if written size is less
                 if w_size == sz {
                     self.status = CacheStatus::Ready;
                     return;
@@ -191,10 +191,10 @@ impl BlobCache {
         &self,
         blob_id: &str,
         entry: &Mutex<BlobCacheEntry>,
-        bio: &RafsBio,
         bufs: &[VolatileSlice],
         offset: u64,
-        validate: bool,
+        size: usize,
+        digester: digest::Algorithm,
     ) -> Result<usize> {
         let mut cache_entry = entry.lock().unwrap();
         let chunk = &cache_entry.chunk;
@@ -207,11 +207,9 @@ impl BlobCache {
         if CacheStatus::Ready == cache_entry.status {
             trace!("hit blob cache {} {}", chunk.block_id().to_string(), c_size);
             if !self.validate {
-                return cache_entry.readv(bufs, offset + chunk.decompress_offset(), bio.size);
+                return cache_entry.readv(bufs, offset + chunk.decompress_offset(), size);
             }
         }
-
-        let digester = if validate { Some(bio.digester) } else { None };
 
         let mut d;
         let one_chunk_buf = if bufs.len() == 1 && bufs[0].len() >= d_size as usize && offset == 0 {
@@ -225,7 +223,7 @@ impl BlobCache {
         };
 
         // Try to recover cache from disk
-        if cache_entry.read(one_chunk_buf, bio.digester).is_ok() {
+        if cache_entry.read(one_chunk_buf, digester).is_ok() {
             trace!(
                 "recover blob cache {} {}",
                 chunk.block_id().to_string(),
@@ -235,17 +233,20 @@ impl BlobCache {
             return if reuse {
                 Ok(one_chunk_buf.len())
             } else {
-                copyv(one_chunk_buf, bufs, offset, bio.size)
+                copyv(one_chunk_buf, bufs, offset, size)
             };
         }
 
-        self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf, digester)?;
+        // TODO: Below is ugly now, we might move validation control out.
+        let di = if self.validate { Some(digester) } else { None };
+
+        self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf, di)?;
         cache_entry.cache(one_chunk_buf, d_size);
 
         if reuse {
             Ok(one_chunk_buf.len())
         } else {
-            copyv(one_chunk_buf, bufs, offset, bio.size)
+            copyv(one_chunk_buf, bufs, offset, size)
         }
     }
 }
@@ -298,10 +299,10 @@ impl RafsCache for BlobCache {
         // chge TODO: This can't guarantee atomicity. So a read code path could waste cpu cycles and
         // reads from backend afterwards.
         if let Some(entry) = self.get(chunk.clone()) {
-            self.entry_read(blob_id, &entry, bio, bufs, offset, self.validate)
+            self.entry_read(blob_id, &entry, bufs, offset, bio.size, bio.digester)
         } else {
             let entry = self.set(blob_id, chunk)?;
-            self.entry_read(blob_id, &entry, bio, bufs, offset, self.validate)
+            self.entry_read(blob_id, &entry, bufs, offset, bio.size, bio.digester)
         }
     }
 
