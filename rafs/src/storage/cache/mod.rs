@@ -141,6 +141,10 @@ pub trait RafsCache {
 
     fn backend(&self) -> &(dyn BlobBackend + Sync + Send);
 
+    fn digester(&self) -> digest::Algorithm;
+    fn compressor(&self) -> compress::Algorithm;
+    fn need_validate(&self) -> bool;
+
     /// 1. Read a chunk from backend
     /// 2. Decompress chunk if necessary
     /// 3. Validate chunk digest if necessary
@@ -149,7 +153,6 @@ pub trait RafsCache {
         blob_id: &str,
         cki: &dyn RafsChunkInfo,
         chunk: &mut [u8],
-        digester: Option<digest::Algorithm>,
     ) -> Result<usize> {
         let c_offset = cki.compress_offset();
         let d_size = cki.decompress_size() as usize;
@@ -182,7 +185,6 @@ pub trait RafsCache {
         cki: &dyn RafsChunkInfo,
         raw_chunk: &[u8],
         chunk: &mut [u8],
-        digester: Option<digest::Algorithm>,
     ) -> Result<usize> {
         if cki.is_compressed() {
             compress::decompress(raw_chunk, chunk)?;
@@ -202,13 +204,11 @@ pub trait RafsCache {
             )));
         }
 
-        if let Some(digester) = digester {
-            if !digest_check(chunk, &cki.block_id(), digester) {
-                return Err(eio!(format!(
-                    "invalid chunk data, expected digest: {}",
-                    cki.block_id()
-                )));
-            }
+        if self.need_validate() && !digest_check(chunk, &cki.block_id(), self.digester()) {
+            return Err(eio!(format!(
+                "invalid chunk data, expected digest: {}",
+                cki.block_id()
+            )));
         }
 
         Ok(chunk.len())
@@ -224,7 +224,6 @@ pub trait RafsCache {
         blob_offset: u64,
         blob_size: usize,
         cki_set: &[Arc<dyn RafsChunkInfo>],
-        _digester: Option<digest::Algorithm>,
     ) -> Result<Vec<Vec<u8>>> {
         let mut c_buf = alloc_buf(blob_size);
         let mut chunks: Vec<Vec<u8>> = Vec::new();
@@ -250,7 +249,6 @@ pub trait RafsCache {
                 cki.as_ref(),
                 &c_buf[offset_merged..(offset_merged + size_merged)],
                 &mut chunk,
-                None,
             )?;
             chunks.push(chunk);
         }

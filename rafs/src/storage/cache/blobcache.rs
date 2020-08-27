@@ -48,7 +48,12 @@ impl BlobCacheEntry {
 
     // chge TODO: Seems that this method only serves an entire chunk, do sanity check inside?
     // Better to extend the usage by allowing it reading fragment of a chunk.
-    fn read(&self, buf: &mut [u8], digester: digest::Algorithm) -> Result<usize> {
+    fn read(
+        &self,
+        buf: &mut [u8],
+        need_validate: bool,
+        digester: digest::Algorithm,
+    ) -> Result<usize> {
         let d_offset = self.chunk.decompress_offset() as i64;
         let d_size = self.chunk.decompress_size();
 
@@ -69,7 +74,9 @@ impl BlobCacheEntry {
         // chge TODO: We don't have to verify block digest all the time since this should
         // be just a underlying low-level interface for loading data from blobcache file. Benefit is
         // that we can save many cpu cycles.
-        if !digest_check(buf, &self.chunk.block_id(), digester) {
+        if (need_validate || self.status != CacheStatus::Ready)
+            && !digest_check(buf, &self.chunk.block_id(), digester)
+        {
             return Err(einval!());
         }
 
@@ -186,7 +193,6 @@ impl BlobCache {
         bufs: &[VolatileSlice],
         offset: u64,
         size: usize,
-        digester: digest::Algorithm,
     ) -> Result<usize> {
         let mut cache_entry = entry.lock().unwrap();
         let chunk = &cache_entry.chunk;
@@ -215,7 +221,10 @@ impl BlobCache {
         };
 
         // Try to recover cache from disk
-        if cache_entry.read(one_chunk_buf, digester).is_ok() {
+        if cache_entry
+            .read(one_chunk_buf, self.need_validate(), self.digester())
+            .is_ok()
+        {
             trace!(
                 "recover blob cache {} {}",
                 chunk.block_id().to_string(),
@@ -229,10 +238,7 @@ impl BlobCache {
             };
         }
 
-        // TODO: Below is ugly now, we might move validation control out.
-        let di = if self.validate { Some(digester) } else { None };
-
-        self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf, di)?;
+        self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf)?;
         cache_entry.cache(one_chunk_buf, d_size);
 
         if reuse {
@@ -292,12 +298,12 @@ impl RafsCache for BlobCache {
         // reads from backend afterwards.
         let cache_read_guard = self.cache.read().unwrap();
         if let Some(entry) = cache_read_guard.get(chunk.clone()) {
-            self.entry_read(blob_id, &entry, bufs, offset, bio.size, bio.digester)
+            self.entry_read(blob_id, &entry, bufs, offset, bio.size)
         } else {
             drop(cache_read_guard);
             let mut cache_write_guard = self.cache.write().unwrap();
             let entry = cache_write_guard.set(blob_id, chunk)?;
-            self.entry_read(blob_id, &entry, bufs, offset, bio.size, bio.digester)
+            self.entry_read(blob_id, &entry, bufs, offset, bio.size)
         }
     }
 
@@ -371,6 +377,18 @@ impl RafsCache for BlobCache {
         });
 
         Ok(0)
+    }
+
+    fn digester(&self) -> digest::Algorithm {
+        self.digester
+    }
+
+    fn compressor(&self) -> compress::Algorithm {
+        self.compressor
+    }
+
+    fn need_validate(&self) -> bool {
+        self.validate
     }
 }
 

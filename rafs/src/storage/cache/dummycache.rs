@@ -61,12 +61,6 @@ impl RafsCache for DummyCache {
 
         let d_size = chunk.decompress_size() as usize;
 
-        let digester = if self.validate {
-            Some(bio.digester)
-        } else {
-            None
-        };
-
         let mut d;
         let one_chunk_buf = if bufs.len() == 1 && offset == 0 && bufs[0].len() >= d_size {
             // Use the destination buffer to received the decompressed data.
@@ -77,13 +71,25 @@ impl RafsCache for DummyCache {
             d.as_mut_slice()
         };
 
-        self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf, digester)?;
+        self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf)?;
 
         if reuse {
             Ok(one_chunk_buf.len())
         } else {
             copyv(one_chunk_buf, bufs, offset, bio.size)
         }
+    }
+
+    fn digester(&self) -> digest::Algorithm {
+        self.digester
+    }
+
+    fn compressor(&self) -> compress::Algorithm {
+        self.compressor
+    }
+
+    fn need_validate(&self) -> bool {
+        self.validate
     }
 
     /// Prefetch works when blobcache is enabled
