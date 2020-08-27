@@ -451,8 +451,6 @@ impl OndiskInodeWrapper {
         let bio = RafsBio::new(
             chunk,
             blob_id,
-            state.meta.get_compressor(),
-            state.meta.get_digester(),
             chunk_start as u32,
             (chunk_end - chunk_start) as usize,
             state.meta.block_size,

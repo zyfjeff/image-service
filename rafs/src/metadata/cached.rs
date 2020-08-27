@@ -405,8 +405,6 @@ impl RafsInode for CachedInode {
             let bio = RafsBio::new(
                 blk.clone(),
                 self.get_chunk_blob_id(blk.blob_index())?,
-                self.i_meta.get_compressor(),
-                self.i_meta.get_digester(),
                 (bio_offset - blk.file_offset()) as u32,
                 cmp::min(
                     cmp::min(end, self.i_size) - bio_offset,

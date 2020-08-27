@@ -195,10 +195,6 @@ pub struct RafsBio {
     pub chunkinfo: Arc<dyn RafsChunkInfo>,
     /// blob id of chunk
     pub blob_id: String,
-    /// compression algorithm of chunk
-    pub compressor: compress::Algorithm,
-    /// digest algorithm of chunk
-    pub digester: digest::Algorithm,
     /// offset within the chunk
     pub offset: u32,
     /// size within the chunk
@@ -211,8 +207,6 @@ impl RafsBio {
     pub fn new(
         chunkinfo: Arc<dyn RafsChunkInfo>,
         blob_id: String,
-        compressor: compress::Algorithm,
-        digester: digest::Algorithm,
         offset: u32,
         size: usize,
         blksize: u32,
@@ -220,8 +214,6 @@ impl RafsBio {
         RafsBio {
             chunkinfo,
             blob_id,
-            compressor,
-            digester,
             offset,
             size,
             blksize,
