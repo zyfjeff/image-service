@@ -140,7 +140,15 @@ impl RafsCache for DummyCache {
     }
 
     fn write(&self, blob_id: &str, blk: &dyn RafsChunkInfo, buf: &[u8]) -> Result<usize> {
-        self.backend.write(blob_id, buf, blk.compress_offset())
+        let out;
+        let wbuf = if blk.is_compressed() {
+            out = compress::compress(buf, self.compressor())?;
+            out.0.as_ref()
+        } else {
+            unsafe { slice::from_raw_parts(buf.as_ptr(), buf.len()) }
+        };
+
+        self.backend.write(blob_id, wbuf, blk.compress_offset())
     }
 
     fn release(&self) {}

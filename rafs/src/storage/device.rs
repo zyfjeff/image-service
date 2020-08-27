@@ -131,18 +131,10 @@ impl FileReadWriteVolatile for RafsBioDevice<'_> {
         // It's safe because the virtio buffer shouldn't be accessed concurrently.
         let buf = unsafe { std::slice::from_raw_parts_mut(slice.as_ptr(), slice.len()) };
 
-        if self.bio.chunkinfo.is_compressed() {
-            let (wbuf, _) = compress::compress(buf, self.bio.compressor)?;
-            self.dev
-                .rw_layer
-                .load()
-                .write(&self.bio.blob_id, self.bio.chunkinfo.as_ref(), &wbuf)
-        } else {
-            self.dev
-                .rw_layer
-                .load()
-                .write(&self.bio.blob_id, self.bio.chunkinfo.as_ref(), buf)
-        }
+        self.dev
+            .rw_layer
+            .load()
+            .write(&self.bio.blob_id, self.bio.chunkinfo.as_ref(), buf)
     }
 }
 
