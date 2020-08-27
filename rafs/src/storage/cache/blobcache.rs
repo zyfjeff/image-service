@@ -506,6 +506,8 @@ mod blob_cache_tests {
         let blob_cache = blobcache::new(
             cache_config,
             Arc::new(MockBackend {}) as Arc<dyn BlobBackend + Send + Sync>,
+            compress::Algorithm::LZ4Block,
+            digest::Algorithm::Blake3,
         )
         .unwrap();
 
@@ -528,8 +530,6 @@ mod blob_cache_tests {
         let bio = RafsBio::new(
             Arc::new(chunk),
             blob_id.to_string(),
-            compress::Algorithm::None,
-            digest::Algorithm::Blake3,
             50,
             50,
             RAFS_DEFAULT_BLOCK_SIZE as u32,
