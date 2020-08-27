@@ -8,10 +8,12 @@ use std::thread;
 
 use vm_memory::VolatileSlice;
 
+use crate::metadata::digest;
 use crate::metadata::layout::OndiskBlobTableEntry;
 use crate::metadata::{RafsChunkInfo, RafsSuperMeta};
 use crate::storage::backend::BlobBackend;
 use crate::storage::cache::*;
+use crate::storage::compress;
 use crate::storage::device::RafsBio;
 use crate::storage::factory::CacheConfig;
 use crate::storage::utils::{alloc_buf, copyv};
@@ -20,6 +22,8 @@ pub struct DummyCache {
     pub backend: Arc<dyn BlobBackend + Sync + Send>,
     validate: bool,
     prefetch_worker: PrefetchWorker,
+    compressor: compress::Algorithm,
+    digester: digest::Algorithm,
 }
 
 impl RafsCache for DummyCache {
@@ -136,10 +140,17 @@ impl RafsCache for DummyCache {
     fn release(&self) {}
 }
 
-pub fn new(config: CacheConfig, backend: Arc<dyn BlobBackend + Sync + Send>) -> Result<DummyCache> {
+pub fn new(
+    config: CacheConfig,
+    backend: Arc<dyn BlobBackend + Sync + Send>,
+    compressor: compress::Algorithm,
+    digester: digest::Algorithm,
+) -> Result<DummyCache> {
     Ok(DummyCache {
         backend,
         validate: config.cache_validate,
         prefetch_worker: config.prefetch_worker,
+        compressor,
+        digester,
     })
 }

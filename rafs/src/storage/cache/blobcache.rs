@@ -174,6 +174,8 @@ pub struct BlobCache {
     validate: bool,
     pub backend: Arc<dyn BlobBackend + Sync + Send>,
     prefetch_worker: PrefetchWorker,
+    compressor: compress::Algorithm,
+    digester: digest::Algorithm,
 }
 
 impl BlobCache {
@@ -382,7 +384,12 @@ fn default_work_dir() -> String {
     ".".to_string()
 }
 
-pub fn new(config: CacheConfig, backend: Arc<dyn BlobBackend + Sync + Send>) -> Result<BlobCache> {
+pub fn new(
+    config: CacheConfig,
+    backend: Arc<dyn BlobBackend + Sync + Send>,
+    compressor: compress::Algorithm,
+    digester: digest::Algorithm,
+) -> Result<BlobCache> {
     let blob_config: BlobCacheConfig =
         serde_json::from_value(config.cache_config).map_err(|e| einval!(e))?;
     let work_dir = {
@@ -416,6 +423,8 @@ pub fn new(config: CacheConfig, backend: Arc<dyn BlobBackend + Sync + Send>) -> 
         validate: config.cache_validate,
         backend,
         prefetch_worker: config.prefetch_worker,
+        compressor,
+        digester,
     })
 }
 

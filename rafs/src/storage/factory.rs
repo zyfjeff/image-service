@@ -8,8 +8,11 @@ use std::sync::Arc;
 use serde::Deserialize;
 use serde_json::value::Value;
 
+use crate::metadata::digest;
 use crate::storage::backend::*;
 use crate::storage::cache::*;
+
+use crate::storage::compress;
 
 use nydus_utils::einval;
 
@@ -91,16 +94,22 @@ pub fn new_uploader(mut config: BackendConfig) -> Result<Arc<dyn BlobBackendUplo
     }
 }
 
-pub fn new_rw_layer(config: Config) -> Result<Box<dyn RafsCache + Send + Sync>> {
+pub fn new_rw_layer(
+    config: Config,
+    compressor: compress::Algorithm,
+    digester: digest::Algorithm,
+) -> Result<Box<dyn RafsCache + Send + Sync>> {
     let backend = new_backend(config.backend)?;
     match config.cache.cache_type.as_str() {
-        "blobcache" => {
-            Ok(Box::new(blobcache::new(config.cache, backend)?)
-                as Box<dyn RafsCache + Send + Sync>)
-        }
-        _ => {
-            Ok(Box::new(dummycache::new(config.cache, backend)?)
-                as Box<dyn RafsCache + Send + Sync>)
-        }
+        "blobcache" => Ok(
+            Box::new(blobcache::new(config.cache, backend, compressor, digester)?)
+                as Box<dyn RafsCache + Send + Sync>,
+        ),
+        _ => Ok(Box::new(dummycache::new(
+            config.cache,
+            backend,
+            compressor,
+            digester,
+        )?) as Box<dyn RafsCache + Send + Sync>),
     }
 }

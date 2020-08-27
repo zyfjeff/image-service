@@ -113,19 +113,22 @@ impl ApiServer {
 pub fn rafs_mount(info: MountInfo, default_rafs_conf: &RafsConfig, vfs: &Arc<Vfs>) -> Result<()> {
     match info.ops.as_str() {
         "mount" => {
-            let mut rafs = match info.config.as_ref() {
-                Some(config) => {
-                    let content = std::fs::read_to_string(config).map_err(|e| einval!(e))?;
-                    let rafs_conf: RafsConfig =
-                        serde_json::from_str(&content).map_err(|e| einval!(e))?;
-                    Rafs::new(rafs_conf, &info.mountpoint)?
-                }
-                None => Rafs::new(default_rafs_conf.clone(), &info.mountpoint)?,
-            };
+            let mut rafs;
 
             if let Some(source) = info.source.as_ref() {
                 let mut file = Box::new(File::open(source).map_err(|e| eother!(e))?)
                     as Box<dyn rafs::RafsIoRead>;
+
+                rafs = match info.config.as_ref() {
+                    Some(config) => {
+                        let content = std::fs::read_to_string(config).map_err(|e| einval!(e))?;
+                        let rafs_conf: RafsConfig =
+                            serde_json::from_str(&content).map_err(|e| einval!(e))?;
+                        Rafs::new(rafs_conf, &info.mountpoint, &mut file)?
+                    }
+                    None => Rafs::new(default_rafs_conf.clone(), &info.mountpoint, &mut file)?,
+                };
+
                 rafs.import(&mut file, None)?;
 
                 match vfs.mount(Box::new(rafs), &info.mountpoint) {

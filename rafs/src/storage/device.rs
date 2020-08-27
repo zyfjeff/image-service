@@ -26,15 +26,27 @@ pub struct RafsDevice {
 }
 
 impl RafsDevice {
-    pub fn new(config: factory::Config) -> io::Result<RafsDevice> {
+    pub fn new(
+        config: factory::Config,
+        compressor: compress::Algorithm,
+        digester: digest::Algorithm,
+    ) -> io::Result<RafsDevice> {
         Ok(RafsDevice {
-            rw_layer: ArcSwap::new(Arc::new(factory::new_rw_layer(config)?)),
+            rw_layer: ArcSwap::new(Arc::new(factory::new_rw_layer(
+                config, compressor, digester,
+            )?)),
         })
     }
 
-    pub fn update(&self, config: factory::Config) -> io::Result<()> {
-        self.rw_layer
-            .store(Arc::new(factory::new_rw_layer(config)?));
+    pub fn update(
+        &self,
+        config: factory::Config,
+        compressor: compress::Algorithm,
+        digester: digest::Algorithm,
+    ) -> io::Result<()> {
+        self.rw_layer.store(Arc::new(factory::new_rw_layer(
+            config, compressor, digester,
+        )?));
         Ok(())
     }
 

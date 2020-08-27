@@ -112,14 +112,22 @@ pub struct Rafs {
 }
 
 impl Rafs {
-    pub fn new(conf: RafsConfig, id: &str) -> Result<Self> {
+    pub fn new(conf: RafsConfig, id: &str, r: &mut RafsIoReader) -> Result<Self> {
         let mut device_conf = conf.device.clone();
         device_conf.cache.cache_validate = conf.digest_validate;
         device_conf.cache.prefetch_worker.threads_count = conf.fs_prefetch.threads_count;
         device_conf.cache.prefetch_worker.merging_size = conf.fs_prefetch.merging_size;
+
+        let mut sb = RafsSuper::new(&conf)?;
+        sb.load(r)?;
+
         let rafs = Rafs {
-            device: device::RafsDevice::new(device_conf)?,
-            sb: RafsSuper::new(&conf)?,
+            device: device::RafsDevice::new(
+                device_conf,
+                sb.meta.get_compressor(),
+                sb.meta.get_digester(),
+            )?,
+            sb,
             initialized: false,
             ios: io_stats::new(id),
             digest_validate: conf.digest_validate,
@@ -157,7 +165,11 @@ impl Rafs {
         info!("update sb is successful");
 
         // step 2: update device (only localfs is supported)
-        self.device.update(conf.device)?;
+        self.device.update(
+            conf.device,
+            self.sb.meta.get_compressor(),
+            self.sb.meta.get_digester(),
+        )?;
         info!("update device is successful");
 
         Ok(())
@@ -172,11 +184,6 @@ impl Rafs {
         if self.initialized {
             return Err(ealready!("rafs already mounted"));
         }
-
-        self.sb.load(r).map_err(|e| {
-            self.sb.destroy();
-            e
-        })?;
 
         self.device
             .init(&self.sb.meta, &self.sb.inodes.get_blobs())?;

@@ -302,8 +302,8 @@ fn main() -> Result<()> {
             Resource::NOFILE.set(rlimit_nofile, rlimit_nofile)?;
         }
     } else if !bootstrap.is_empty() {
-        let mut rafs = Rafs::new(rafs_conf.clone(), &"/".to_string())?;
         let mut file = Box::new(File::open(bootstrap)?) as Box<dyn rafs::RafsIoRead>;
+        let mut rafs = Rafs::new(rafs_conf.clone(), &"/".to_string(), &mut file)?;
         rafs.import(&mut file, Some(prefetch_files))?;
         info!("rafs mounted: {}", rafs_conf);
         vfs.mount(Box::new(rafs), "/")?;
