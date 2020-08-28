@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::Result;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -222,13 +223,10 @@ impl BlobBackend for OSS {
 }
 
 impl BlobBackendUploader for OSS {
-    type Reader = File;
-
     fn upload(
         &self,
         blob_id: &str,
-        file: File,
-        size: usize,
+        blob_path: &Path,
         callback: fn((usize, usize)),
     ) -> Result<usize> {
         if !self.force_upload && self.blob_exists(blob_id)? {
@@ -239,7 +237,17 @@ impl BlobBackendUploader for OSS {
         let (resource, url) = self.url(blob_id, query)?;
         let headers = self.sign(Method::PUT, HeaderMap::new(), resource.as_str())?;
 
-        let body = Progress::new(file, size, callback);
+        let blob_file = OpenOptions::new()
+            .read(true)
+            .write(false)
+            .open(blob_path)
+            .map_err(|e| {
+                error!("oss blob upload: open failed {:?}", e);
+                e
+            })?;
+        let size = blob_file.metadata()?.len() as usize;
+
+        let body = Progress::new(blob_file, size, callback);
 
         self.request.call(
             Method::PUT,

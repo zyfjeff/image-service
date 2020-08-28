@@ -19,9 +19,8 @@ use clap::{App, Arg, SubCommand};
 use vmm_sys_util::tempfile::TempFile;
 
 use std::collections::BTreeMap;
-use std::fs::{rename, File, OpenOptions};
+use std::fs::rename;
 use std::io::{self, Result, Write};
-use std::os::linux::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -30,21 +29,12 @@ use nydus_utils::log_level_to_verbosity;
 use rafs::storage::{backend, factory};
 
 fn upload_blob(
-    backend: Arc<dyn backend::BlobBackendUploader<Reader = File>>,
+    backend: Arc<dyn backend::BlobBackendUploader>,
     blob_id: &str,
-    blob_path: &str,
+    blob_path: &Path,
 ) -> Result<()> {
-    let blob_file = OpenOptions::new()
-        .read(true)
-        .write(false)
-        .open(blob_path)
-        .map_err(|e| {
-            error!("upload_blob open failed {:?}", e);
-            e
-        })?;
-    let size = blob_file.metadata()?.st_size() as usize;
     backend
-        .upload(blob_id, blob_file, size, |(current, total)| {
+        .upload(blob_id, blob_path, |(current, total)| {
             io::stdout().flush().unwrap();
             print!("\r");
             print!(
@@ -66,12 +56,12 @@ fn upload_blob(
 }
 
 /// Get readahead file paths line by line from stdin
-fn get_readahead_files(source: &str) -> Result<BTreeMap<PathBuf, Option<u64>>> {
+fn get_readahead_files(source: &Path) -> Result<BTreeMap<PathBuf, Option<u64>>> {
     let stdin = io::stdin();
     let mut files = BTreeMap::new();
 
     // Can't fail since source must be a legal input option.
-    let source_path = &Path::new(source).canonicalize().unwrap();
+    let source_path = source.canonicalize().unwrap();
 
     loop {
         let mut file = String::new();
@@ -100,7 +90,7 @@ fn get_readahead_files(source: &str) -> Result<BTreeMap<PathBuf, Option<u64>>> {
                 let canonicalized_name;
                 match path.canonicalize() {
                     Ok(p) => {
-                        if !p.starts_with(source_path) {
+                        if !p.starts_with(&source_path) {
                             continue;
                         }
                         canonicalized_name = p;
@@ -110,7 +100,7 @@ fn get_readahead_files(source: &str) -> Result<BTreeMap<PathBuf, Option<u64>>> {
 
                 let file_name_trimmed = Path::new("/").join(
                     canonicalized_name
-                        .strip_prefix(source_path)
+                        .strip_prefix(&source_path)
                         .unwrap()
                         .to_path_buf(),
                 );
@@ -241,11 +231,12 @@ fn main() -> Result<()> {
         .unwrap();
 
     if let Some(matches) = cmd.subcommand_matches("create") {
-        let source_path = matches.value_of("SOURCE").expect("SOURCE is required");
-        let blob_path = matches.value_of("blob");
-        let bootstrap_path = matches
-            .value_of("bootstrap")
-            .expect("bootstrap is required");
+        let source_path = Path::new(matches.value_of("SOURCE").expect("SOURCE is required"));
+        let bootstrap_path = Path::new(
+            matches
+                .value_of("bootstrap")
+                .expect("bootstrap is required"),
+        );
 
         let mut blob_id = String::new();
         if let Some(p_blob_id) = matches.value_of("blob-id") {
@@ -262,17 +253,16 @@ fn main() -> Result<()> {
         let digester = matches.value_of("digester").unwrap_or_default().parse()?;
         let repeatable = matches.is_present("repeatable");
 
-        let temp_blob_file = TempFile::new_with_prefix("").unwrap();
+        let temp_file = TempFile::new_with_prefix("").unwrap();
 
-        let mut real_blob_path = if let Some(blob_path) = blob_path {
-            blob_path
-        } else {
-            temp_blob_file.as_path().to_str().unwrap()
-        };
+        let mut blob_path = matches
+            .value_of("blob")
+            .map(|p| Path::new(p))
+            .unwrap_or_else(|| temp_file.as_path());
 
-        let mut parent_bootstrap = String::new();
+        let mut parent_bootstrap = Path::new("");
         if let Some(_parent_bootstrap) = matches.value_of("parent-bootstrap") {
-            parent_bootstrap = _parent_bootstrap.to_owned();
+            parent_bootstrap = Path::new(_parent_bootstrap);
         }
 
         let prefetch_policy = matches
@@ -287,9 +277,9 @@ fn main() -> Result<()> {
         };
 
         let mut ib = builder::Builder::new(
-            source_path.to_owned(),
-            real_blob_path.to_owned(),
-            bootstrap_path.to_owned(),
+            source_path,
+            blob_path,
+            bootstrap_path,
             parent_bootstrap,
             blob_id,
             compressor,
@@ -314,22 +304,22 @@ fn main() -> Result<()> {
                         })?,
                     };
                     let blob_backend = factory::new_uploader(config).unwrap();
-                    upload_blob(blob_backend, blob_id.as_str(), real_blob_path)?;
+                    upload_blob(blob_backend, blob_id.as_str(), blob_path)?;
                     uploaded = true;
                 }
             }
             // blob not uploaded to backend, let's save it to local file system
-            if !uploaded && real_blob_path == temp_blob_file.as_path().to_str().unwrap() {
-                trace!("rename {} to {}", real_blob_path, blob_id);
-                rename(real_blob_path, blob_id)?;
-                real_blob_path = blob_id;
+            if !uploaded && blob_path == temp_file.as_path() {
+                trace!("rename {:?} to {}", blob_path, blob_id);
+                rename(blob_path, blob_id)?;
+                blob_path = Path::new(blob_id);
             }
         }
 
         if blob_size > 0 {
             info!(
-                "build finished, blob id: {:?}, blob file: {}",
-                blob_ids, real_blob_path
+                "build finished, blob id: {:?}, blob file: {:?}",
+                blob_ids, blob_path
             );
         } else {
             info!("build finished, blob id: {:?}", blob_ids);

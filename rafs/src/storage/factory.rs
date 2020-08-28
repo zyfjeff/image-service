@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::fs::File;
 use std::io::Result;
 use std::sync::Arc;
 
@@ -65,9 +64,7 @@ pub fn new_backend(config: BackendConfig) -> Result<Arc<dyn BlobBackend + Send +
     }
 }
 
-pub fn new_uploader(
-    mut config: BackendConfig,
-) -> Result<Arc<dyn BlobBackendUploader<Reader = File>>> {
+pub fn new_uploader(mut config: BackendConfig) -> Result<Arc<dyn BlobBackendUploader>> {
     // Disable http timeout for upload request
     config.backend_config["connect_timeout"] = 0.into();
     config.backend_config["timeout"] = 0.into();
@@ -75,17 +72,17 @@ pub fn new_uploader(
         #[cfg(feature = "backend-oss")]
         "oss" => {
             let backend = oss::new(config.backend_config)?;
-            Ok(Arc::new(backend) as Arc<dyn BlobBackendUploader<Reader = File>>)
+            Ok(Arc::new(backend) as Arc<dyn BlobBackendUploader>)
         }
         #[cfg(feature = "backend-registry")]
         "registry" => {
             let backend = registry::new(config.backend_config)?;
-            Ok(Arc::new(backend) as Arc<dyn BlobBackendUploader<Reader = File>>)
+            Ok(Arc::new(backend) as Arc<dyn BlobBackendUploader>)
         }
         #[cfg(feature = "backend-localfs")]
         "localfs" => {
             let backend = localfs::new(config.backend_config)?;
-            Ok(Arc::new(backend) as Arc<dyn BlobBackendUploader<Reader = File>>)
+            Ok(Arc::new(backend) as Arc<dyn BlobBackendUploader>)
         }
         _ => Err(einval!(format!(
             "unsupported backend type '{}'",

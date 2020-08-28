@@ -87,10 +87,10 @@ impl FromStr for PrefetchPolicy {
 impl Builder {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        root: String,
-        blob_path: String,
-        bootstrap_path: String,
-        parent_bootstrap_path: String,
+        root: &Path,
+        blob_path: &Path,
+        bootstrap_path: &Path,
+        parent_bootstrap_path: &Path,
         blob_id: String,
         compressor: compress::Algorithm,
         digester: digest::Algorithm,
@@ -113,16 +113,17 @@ impl Builder {
                 .open(bootstrap_path)?,
         );
 
-        let f_parent_bootstrap: Option<Box<dyn RafsIoRead>> = if parent_bootstrap_path != "" {
-            Some(Box::new(
-                OpenOptions::new()
-                    .read(true)
-                    .write(false)
-                    .open(parent_bootstrap_path)?,
-            ))
-        } else {
-            None
-        };
+        let f_parent_bootstrap: Option<Box<dyn RafsIoRead>> =
+            if parent_bootstrap_path != Path::new("") {
+                Some(Box::new(
+                    OpenOptions::new()
+                        .read(true)
+                        .write(false)
+                        .open(parent_bootstrap_path)?,
+                ))
+            } else {
+                None
+            };
 
         Ok(Builder {
             root: PathBuf::from(root),

@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::io::{Read, Result};
+use std::io::Result;
+use std::path::Path;
 
 use vm_memory::VolatileSlice;
 
@@ -139,13 +140,10 @@ pub trait BlobBackend {
 
 // Rafs blob backend upload API
 pub trait BlobBackendUploader {
-    type Reader: Read + Send + 'static;
-
     fn upload(
         &self,
         blob_id: &str,
-        source: Self::Reader,
-        size: usize,
+        blob_path: &Path,
         callback: fn((usize, usize)),
     ) -> Result<usize>;
 }

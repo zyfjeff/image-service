@@ -479,32 +479,44 @@ impl BlobBackend for LocalFs {
 }
 
 impl BlobBackendUploader for LocalFs {
-    type Reader = std::fs::File;
-
     fn upload(
         &self,
         blob_id: &str,
-        mut reader: std::fs::File,
-        _size: usize,
+        blob_path: &Path,
         _callback: fn((usize, usize)),
     ) -> Result<usize> {
-        let blob = if self.use_blob_file() {
+        let target_path = if self.use_blob_file() {
             Path::new(&self.blob_file).to_path_buf()
         } else {
             Path::new(&self.dir).join(blob_id)
         };
 
-        if let Some(parent) = blob.parent() {
+        if let Some(parent) = target_path.parent() {
             fs::create_dir_all(parent)?;
         }
 
-        let mut w = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(&blob)
-            .map_err(|e| last_error!(format!("localfs update: open failed {:?}", e)))?;
+        let size = fs::metadata(blob_path)?.len() as usize;
 
-        io::copy(&mut reader, &mut w).map(|sz| sz as usize)
+        if let Err(err) = fs::rename(blob_path, &target_path) {
+            warn!(
+                "localfs blob upload: file rename failed {:?}, fallback to copy",
+                err
+            );
+            let mut blob_file = OpenOptions::new().read(true).open(blob_path).map_err(|e| {
+                error!("localfs blob upload: open blob file failed {:?}", e);
+                e
+            })?;
+            let mut target_file = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .open(target_path)
+                .map_err(|e| {
+                    error!("localfs blob upload: open target file failed {:?}", e);
+                    e
+                })?;
+            io::copy(&mut blob_file, &mut target_file)?;
+        }
+
+        Ok(size)
     }
 }

@@ -3,8 +3,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::HashMap;
-use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::{Read, Result};
+use std::path::Path;
 use std::sync::{Arc, RwLock};
 
 use reqwest::blocking::Response;
@@ -528,13 +529,10 @@ impl BlobBackend for Registry {
 }
 
 impl BlobBackendUploader for Registry {
-    type Reader = File;
-
     fn upload(
         &self,
         blob_id: &str,
-        file: File,
-        size: usize,
+        blob_path: &Path,
         callback: fn((usize, usize)),
     ) -> Result<usize> {
         if !self.force_upload && self.blob_exists(blob_id)? {
@@ -561,7 +559,17 @@ impl BlobBackendUploader for Registry {
             url.query().unwrap()
         );
 
-        let body = Progress::new(file, size, callback);
+        let blob_file = OpenOptions::new()
+            .read(true)
+            .write(false)
+            .open(blob_path)
+            .map_err(|e| {
+                error!("registry blob upload: open failed {:?}", e);
+                e
+            })?;
+        let size = blob_file.metadata()?.len() as usize;
+
+        let body = Progress::new(blob_file, size, callback);
 
         self.request(
             Method::PUT,
