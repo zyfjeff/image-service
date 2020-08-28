@@ -48,8 +48,8 @@ impl BlobCacheEntry {
 
     // chge TODO: Seems that this method only serves an entire chunk, do sanity check inside?
     // Better to extend the usage by allowing it reading fragment of a chunk.
-    fn read(
-        &self,
+    fn read_whole_chunk(
+        &mut self,
         buf: &mut [u8],
         need_validate: bool,
         digester: digest::Algorithm,
@@ -80,6 +80,8 @@ impl BlobCacheEntry {
             return Err(einval!());
         }
 
+        self.status = CacheStatus::Ready;
+
         trace!(
             "read {}(offset={}) bytes from cache file",
             nr_read,
@@ -89,7 +91,12 @@ impl BlobCacheEntry {
         Ok(nr_read)
     }
 
-    fn readv(&self, bufs: &[VolatileSlice], offset: u64, max_size: usize) -> Result<usize> {
+    fn read_partial_chunk(
+        &self,
+        bufs: &[VolatileSlice],
+        offset: u64,
+        max_size: usize,
+    ) -> Result<usize> {
         readv(self.fd, bufs, offset, max_size)
     }
 
@@ -195,18 +202,18 @@ impl BlobCache {
         size: usize,
     ) -> Result<usize> {
         let mut cache_entry = entry.lock().unwrap();
-        let chunk = &cache_entry.chunk;
+        let chunk = cache_entry.chunk.clone();
         let mut reuse = false;
 
         let c_size = chunk.compress_size() as usize;
         let d_size = chunk.decompress_size() as usize;
 
         // Hit cache if cache ready
-        if CacheStatus::Ready == cache_entry.status {
+        // TODO: From safety requirement, even current io can hit partial chunk, we
+        // still try to validate the whole chunk?
+        if !self.need_validate() && CacheStatus::Ready == cache_entry.status {
             trace!("hit blob cache {} {}", chunk.block_id().to_string(), c_size);
-            if !self.validate {
-                return cache_entry.readv(bufs, offset + chunk.decompress_offset(), size);
-            }
+            return cache_entry.read_partial_chunk(bufs, offset + chunk.decompress_offset(), size);
         }
 
         let mut d;
@@ -222,7 +229,7 @@ impl BlobCache {
 
         // Try to recover cache from disk
         if cache_entry
-            .read(one_chunk_buf, self.need_validate(), self.digester())
+            .read_whole_chunk(one_chunk_buf, self.need_validate(), self.digester())
             .is_ok()
         {
             trace!(
@@ -230,16 +237,10 @@ impl BlobCache {
                 chunk.block_id().to_string(),
                 c_size
             );
-            cache_entry.status = CacheStatus::Ready;
-            return if reuse {
-                Ok(one_chunk_buf.len())
-            } else {
-                copyv(one_chunk_buf, bufs, offset, size)
-            };
+        } else {
+            self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf)?;
+            cache_entry.cache(one_chunk_buf, d_size);
         }
-
-        self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf)?;
-        cache_entry.cache(one_chunk_buf, d_size);
 
         if reuse {
             Ok(one_chunk_buf.len())
