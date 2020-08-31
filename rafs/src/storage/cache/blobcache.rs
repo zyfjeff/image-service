@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::Result;
+use std::io::{ErrorKind, Result};
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
@@ -106,36 +106,32 @@ impl BlobCacheEntry {
         readv(self.fd, bufs, offset, max_size)
     }
 
-    fn write(&self, src: &[u8]) -> Result<usize> {
-        let nr_write = uio::pwrite(self.fd, src, self.chunk.decompress_offset() as i64)
-            .map_err(|_| last_error!())?;
+    /// Persist a single chunk into local blob cache file. We have to write to the cache
+    /// file in unit of chunk size
+    fn cache(&mut self, buf: &[u8]) {
+        loop {
+            let ret = uio::pwrite(self.fd, buf, self.chunk.decompress_offset() as i64)
+                .map_err(|_| last_error!());
 
-        trace!(
-            "write {}(offset={}) bytes to cache file",
-            nr_write,
-            self.chunk.decompress_offset()
-        );
-
-        Ok(nr_write)
-    }
-
-    fn cache(&mut self, buf: &[u8], sz: usize) {
-        // The whole chunk is ready, try to cache it.
-        if sz == buf.len() {
-            if let Ok(w_size) = self.write(buf).map_err(|err| {
-                warn!("Cache write blob file failed: {}", err);
-                err
-            }) {
-                // chge TODO: We should try to write the left data if written size is less
-                if w_size == sz {
-                    self.set_ready();
-                    return;
+            match ret {
+                Ok(nr_write) => {
+                    trace!(
+                        "write {}(offset={}) bytes to cache file",
+                        nr_write,
+                        self.chunk.decompress_offset()
+                    );
+                    break;
                 }
-            } else {
-                return;
+                Err(err) => {
+                    // Retry if the IO is interrupted by signal.
+                    if err.kind() != ErrorKind::Interrupted {
+                        return;
+                    }
+                }
             }
         }
-        warn!("Cache write failed, the buf length not match");
+
+        self.set_ready();
     }
 }
 
@@ -243,7 +239,7 @@ impl BlobCache {
             );
         } else {
             self.read_by_chunk(blob_id, chunk.as_ref(), one_chunk_buf)?;
-            cache_entry.cache(one_chunk_buf, d_size);
+            cache_entry.cache(one_chunk_buf);
         }
 
         if reuse {
@@ -355,13 +351,12 @@ impl RafsCache for BlobCache {
                             for (i, c) in continuous_chunks.iter().enumerate() {
                                 let mut cache_guard =
                                     cache.write().expect("Expect cache lock not poisoned");
-                                if let Ok(entry) = cache_guard.set(blob_id, c.clone()) {
-                                    entry
-                                        .lock()
-                                        .unwrap()
-                                        .cache(chunks[i].as_slice(), chunks[i].len());
-                                } else {
-                                    error!("Set cache index error!");
+
+                                if let Ok(entry) = cache_guard
+                                    .set(blob_id, c.clone())
+                                    .map_err(|_| error!("Set cache index error!"))
+                                {
+                                    entry.lock().unwrap().cache(chunks[i].as_slice());
                                 }
                             }
                         }
