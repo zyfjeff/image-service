@@ -46,8 +46,10 @@ impl BlobCacheEntry {
         }
     }
 
-    // chge TODO: Seems that this method only serves an entire chunk, do sanity check inside?
-    // Better to extend the usage by allowing it reading fragment of a chunk.
+    /// Try to read from blob cache file, it might fail in loading data from blob cache
+    /// and it's normal as blob cache relies on chunk hash. Blob cache always validate
+    /// if chunk is integrated and correct before setting its status to `Ready`.
+    /// Given not integrated chunk, blob cache should fetch chunk from backend.
     fn read_whole_chunk(
         &mut self,
         buf: &mut [u8],
@@ -59,22 +61,18 @@ impl BlobCacheEntry {
 
         let data_offset = unsafe { libc::lseek(self.fd, d_offset, libc::SEEK_DATA) };
 
-        // The seek data offset should be equal to d_offset if the cache ready.
+        // TODO: This is not a reliable method to judge if chunk is integrated but just
+        // immature stage since a chunk might span two filesystem blocks.
         if data_offset != d_offset {
             return Err(einval!());
         }
 
-        // chge TODO: This is not reliable! Because it assumes that length of `buf`
-        // must be compressed chunk size.
         let nr_read = uio::pread(self.fd, buf, d_offset).map_err(|_| last_error!())?;
         if nr_read == 0 || nr_read != d_size as usize {
             return Err(einval!());
         }
 
-        // chge TODO: We don't have to verify block digest all the time since this should
-        // be just a underlying low-level interface for loading data from blobcache file. Benefit is
-        // that we can save many cpu cycles.
-        if (need_validate || self.status != CacheStatus::Ready)
+        if (need_validate || !self.is_ready())
             && !digest_check(buf, &self.chunk.block_id(), digester)
         {
             return Err(einval!());

@@ -145,9 +145,11 @@ pub trait RafsCache {
     fn compressor(&self) -> compress::Algorithm;
     fn need_validate(&self) -> bool;
 
-    /// 1. Read a chunk from backend
-    /// 2. Decompress chunk if necessary
-    /// 3. Validate chunk digest if necessary
+    /// Read a whole chunk directly from *backend*.
+    /// The fetched chunk could be compressed or not by different compressors.
+    /// It depends on `cki` how to describe the chunk data.
+    /// Moreover, chunk data from backend can be validated per as to nydus configuration.
+    /// Above is not redundant with blob cache's validation given IO path backend -> blobcache
     fn read_by_chunk(
         &self,
         blob_id: &str,
@@ -165,12 +167,12 @@ pub trait RafsCache {
             d = alloc_buf(c_size);
             d.as_mut_slice()
         } else {
-            // We have to this unsafe assignment as it can directly store data into call's buffer.
+            // We have this unsafe assignment as it can directly store data into call's buffer.
             unsafe { slice::from_raw_parts_mut(chunk.as_mut_ptr(), chunk.len()) }
         };
 
         self.read_raw_chunk(blob_id, c_offset, raw_chunk)?;
-        // Try to validate data just fetched from backend.
+        // Try to validate data just fetched from backend inside.
         self.process_raw_chunk(cki, raw_chunk, chunk)?;
 
         Ok(d_size)
@@ -180,6 +182,10 @@ pub trait RafsCache {
         self.backend().read(blob_id, raw_chunk, offset)
     }
 
+    /// Before storing chunk data into blob cache file. We have cook the raw chunk from
+    /// backend a bit per as to the chunk description as blob cache always saves plain data
+    /// into cache file rather than compressed.
+    /// An inside trick is that it tries to directly save data into caller's buffer.
     fn process_raw_chunk(
         &self,
         cki: &dyn RafsChunkInfo,
