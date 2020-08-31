@@ -78,7 +78,7 @@ impl BlobCacheEntry {
             return Err(einval!());
         }
 
-        self.status = CacheStatus::Ready;
+        self.set_ready();
 
         trace!(
             "read {}(offset={}) bytes from cache file",
@@ -87,6 +87,14 @@ impl BlobCacheEntry {
         );
 
         Ok(nr_read)
+    }
+
+    fn is_ready(&self) -> bool {
+        self.status == CacheStatus::Ready
+    }
+
+    fn set_ready(&mut self) {
+        self.status = CacheStatus::Ready
     }
 
     fn read_partial_chunk(
@@ -120,7 +128,7 @@ impl BlobCacheEntry {
             }) {
                 // chge TODO: We should try to write the left data if written size is less
                 if w_size == sz {
-                    self.status = CacheStatus::Ready;
+                    self.set_ready();
                     return;
                 }
             } else {
@@ -207,9 +215,7 @@ impl BlobCache {
         let d_size = chunk.decompress_size() as usize;
 
         // Hit cache if cache ready
-        // TODO: From safety requirement, even current io can hit partial chunk, we
-        // still try to validate the whole chunk?
-        if !self.need_validate() && CacheStatus::Ready == cache_entry.status {
+        if !self.need_validate() && cache_entry.is_ready() {
             trace!("hit blob cache {} {}", chunk.block_id().to_string(), c_size);
             return cache_entry.read_partial_chunk(bufs, offset + chunk.decompress_offset(), size);
         }
