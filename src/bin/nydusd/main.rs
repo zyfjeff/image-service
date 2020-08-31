@@ -16,128 +16,39 @@ extern crate stderrlog;
 use event_manager::{EventManager, EventOps, EventSubscriber, Events, SubscriberOps};
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
-#[cfg(feature = "virtiofsd")]
-use libc::EFD_NONBLOCK;
 use std::fs::File;
 use std::io::{Read, Result};
 use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
-#[cfg(feature = "virtiofsd")]
-use std::sync::RwLock;
+
 use std::sync::{Arc, Mutex};
-#[cfg(feature = "fusedev")]
-use std::thread;
-use std::{convert, error, fmt, io, process};
+use std::{io, process};
 
 use nix::sys::signal;
 use rlimit::{rlim, Resource};
 
 use clap::{App, Arg};
-use fuse_rs::api::server::Server;
 use fuse_rs::api::{Vfs, VfsOptions};
 use fuse_rs::passthrough::{Config, PassthroughFs};
-#[cfg(feature = "virtiofsd")]
-use fuse_rs::transport::{Error as FuseTransportError, FsCacheReqHandler, Reader, Writer};
-use fuse_rs::Error as VhostUserFsError;
-#[cfg(feature = "fusedev")]
-use std::path::Path;
-#[cfg(feature = "virtiofsd")]
-use vhost_rs::vhost_user::message::*;
-#[cfg(feature = "virtiofsd")]
-use vhost_rs::vhost_user::{Listener, SlaveFsCacheReq};
-#[cfg(feature = "virtiofsd")]
-use vhost_user_backend::{VhostUserBackend, VhostUserDaemon, Vring};
-#[cfg(feature = "virtiofsd")]
-use vm_memory::GuestMemoryMmap;
 
 use nydus_api::http::start_http_thread;
 use nydus_api::http_endpoint::{ApiError, ApiRequest, ApiResponsePayload, DaemonInfo, MountInfo};
 use nydus_utils::{einval, enoent, eother, epipe, last_error, log_level_to_verbosity};
-#[cfg(feature = "fusedev")]
-use nydus_utils::{FuseChannel, FuseSession};
 use rafs::fs::{Rafs, RafsConfig};
 use rafs::io_stats;
 
-#[cfg(feature = "virtiofsd")]
-const VIRTIO_F_VERSION_1: u32 = 32;
-#[cfg(feature = "virtiofsd")]
-const QUEUE_SIZE: usize = 1024;
-#[cfg(feature = "virtiofsd")]
-const NUM_QUEUES: usize = 2;
+mod daemon;
+use daemon::Error;
 
-// The guest queued an available buffer for the high priority queue.
 #[cfg(feature = "virtiofsd")]
-const HIPRIO_QUEUE_EVENT: u16 = 0;
-// The guest queued an available buffer for the request queue.
+mod virtiofs;
 #[cfg(feature = "virtiofsd")]
-const REQ_QUEUE_EVENT: u16 = 1;
-// The device has been dropped.
-#[cfg(feature = "virtiofsd")]
-const KILL_EVENT: u16 = 2;
-
-/// TODO: group virtiofsd code into a different file
-#[cfg(feature = "virtiofsd")]
-type VhostUserBackendResult<T> = std::result::Result<T, std::io::Error>;
-
-#[allow(dead_code)]
-#[derive(Debug)]
-enum Error {
-    /// Invalid arguments provided.
-    InvalidArguments(String),
-    /// Invalid config provided
-    InvalidConfig(String),
-    /// Failed to handle event other than input event.
-    HandleEventNotEpollIn,
-    /// Failed to handle unknown event.
-    HandleEventUnknownEvent,
-    /// No memory configured.
-    NoMemoryConfigured,
-    /// Invalid Virtio descriptor chain.
-    #[cfg(feature = "virtiofsd")]
-    InvalidDescriptorChain(FuseTransportError),
-    /// Processing queue failed.
-    ProcessQueue(VhostUserFsError),
-    /// Cannot create epoll context.
-    Epoll(io::Error),
-    /// Cannot clone event fd.
-    EventFdClone(io::Error),
-    /// Cannot spawn a new thread
-    ThreadSpawn(io::Error),
-    /// Failure to initialize file system
-    FsInitFailure(io::Error),
-    /// Daemon related error
-    DaemonFailure(String),
-    /// Wait daemon failure
-    WaitDaemon,
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::InvalidArguments(s) => write!(f, "Invalid argument: {}", s),
-            Error::InvalidConfig(s) => write!(f, "Invalid config: {}", s),
-            Error::DaemonFailure(s) => write!(f, "Daemon error: {}", s),
-            _ => write!(f, "vhost_user_fs_error: {:?}", self),
-        }
-    }
-}
-
-impl error::Error for Error {}
-
-impl convert::From<Error> for io::Error {
-    fn from(e: Error) -> Self {
-        einval!(e)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum EpollDispatch {
-    Exit,
-    Reset,
-    Stdin,
-    Api,
-}
+use virtiofs::create_nydus_daemon;
+#[cfg(feature = "fusedev")]
+mod fusedev;
+#[cfg(feature = "fusedev")]
+use fusedev::create_nydus_daemon;
 
 lazy_static! {
     static ref EVENT_MANAGER_RUN: AtomicBool = AtomicBool::new(true);
@@ -269,308 +180,6 @@ impl SubscriberWrapper for ApiSeverSubscriber {
     fn get_event_fd(&self) -> Result<EventFd> {
         self.event_fd.try_clone()
     }
-}
-
-trait NydusDaemon {
-    fn start(&mut self, cnt: u32) -> Result<()>;
-    fn wait(&mut self) -> Result<()>;
-    fn stop(&mut self) -> Result<()>;
-}
-
-#[allow(dead_code)]
-#[cfg(feature = "virtiofsd")]
-struct VhostUserFsBackendHandler {
-    backend: Mutex<VhostUserFsBackend>,
-}
-
-#[cfg(feature = "virtiofsd")]
-struct VhostUserFsBackend {
-    mem: Option<GuestMemoryMmap>,
-    kill_evt: EventFd,
-    server: Arc<Server<Arc<Vfs>>>,
-    // handle request from slave to master
-    vu_req: Option<SlaveFsCacheReq>,
-    used_descs: Vec<(u16, u32)>,
-}
-
-#[cfg(feature = "virtiofsd")]
-impl VhostUserFsBackendHandler {
-    fn new(vfs: Arc<Vfs>) -> Result<Self> {
-        let backend = VhostUserFsBackend {
-            mem: None,
-            kill_evt: EventFd::new(EFD_NONBLOCK).map_err(Error::Epoll)?,
-            server: Arc::new(Server::new(vfs)),
-            vu_req: None,
-            used_descs: Vec::with_capacity(QUEUE_SIZE),
-        };
-        Ok(VhostUserFsBackendHandler {
-            backend: Mutex::new(backend),
-        })
-    }
-}
-
-#[cfg(feature = "virtiofsd")]
-impl VhostUserFsBackend {
-    // There's no way to recover if error happens during processing a virtq, let the caller
-    // to handle it.
-    fn process_queue(&mut self, vring: &mut Vring) -> Result<()> {
-        let mem = self.mem.as_ref().ok_or(Error::NoMemoryConfigured)?;
-
-        while let Some(avail_desc) = vring.mut_queue().iter(mem).next() {
-            let head_index = avail_desc.index();
-            let reader =
-                Reader::new(mem, avail_desc.clone()).map_err(Error::InvalidDescriptorChain)?;
-            let writer = Writer::new(mem, avail_desc).map_err(Error::InvalidDescriptorChain)?;
-
-            let total = self
-                .server
-                .handle_message(
-                    reader,
-                    writer,
-                    self.vu_req
-                        .as_mut()
-                        .map(|x| x as &mut dyn FsCacheReqHandler),
-                )
-                .map_err(Error::ProcessQueue)?;
-
-            self.used_descs.push((head_index, total as u32));
-        }
-
-        if !self.used_descs.is_empty() {
-            for (desc_index, data_sz) in &self.used_descs {
-                trace!(
-                    "used desc index {} bytes {} total_used {}",
-                    desc_index,
-                    data_sz,
-                    self.used_descs.len()
-                );
-                vring.mut_queue().add_used(mem, *desc_index, *data_sz);
-            }
-            self.used_descs.clear();
-            vring.signal_used_queue().unwrap();
-        }
-
-        Ok(())
-    }
-}
-
-#[cfg(feature = "virtiofsd")]
-impl VhostUserBackend for VhostUserFsBackendHandler {
-    fn num_queues(&self) -> usize {
-        NUM_QUEUES
-    }
-
-    fn max_queue_size(&self) -> usize {
-        QUEUE_SIZE
-    }
-
-    fn features(&self) -> u64 {
-        1 << VIRTIO_F_VERSION_1 | VhostUserVirtioFeatures::PROTOCOL_FEATURES.bits()
-    }
-
-    fn protocol_features(&self) -> VhostUserProtocolFeatures {
-        VhostUserProtocolFeatures::MQ | VhostUserProtocolFeatures::SLAVE_REQ
-    }
-
-    fn set_event_idx(&mut self, _enabled: bool) {}
-
-    fn update_memory(&mut self, mem: GuestMemoryMmap) -> VhostUserBackendResult<()> {
-        self.backend.lock().unwrap().mem = Some(mem);
-        Ok(())
-    }
-
-    fn handle_event(
-        &self,
-        index: u16,
-        evset: epoll::Events,
-        vrings: &[Arc<RwLock<Vring>>],
-        _thread_id: usize,
-    ) -> VhostUserBackendResult<bool> {
-        if evset != epoll::Events::EPOLLIN {
-            return Err(Error::HandleEventNotEpollIn.into());
-        }
-
-        match index {
-            HIPRIO_QUEUE_EVENT => {
-                let mut vring = vrings[HIPRIO_QUEUE_EVENT as usize].write().unwrap();
-                // high priority requests are also just plain fuse requests, just in a
-                // different queue
-                self.backend.lock().unwrap().process_queue(&mut vring)?;
-            }
-            x if x >= REQ_QUEUE_EVENT && x < vrings.len() as u16 => {
-                let mut vring = vrings[x as usize].write().unwrap();
-                self.backend.lock().unwrap().process_queue(&mut vring)?;
-            }
-            _ => return Err(Error::HandleEventUnknownEvent.into()),
-        }
-
-        Ok(false)
-    }
-
-    fn exit_event(&self, _thread_index: usize) -> Option<(EventFd, Option<u16>)> {
-        Some((
-            self.backend.lock().unwrap().kill_evt.try_clone().unwrap(),
-            Some(KILL_EVENT),
-        ))
-    }
-
-    fn set_slave_req_fd(&mut self, vu_req: SlaveFsCacheReq) {
-        self.backend.lock().unwrap().vu_req = Some(vu_req);
-    }
-}
-
-#[cfg(feature = "virtiofsd")]
-struct VirtiofsDaemon<S: VhostUserBackend> {
-    sock: String,
-    daemon: VhostUserDaemon<S>,
-}
-
-#[cfg(feature = "virtiofsd")]
-impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
-    fn start(&mut self, _: u32) -> Result<()> {
-        let listener = Listener::new(&self.sock, true).unwrap();
-        self.daemon.start(listener).map_err(|e| einval!(e))
-    }
-
-    fn wait(&mut self) -> Result<()> {
-        self.daemon.wait().map_err(|e| einval!(e))
-    }
-
-    fn stop(&mut self) -> Result<()> {
-        /* TODO: find a way to kill backend
-        let kill_evt = &backend.read().unwrap().kill_evt;
-        if let Err(e) = kill_evt.write(1) {}
-        */
-        Ok(())
-    }
-}
-
-#[cfg(feature = "virtiofsd")]
-fn create_nydus_daemon(
-    sock: &str,
-    fs: Arc<Vfs>,
-    _evtfd: EventFd,
-    _readonly: bool,
-) -> Result<Box<dyn NydusDaemon>> {
-    let daemon = VhostUserDaemon::new(
-        String::from("vhost-user-fs-backend"),
-        Arc::new(RwLock::new(VhostUserFsBackendHandler::new(fs)?)),
-    )
-    .map_err(|e| Error::DaemonFailure(format!("{:?}", e)))?;
-    Ok(Box::new(VirtiofsDaemon {
-        sock: sock.to_owned(),
-        daemon,
-    }))
-}
-
-#[cfg(feature = "fusedev")]
-struct FuseServer {
-    server: Arc<Server<Arc<Vfs>>>,
-    ch: FuseChannel,
-    // read buffer for fuse requests
-    buf: Vec<u8>,
-    evtfd: EventFd,
-}
-
-#[cfg(feature = "fusedev")]
-impl FuseServer {
-    fn new(server: Arc<Server<Arc<Vfs>>>, se: &FuseSession, evtfd: EventFd) -> Result<FuseServer> {
-        Ok(FuseServer {
-            server,
-            ch: se.new_channel()?,
-            buf: Vec::with_capacity(se.bufsize()),
-            evtfd,
-        })
-    }
-
-    fn svc_loop(&mut self) -> Result<()> {
-        // Safe because we have already reserved the capacity
-        unsafe {
-            self.buf.set_len(self.buf.capacity());
-        }
-        loop {
-            if let Some(reader) = self.ch.get_reader(&mut self.buf)? {
-                let writer = self.ch.get_writer()?;
-                self.server
-                    .handle_message(reader, writer, None)
-                    .map_err(|e| {
-                        error! {"handle message failed: {}", e};
-                        Error::ProcessQueue(e)
-                    })?;
-            } else {
-                info!("fuse server exits");
-                break;
-            }
-        }
-        EVENT_MANAGER_RUN.store(false, Ordering::Relaxed);
-        self.evtfd.write(1).unwrap();
-        Ok(())
-    }
-}
-
-#[cfg(feature = "fusedev")]
-struct FusedevDaemon {
-    server: Arc<Server<Arc<Vfs>>>,
-    session: FuseSession,
-    threads: Vec<Option<thread::JoinHandle<Result<()>>>>,
-    event_fd: EventFd,
-}
-
-#[cfg(feature = "fusedev")]
-impl FusedevDaemon {
-    fn kick_one_server(&mut self) -> Result<()> {
-        let mut s = FuseServer::new(
-            self.server.clone(),
-            &self.session,
-            // Clone event fd must succeed, otherwise fusedev daemon should not work.
-            self.event_fd.try_clone().unwrap(),
-        )?;
-
-        let thread = thread::Builder::new()
-            .name("fuse_server".to_string())
-            .spawn(move || s.svc_loop())
-            .map_err(Error::ThreadSpawn)?;
-        self.threads.push(Some(thread));
-        Ok(())
-    }
-}
-
-#[cfg(feature = "fusedev")]
-impl NydusDaemon for FusedevDaemon {
-    fn start(&mut self, cnt: u32) -> Result<()> {
-        for _ in 0..cnt {
-            self.kick_one_server()?;
-        }
-        Ok(())
-    }
-
-    fn wait(&mut self) -> Result<()> {
-        for t in &mut self.threads {
-            if let Some(handle) = t.take() {
-                handle.join().map_err(|_| Error::WaitDaemon)??;
-            }
-        }
-        Ok(())
-    }
-
-    fn stop(&mut self) -> Result<()> {
-        self.session.umount()
-    }
-}
-
-#[cfg(feature = "fusedev")]
-fn create_nydus_daemon(
-    mountpoint: &str,
-    fs: Arc<Vfs>,
-    evtfd: EventFd,
-    readonly: bool,
-) -> Result<Box<dyn NydusDaemon>> {
-    Ok(Box::new(FusedevDaemon {
-        session: FuseSession::new(Path::new(mountpoint), "nydusfs", "", readonly)?,
-        server: Arc::new(Server::new(fs)),
-        threads: Vec::new(),
-        event_fd: evtfd,
-    }))
 }
 
 fn get_default_rlimit_nofile() -> Result<rlim> {
