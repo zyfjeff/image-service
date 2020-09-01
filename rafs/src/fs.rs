@@ -248,12 +248,40 @@ impl Rafs {
             return Err(err_not_directory!());
         }
 
-        let mut idx = offset as u32;
-        while idx < parent.get_child_count() {
-            let child = parent.get_child_by_index(idx as u64)?;
+        let mut cur_offset = offset;
+        // offset 0 and 1 is for "." and ".." respectively.
+        if cur_offset == 0 {
+            cur_offset += 1;
+            add_entry(DirEntry {
+                ino,
+                offset: cur_offset,
+                type_: 0,
+                name: DOT.as_bytes(),
+            })?;
+        }
+        if cur_offset == 1 {
+            let parent = if ino == ROOT_ID {
+                ROOT_ID
+            } else {
+                parent.parent()
+            };
+            cur_offset += 1;
+            add_entry(DirEntry {
+                ino: parent,
+                offset: cur_offset,
+                type_: 0,
+                name: DOTDOT.as_bytes(),
+            })?;
+        }
+
+        let mut idx = cur_offset - 2;
+        while idx < parent.get_child_count() as u64 {
+            let child = parent.get_child_by_index(idx)?;
+
+            cur_offset += 1;
             match add_entry(DirEntry {
                 ino: child.ino(),
-                offset: (idx + 1) as u64,
+                offset: cur_offset,
                 type_: 0,
                 name: child.name()?.as_bytes(),
             }) {

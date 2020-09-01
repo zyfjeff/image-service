@@ -107,7 +107,7 @@ pub trait BlobBackend {
     /// Read a range of data from blob into the provided slice
     fn try_read(&self, blob_id: &str, buf: &mut [u8], offset: u64) -> Result<usize>;
 
-    /// Read mutilple range of data from blob into the provided slices
+    /// Read multiple range of data from blob into the provided slices
     fn readv(
         &self,
         blob_id: &str,
