@@ -7,9 +7,17 @@
 #[cfg(feature = "virtiofsd")]
 use fuse_rs::transport::Error as FuseTransportError;
 use fuse_rs::Error as VhostUserFsError;
-use nydus_utils::einval;
 use std::io::Result;
 use std::{convert, error, fmt, io};
+
+use event_manager::{EventOps, EventSubscriber, Events};
+use nydus_utils::{einval, last_error};
+use std::sync::atomic::Ordering;
+use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
+
+use crate::SubscriberWrapper;
+
+use crate::EVENT_MANAGER_RUN;
 
 pub trait NydusDaemon {
     fn start(&mut self, cnt: u32) -> Result<()>;
@@ -65,5 +73,57 @@ impl error::Error for Error {}
 impl convert::From<Error> for io::Error {
     fn from(e: Error) -> Self {
         einval!(e)
+    }
+}
+
+pub struct NydusDaemonSubscriber {
+    event_fd: EventFd,
+}
+
+impl NydusDaemonSubscriber {
+    pub fn new() -> Result<Self> {
+        match EventFd::new(0) {
+            Ok(fd) => Ok(Self { event_fd: fd }),
+            Err(e) => {
+                error!("Creating event fd failed. {}", e);
+                Err(e)
+            }
+        }
+    }
+}
+
+impl SubscriberWrapper for NydusDaemonSubscriber {
+    fn get_event_fd(&self) -> Result<EventFd> {
+        self.event_fd.try_clone()
+    }
+}
+
+impl EventSubscriber for NydusDaemonSubscriber {
+    fn process(&self, events: Events, event_ops: &mut EventOps) {
+        self.event_fd
+            .read()
+            .map(|_| ())
+            .map_err(|e| last_error!(e))
+            .unwrap_or_else(|_| {});
+
+        match events.event_set() {
+            EventSet::IN => {
+                EVENT_MANAGER_RUN.store(false, Ordering::Relaxed);
+            }
+            EventSet::ERROR => {
+                error!("Got error on the monitored event.");
+            }
+            EventSet::HANG_UP => {
+                event_ops
+                    .remove(events)
+                    .unwrap_or_else(|e| error!("Encountered error during cleanup, {}", e));
+            }
+            _ => {}
+        }
+    }
+
+    fn init(&self, ops: &mut EventOps) {
+        ops.add(Events::new(&self.event_fd, EventSet::IN))
+            .expect("Cannot register event")
     }
 }

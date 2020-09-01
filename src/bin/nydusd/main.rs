@@ -13,34 +13,35 @@ extern crate rafs;
 extern crate serde_json;
 extern crate stderrlog;
 
-use event_manager::{EventManager, EventOps, EventSubscriber, Events, SubscriberOps};
-use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
-
 use std::fs::File;
 use std::io::{Read, Result};
 use std::ops::{Deref, DerefMut};
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver};
-
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc::channel,
+    Arc, Mutex,
+};
 use std::{io, process};
 
 use nix::sys::signal;
 use rlimit::{rlim, Resource};
 
 use clap::{App, Arg};
-use fuse_rs::api::{Vfs, VfsOptions};
-use fuse_rs::passthrough::{Config, PassthroughFs};
+use fuse_rs::{
+    api::{Vfs, VfsOptions},
+    passthrough::{Config, PassthroughFs},
+};
+
+use event_manager::{EventManager, EventSubscriber, SubscriberOps};
+use vmm_sys_util::eventfd::EventFd;
 
 use nydus_api::http::start_http_thread;
-use nydus_api::http_endpoint::{ApiError, ApiRequest, ApiResponsePayload, DaemonInfo, MountInfo};
-use nydus_utils::{einval, enoent, eother, epipe, last_error, log_level_to_verbosity};
+use nydus_utils::{einval, log_level_to_verbosity};
 use rafs::fs::{Rafs, RafsConfig};
-use rafs::io_stats;
 
 mod daemon;
-use daemon::Error;
+use daemon::{Error, NydusDaemonSubscriber};
 
 #[cfg(feature = "virtiofsd")]
 mod virtiofs;
@@ -51,136 +52,16 @@ mod fusedev;
 #[cfg(feature = "fusedev")]
 use fusedev::create_nydus_daemon;
 
+mod api_server_glue;
+use api_server_glue::{rafs_mount, ApiServer, ApiSeverSubscriber};
+
 lazy_static! {
     static ref EVENT_MANAGER_RUN: AtomicBool = AtomicBool::new(true);
     static ref EXIT_EVTFD: Mutex::<Option<EventFd>> = Mutex::<Option<EventFd>>::default();
 }
 
-type RafsMounter = fn(MountInfo, &RafsConfig, &Arc<Vfs>) -> Result<()>;
-struct ApiSeverSubscriber {
-    event_fd: EventFd,
-    server: ApiServer,
-    api_receiver: Receiver<ApiRequest>,
-    mounter: RafsMounter,
-    rafs_conf: RafsConfig,
-    vfs: Arc<Vfs>,
-}
-
-struct NydusDaemonSubscriber {
-    event_fd: EventFd,
-}
-
-impl NydusDaemonSubscriber {
-    fn new() -> Result<Self> {
-        match EventFd::new(0) {
-            Ok(fd) => Ok(Self { event_fd: fd }),
-            Err(e) => {
-                error!("Creating event fd failed. {}", e);
-                Err(e)
-            }
-        }
-    }
-}
-
-impl SubscriberWrapper for NydusDaemonSubscriber {
-    fn get_event_fd(&self) -> Result<EventFd> {
-        self.event_fd.try_clone()
-    }
-}
-
-impl EventSubscriber for NydusDaemonSubscriber {
-    fn process(&self, events: Events, event_ops: &mut EventOps) {
-        self.event_fd
-            .read()
-            .map(|_| ())
-            .map_err(|e| last_error!(e))
-            .unwrap_or_else(|_| {});
-
-        match events.event_set() {
-            EventSet::IN => {
-                EVENT_MANAGER_RUN.store(false, Ordering::Relaxed);
-            }
-            EventSet::ERROR => {
-                error!("Got error on the monitored event.");
-            }
-            EventSet::HANG_UP => {
-                event_ops
-                    .remove(events)
-                    .unwrap_or_else(|e| error!("Encountered error during cleanup, {}", e));
-            }
-            _ => {}
-        }
-    }
-
-    fn init(&self, ops: &mut EventOps) {
-        ops.add(Events::new(&self.event_fd, EventSet::IN))
-            .expect("Cannot register event")
-    }
-}
-
-impl ApiSeverSubscriber {
-    fn new(
-        vfs: Arc<Vfs>,
-        mounter: RafsMounter,
-        server: ApiServer,
-        api_receiver: Receiver<ApiRequest>,
-    ) -> Result<Self> {
-        match EventFd::new(0) {
-            Ok(fd) => Ok(Self {
-                event_fd: fd,
-                rafs_conf: RafsConfig::new(),
-                vfs,
-                server,
-                mounter,
-                api_receiver,
-            }),
-            Err(e) => {
-                error!("Creating event fd failed. {}", e);
-                Err(e)
-            }
-        }
-    }
-}
-
-impl EventSubscriber for ApiSeverSubscriber {
-    fn process(&self, events: Events, event_ops: &mut EventOps) {
-        self.event_fd
-            .read()
-            .map(|_| ())
-            .map_err(|e| last_error!(e))
-            .unwrap_or_else(|_| {});
-        match events.event_set() {
-            EventSet::IN => {
-                self.server
-                    .process_request(&self.api_receiver, self.mounter, &self.rafs_conf, &self.vfs)
-                    .unwrap_or_else(|e| error!("API server process events failed, {}", e));
-            }
-            EventSet::ERROR => {
-                error!("Got error on the monitored event.");
-            }
-            EventSet::HANG_UP => {
-                event_ops
-                    .remove(events)
-                    .unwrap_or_else(|e| error!("Encountered error during cleanup, {}", e));
-            }
-            _ => {}
-        }
-    }
-
-    fn init(&self, ops: &mut EventOps) {
-        ops.add(Events::new(&self.event_fd, EventSet::IN))
-            .expect("Cannot register event")
-    }
-}
-
-trait SubscriberWrapper: EventSubscriber {
+pub trait SubscriberWrapper: EventSubscriber {
     fn get_event_fd(&self) -> Result<EventFd>;
-}
-
-impl SubscriberWrapper for ApiSeverSubscriber {
-    fn get_event_fd(&self) -> Result<EventFd> {
-        self.event_fd.try_clone()
-    }
 }
 
 fn get_default_rlimit_nofile() -> Result<rlim> {
@@ -213,95 +94,6 @@ fn get_default_rlimit_nofile() -> Result<rlim> {
         .map(|(curr, _)| if curr >= max_fds { 0 } else { max_fds })
 }
 
-struct ApiServer {
-    id: String,
-    version: String,
-}
-
-impl ApiServer {
-    fn new(id: String, version: String) -> Result<Self> {
-        Ok(ApiServer { id, version })
-    }
-
-    fn process_request(
-        &self,
-        api_receiver: &Receiver<ApiRequest>,
-        mounter: RafsMounter,
-        rafs_conf: &RafsConfig,
-        vfs: &Arc<Vfs>,
-    ) -> Result<()> {
-        let api_request = api_receiver
-            .recv()
-            .map_err(|e| epipe!(format!("receive API channel failed {}", e)))?;
-
-        match api_request {
-            ApiRequest::DaemonInfo(sender) => {
-                let response = DaemonInfo {
-                    id: self.id.to_string(),
-                    version: self.version.to_string(),
-                    state: "Running".to_string(),
-                };
-
-                sender
-                    .send(Ok(response).map(ApiResponsePayload::DaemonInfo))
-                    .map_err(|e| epipe!(format!("send API response failed {}", e)))?;
-            }
-            ApiRequest::Mount(info, sender) => {
-                let r = match mounter(info, rafs_conf, vfs) {
-                    Ok(_) => Ok(ApiResponsePayload::Mount),
-                    Err(e) => Err(ApiError::MountFailure(e)),
-                };
-                sender
-                    .send(r)
-                    .map_err(|e| epipe!(format!("send API response failed {}", e)))?;
-            }
-            ApiRequest::ConfigureDaemon(conf, sender) => {
-                if let Ok(v) = conf.log_level.parse::<log::LevelFilter>() {
-                    log::set_max_level(v);
-                    sender.send(Ok(ApiResponsePayload::Empty)).unwrap();
-                } else {
-                    error!("Invalid log level passed, {}", conf.log_level);
-                    sender.send(Err(ApiError::ResponsePayloadType)).unwrap();
-                }
-            }
-            ApiRequest::ExportGlobalMetrics(sender, id) => {
-                let resp;
-                match io_stats::export_global_stats(&id) {
-                    Ok(m) => resp = m,
-                    Err(e) => resp = e,
-                }
-                // Even failed in sending, never leave this loop?
-                if let Err(e) = sender.send(Ok(ApiResponsePayload::FsGlobalMetrics(resp))) {
-                    error!("send API response failed {}", e);
-                }
-            }
-            ApiRequest::ExportFilesMetrics(sender, id) => {
-                // TODO: Use mount point name to refer to per rafs metrics.
-                let resp;
-                match io_stats::export_files_stats(&id) {
-                    Ok(m) => resp = m,
-                    Err(e) => resp = e,
-                }
-                if let Err(e) = sender.send(Ok(ApiResponsePayload::FsFilesMetrics(resp))) {
-                    error!("send API response failed {}", e);
-                }
-            }
-            ApiRequest::ExportAccessPatterns(sender, id) => {
-                let resp;
-                match io_stats::export_files_access_pattern(&id) {
-                    Ok(m) => resp = m,
-                    Err(e) => resp = e,
-                }
-                if let Err(e) = sender.send(Ok(ApiResponsePayload::FsFilesPatterns(resp))) {
-                    error!("send API response failed {}", e);
-                }
-            }
-        };
-
-        Ok(())
-    }
-}
-
 extern "C" fn sig_exit(_sig: std::os::raw::c_int) {
     if cfg!(feature = "virtiofsd") {
         // In case of virtiofsd, mechanism to unblock recvmsg() from VMM is lacked.
@@ -318,78 +110,6 @@ extern "C" fn sig_exit(_sig: std::os::raw::c_int) {
             .unwrap()
             .write(1)
             .unwrap_or_else(|e| error!("Write event fd failed, {}", e))
-    }
-}
-
-/// Mount Rafs per as to provided mount-info.
-fn rafs_mount(info: MountInfo, default_rafs_conf: &RafsConfig, vfs: &Arc<Vfs>) -> Result<()> {
-    match info.ops.as_str() {
-        "mount" => {
-            let mut rafs = match info.config.as_ref() {
-                Some(config) => {
-                    let content = std::fs::read_to_string(config).map_err(|e| einval!(e))?;
-                    let rafs_conf: RafsConfig =
-                        serde_json::from_str(&content).map_err(|e| einval!(e))?;
-                    Rafs::new(rafs_conf, &info.mountpoint)?
-                }
-                None => Rafs::new(default_rafs_conf.clone(), &info.mountpoint)?,
-            };
-
-            if let Some(source) = info.source.as_ref() {
-                let mut file = Box::new(File::open(source).map_err(|e| eother!(e))?)
-                    as Box<dyn rafs::RafsIoRead>;
-                rafs.import(&mut file, None)?;
-
-                match vfs.mount(Box::new(rafs), &info.mountpoint) {
-                    Ok(()) => {
-                        info!("rafs mounted");
-                        Ok(())
-                    }
-                    Err(e) => Err(eother!(e)),
-                }
-            } else {
-                Err(eother!("No source was provided!"))
-            }
-        }
-
-        "umount" => match vfs.umount(&info.mountpoint) {
-            Ok(()) => Ok(()),
-            Err(e) => Err(e),
-        },
-        "update" => {
-            info!("switch backend");
-            let rafs_conf = match info.config.as_ref() {
-                Some(config) => {
-                    let content = std::fs::read_to_string(config).map_err(|e| einval!(e))?;
-                    let rafs_conf: RafsConfig =
-                        serde_json::from_str(&content).map_err(|e| einval!(e))?;
-                    rafs_conf
-                }
-                None => {
-                    return Err(enoent!("No rafs configuration was provided!"));
-                }
-            };
-
-            let rootfs = vfs.get_rootfs(&info.mountpoint).map_err(|e| enoent!(e))?;
-            let any_fs = rootfs.deref().as_any();
-            if let Some(fs_swap) = any_fs.downcast_ref::<Rafs>() {
-                if let Some(source) = info.source.as_ref() {
-                    let mut file = Box::new(File::open(source).map_err(|e| last_error!(e))?)
-                        as Box<dyn rafs::RafsIoRead>;
-
-                    fs_swap
-                        .update(&mut file, rafs_conf)
-                        .map_err(|e| eother!(e))?;
-                    Ok(())
-                } else {
-                    error!("no info.source is found, invalid mount info {:?}", info);
-                    Err(enoent!("No source file was provided!"))
-                }
-            } else {
-                Err(eother!("Can't swap fs"))
-            }
-        }
-        _ => Err(einval!("Invalid op")),
     }
 }
 
