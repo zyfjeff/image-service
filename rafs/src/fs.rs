@@ -439,7 +439,7 @@ impl Rafs {
             match parent.get_child_by_name(p.unwrap()) {
                 Ok(p) => parent = p,
                 Err(_) => {
-                    warn!("File {:?} not in rafs", p);
+                    warn!("File {:?} not in rafs", p.unwrap());
                     return Err(enoent!());
                 }
             }
