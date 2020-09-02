@@ -319,7 +319,6 @@ impl RafsCache for BlobCache {
     fn prefetch(&self, bios: &mut [RafsBio]) -> Result<usize> {
         let (mut tx, rx) = spmc::channel::<MergedBackendRequest>();
 
-        // TODO: Make thread count configurable.
         for num in 0..self.prefetch_worker.threads_count {
             let cache = Arc::clone(&self.cache);
             // Clone cache fulfils our requirement that invoke `read_chunks` and it's
@@ -329,11 +328,12 @@ impl RafsCache for BlobCache {
             let _thread = thread::Builder::new()
                 .name(format!("prefetch_thread_{}", num))
                 .spawn(move || {
-                    while let Ok(mr) = rx.recv() {
+                    'wait_mr: while let Ok(mr) = rx.recv() {
                         let blob_offset = mr.blob_offset;
                         let blob_size = mr.blob_size;
                         let continuous_chunks = &mr.chunks;
                         let blob_id = &mr.blob_id;
+                        let mut issue_batch: bool;
 
                         trace!(
                             "Merged req id {} req offset {} size {}",
@@ -341,6 +341,44 @@ impl RafsCache for BlobCache {
                             blob_offset,
                             blob_size
                         );
+
+                        issue_batch = false;
+                        // An immature trick here to detect if chunk already resides in
+                        // blob cache file. Hopefully, we can have a more clever and agile
+                        // way in the future. Principe is that if all chunks are Ready,
+                        // abort this Merged Request. It might involve extra stress
+                        // to local file system.
+                        for c in continuous_chunks {
+                            let mut one_chunk_buf = alloc_buf(c.decompress_size() as usize);
+                            let entry = cache
+                                .write()
+                                .expect("Expect cache lock not poisoned")
+                                .set(blob_id, c.clone());
+                            if let Ok(entry) = entry {
+                                if entry.lock().unwrap().is_ready() {
+                                    continue;
+                                }
+                                if entry
+                                    .lock()
+                                    .unwrap()
+                                    .read_whole_chunk(
+                                        one_chunk_buf.as_mut_slice(),
+                                        cache_cloned.need_validate(),
+                                        cache_cloned.digester(),
+                                    )
+                                    .is_err()
+                                {
+                                    // Aha, we have a not integrated chunk here. Issue the entire
+                                    // merged request from backend to boost.
+                                    issue_batch = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if !issue_batch {
+                            continue 'wait_mr;
+                        }
 
                         if let Ok(chunks) = cache_cloned.read_chunks(
                             blob_id,
