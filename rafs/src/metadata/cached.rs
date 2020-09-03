@@ -432,7 +432,7 @@ impl RafsInode for CachedInode {
     }
 
     fn is_hardlink(&self) -> bool {
-        self.i_nlink > 1
+        !self.is_dir() && self.i_nlink > 1
     }
 
     fn has_xattr(&self) -> bool {
