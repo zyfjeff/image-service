@@ -77,8 +77,11 @@ pub fn compress(src: &[u8], algorithm: Algorithm) -> Result<(Cow<[u8]>, bool)> {
     }
 }
 
-pub fn decompress(src: &[u8], dst: &mut [u8]) -> Result<usize> {
-    lz4_decompress(src, dst)
+pub fn decompress(src: &[u8], dst: &mut [u8], algorithm: Algorithm) -> Result<usize> {
+    match algorithm {
+        Algorithm::None => Ok(src.len()),
+        Algorithm::LZ4Block => lz4_decompress(src, dst),
+    }
 }
 
 #[cfg(test)]
@@ -115,7 +118,12 @@ mod tests {
         let buf = vec![0x1u8];
         let compressed = lz4_compress(&buf).unwrap();
         let mut decompressed = vec![0; buf.len()];
-        let sz = decompress(&compressed, decompressed.as_mut_slice()).unwrap();
+        let sz = decompress(
+            &compressed,
+            decompressed.as_mut_slice(),
+            Algorithm::LZ4Block,
+        )
+        .unwrap();
 
         assert_eq!(sz, 1);
         assert_eq!(buf, decompressed);
@@ -126,7 +134,12 @@ mod tests {
         let buf = vec![0x2u8, 0x3u8];
         let compressed = lz4_compress(&buf).unwrap();
         let mut decompressed = vec![0; buf.len()];
-        let sz = decompress(&compressed, decompressed.as_mut_slice()).unwrap();
+        let sz = decompress(
+            &compressed,
+            decompressed.as_mut_slice(),
+            Algorithm::LZ4Block,
+        )
+        .unwrap();
 
         assert_eq!(sz, 2);
         assert_eq!(buf, decompressed);
@@ -140,7 +153,12 @@ mod tests {
         ];
         let compressed = lz4_compress(&buf).unwrap();
         let mut decompressed = vec![0; buf.len()];
-        let sz = decompress(&compressed, decompressed.as_mut_slice()).unwrap();
+        let sz = decompress(
+            &compressed,
+            decompressed.as_mut_slice(),
+            Algorithm::LZ4Block,
+        )
+        .unwrap();
 
         assert_eq!(sz, 16);
         assert_eq!(&buf, decompressed.as_slice());
@@ -151,7 +169,12 @@ mod tests {
         let buf = vec![0x2u8; 4095];
         let compressed = lz4_compress(&buf).unwrap();
         let mut decompressed = vec![0; buf.len()];
-        let sz = decompress(&compressed, decompressed.as_mut_slice()).unwrap();
+        let sz = decompress(
+            &compressed,
+            decompressed.as_mut_slice(),
+            Algorithm::LZ4Block,
+        )
+        .unwrap();
 
         assert_eq!(sz, 4095);
         assert_eq!(buf, decompressed);
@@ -162,7 +185,12 @@ mod tests {
         let buf = vec![0x2u8; 4096];
         let compressed = lz4_compress(&buf).unwrap();
         let mut decompressed = vec![0; buf.len()];
-        let sz = decompress(&compressed, decompressed.as_mut_slice()).unwrap();
+        let sz = decompress(
+            &compressed,
+            decompressed.as_mut_slice(),
+            Algorithm::LZ4Block,
+        )
+        .unwrap();
 
         assert_eq!(sz, 4096);
         assert_eq!(buf, decompressed);
@@ -173,7 +201,12 @@ mod tests {
         let buf = vec![0x2u8; 4097];
         let compressed = lz4_compress(&buf).unwrap();
         let mut decompressed = vec![0; buf.len()];
-        let sz = decompress(&compressed, decompressed.as_mut_slice()).unwrap();
+        let sz = decompress(
+            &compressed,
+            decompressed.as_mut_slice(),
+            Algorithm::LZ4Block,
+        )
+        .unwrap();
 
         assert_eq!(sz, 4097);
         assert_eq!(buf, decompressed);
