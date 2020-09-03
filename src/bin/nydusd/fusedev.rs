@@ -9,7 +9,7 @@ use std::sync::{atomic::Ordering, Arc};
 use std::thread;
 
 use fuse_rs::api::{server::Server, Vfs};
-use nydus_utils::{FuseChannel, FuseSession};
+use nydus_utils::{eio, FuseChannel, FuseSession};
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::daemon;
@@ -40,15 +40,23 @@ impl FuseServer {
         unsafe {
             self.buf.set_len(self.buf.capacity());
         }
+
+        // Given error EBADF, it means kernel has shut down this session.
+        let _ebadf = std::io::Error::from_raw_os_error(libc::EBADF);
         loop {
             if let Some(reader) = self.ch.get_reader(&mut self.buf)? {
                 let writer = self.ch.get_writer()?;
-                self.server
-                    .handle_message(reader, writer, None)
-                    .map_err(|e| {
-                        error! {"handle message failed: {}", e};
-                        Error::ProcessQueue(e)
-                    })?;
+                if let Err(e) = self.server.handle_message(reader, writer, None) {
+                    match e {
+                        fuse_rs::Error::EncodeMessage(_ebadf) => {
+                            return Err(eio!("fuse session has been shut down: {:?}"));
+                        }
+                        _ => {
+                            error!("Handling fuse message, {}", Error::ProcessQueue(e));
+                            continue;
+                        }
+                    }
+                }
             } else {
                 info!("fuse server exits");
                 break;
