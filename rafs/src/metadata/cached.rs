@@ -42,8 +42,8 @@ impl CachedInodes {
 
     /// v5 layout is based on BFS, which means parents always are in front of children
     fn load_all_inodes(&mut self, r: &mut RafsIoReader) -> Result<()> {
-        let mut dir_inos = Vec::new();
-        'outer: loop {
+        let mut dir_ino_set = Vec::new();
+        loop {
             let mut inode = CachedInode::new(self.s_blob.clone(), self.s_meta.clone());
             match inode.load(&self.s_meta, r) {
                 Ok(_) => {
@@ -56,7 +56,7 @@ impl CachedInodes {
                         inode.i_child_cnt,
                     );
                 }
-                Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => break 'outer,
+                Err(ref e) if e.kind() == ErrorKind::UnexpectedEof => break,
                 Err(e) => {
                     error!("error when loading CachedInode {:?}", e);
                     return Err(e);
@@ -64,14 +64,17 @@ impl CachedInodes {
             }
             let child_inode = self.hash_inode(Arc::new(inode))?;
             if child_inode.is_dir() {
-                // dir inodes push into parent last
-                dir_inos.push(child_inode.i_ino);
+                // Delay associating dir inode to its parent because that will take
+                // a cloned inode object, which preventing us from using `Arc::get_mut`.
+                // Without `Arc::get_mut` during Cached meta setup(loading all inodes),
+                // we have to lock inode everywhere for mutability. It really hurts.
+                dir_ino_set.push(child_inode.i_ino);
                 continue;
             }
             self.add_into_parent(child_inode)?;
         }
-        while !dir_inos.is_empty() {
-            let ino = dir_inos.pop().unwrap();
+        while !dir_ino_set.is_empty() {
+            let ino = dir_ino_set.pop().unwrap();
             self.add_into_parent(self.get_node(ino)?)?;
         }
         debug!("all {} inodes loaded", self.s_inodes.len());
