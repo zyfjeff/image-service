@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::io::Result;
 use std::path::PathBuf;
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 
 use http::uri::Uri;
@@ -16,8 +16,8 @@ use micro_http::{Body, HttpServer, MediaType, Request, Response, StatusCode, Ver
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::http_endpoint::{
-    ApiRequest, InfoHandler, MetricsFilesHandler, MetricsHandler, MetricsPatternHandler,
-    MountHandler,
+    ApiRequest, ApiResponse, InfoHandler, MetricsFilesHandler, MetricsHandler,
+    MetricsPatternHandler, MountHandler,
 };
 
 const HTTP_ROOT: &str = "/api/v1";
@@ -33,7 +33,8 @@ pub trait EndpointHandler: Sync + Send {
         &self,
         req: &Request,
         api_notifier: EventFd,
-        api_sender: Sender<ApiRequest>,
+        to_api: Sender<ApiRequest>,
+        from_api: &Receiver<ApiResponse>,
     ) -> Response;
 }
 
@@ -68,13 +69,14 @@ lazy_static! {
 fn handle_http_request(
     request: &Request,
     api_notifier: &EventFd,
-    api_sender: &Sender<ApiRequest>,
+    to_api: &Sender<ApiRequest>,
+    from_api: &Receiver<ApiResponse>,
 ) -> Response {
     // Micro http should ensure that req path is legal.
     let uri = request.uri().get_abs_path().parse::<Uri>().unwrap();
     let mut response = match HTTP_ROUTES.routes.get(&uri.path().to_string()) {
         Some(route) => match api_notifier.try_clone() {
-            Ok(notifier) => route.handle_request(&request, notifier, api_sender.clone()),
+            Ok(notifier) => route.handle_request(&request, notifier, to_api.clone(), from_api),
             Err(_) => {
                 let mut r = Response::new(Version::Http11, StatusCode::InternalServerError);
                 r.set_body(Body::new("Internal error!"));
@@ -118,7 +120,8 @@ pub fn extract_query_part(req: &Request, key: &str) -> Option<String> {
 pub fn start_http_thread(
     path: &str,
     evt_fd: EventFd,
-    api_sender: Sender<ApiRequest>,
+    to_api: Sender<ApiRequest>,
+    from_api: Receiver<ApiResponse>,
 ) -> Result<thread::JoinHandle<Result<()>>> {
     std::fs::remove_file(path).unwrap_or_default();
     let socket_path = PathBuf::from(path);
@@ -135,7 +138,7 @@ pub fn start_http_thread(
                         for server_request in request_vec {
                             server
                                 .respond(server_request.process(|request| {
-                                    handle_http_request(request, &evt_fd, &api_sender)
+                                    handle_http_request(request, &evt_fd, &to_api, &from_api)
                                 }))
                                 .or_else(|e| -> Result<()> {
                                     error!("HTTP server error on response: {}", e);

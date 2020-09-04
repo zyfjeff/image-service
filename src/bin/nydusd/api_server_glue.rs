@@ -5,112 +5,123 @@
 
 use event_manager::{EventOps, EventSubscriber, Events};
 use fuse_rs::api::Vfs;
-use nydus_api::http_endpoint::{ApiError, ApiRequest, ApiResponsePayload, DaemonInfo, MountInfo};
+use nydus_api::http_endpoint::{
+    ApiError, ApiRequest, ApiResponse, ApiResponsePayload, ApiResult, DaemonConf, DaemonInfo,
+    MountInfo,
+};
 use nydus_utils::{einval, enoent, eother, epipe, last_error};
 use rafs::fs::{Rafs, RafsConfig};
 use rafs::io_stats;
 use std::fs::File;
-use std::io::Result;
 use std::ops::Deref;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
 use crate::SubscriberWrapper;
 
-type RafsMounter = fn(MountInfo, &RafsConfig, &Arc<Vfs>) -> Result<()>;
-
 pub struct ApiServer {
     id: String,
     version: String,
+    to_http: Sender<ApiResponse>,
 }
 
+type Result<T> = ApiResult<T>;
+
 impl ApiServer {
-    pub fn new(id: String, version: String) -> Result<Self> {
-        Ok(ApiServer { id, version })
+    pub fn new(id: String, version: String, to_http: Sender<ApiResponse>) -> std::io::Result<Self> {
+        Ok(ApiServer {
+            id,
+            version,
+            to_http,
+        })
     }
 
     fn process_request(
         &self,
-        api_receiver: &Receiver<ApiRequest>,
-        mounter: RafsMounter,
+        from_http: &Receiver<ApiRequest>,
         rafs_conf: &RafsConfig,
         vfs: &Arc<Vfs>,
-    ) -> Result<()> {
-        let api_request = api_receiver
+    ) -> std::io::Result<()> {
+        let request = from_http
             .recv()
             .map_err(|e| epipe!(format!("receive API channel failed {}", e)))?;
 
-        match api_request {
-            ApiRequest::DaemonInfo(sender) => {
-                let response = DaemonInfo {
-                    id: self.id.to_string(),
-                    version: self.version.to_string(),
-                    state: "Running".to_string(),
-                };
-
-                sender
-                    .send(Ok(response).map(ApiResponsePayload::DaemonInfo))
-                    .map_err(|e| epipe!(format!("send API response failed {}", e)))?;
-            }
-            ApiRequest::Mount(info, sender) => {
-                let r = match mounter(info, rafs_conf, vfs) {
-                    Ok(_) => Ok(ApiResponsePayload::Mount),
-                    Err(e) => Err(ApiError::MountFailure(e)),
-                };
-                sender
-                    .send(r)
-                    .map_err(|e| epipe!(format!("send API response failed {}", e)))?;
-            }
-            ApiRequest::ConfigureDaemon(conf, sender) => {
-                if let Ok(v) = conf.log_level.parse::<log::LevelFilter>() {
-                    log::set_max_level(v);
-                    sender.send(Ok(ApiResponsePayload::Empty)).unwrap();
-                } else {
-                    error!("Invalid log level passed, {}", conf.log_level);
-                    sender.send(Err(ApiError::ResponsePayloadType)).unwrap();
-                }
-            }
-            ApiRequest::ExportGlobalMetrics(sender, id) => {
-                let resp;
-                match io_stats::export_global_stats(&id) {
-                    Ok(m) => resp = m,
-                    Err(e) => resp = e,
-                }
-                // Even failed in sending, never leave this loop?
-                if let Err(e) = sender.send(Ok(ApiResponsePayload::FsGlobalMetrics(resp))) {
-                    error!("send API response failed {}", e);
-                }
-            }
-            ApiRequest::ExportFilesMetrics(sender, id) => {
-                // TODO: Use mount point name to refer to per rafs metrics.
-                let resp;
-                match io_stats::export_files_stats(&id) {
-                    Ok(m) => resp = m,
-                    Err(e) => resp = e,
-                }
-                if let Err(e) = sender.send(Ok(ApiResponsePayload::FsFilesMetrics(resp))) {
-                    error!("send API response failed {}", e);
-                }
-            }
-            ApiRequest::ExportAccessPatterns(sender, id) => {
-                let resp;
-                match io_stats::export_files_access_pattern(&id) {
-                    Ok(m) => resp = m,
-                    Err(e) => resp = e,
-                }
-                if let Err(e) = sender.send(Ok(ApiResponsePayload::FsFilesPatterns(resp))) {
-                    error!("send API response failed {}", e);
-                }
-            }
+        let resp = match request {
+            ApiRequest::DaemonInfo => self.get_rafs_instance_info(),
+            ApiRequest::Mount(info) => Self::mount_rafs(info, rafs_conf, vfs),
+            ApiRequest::ConfigureDaemon(conf) => self.configure_rafs_instance(conf),
+            ApiRequest::ExportGlobalMetrics(id) => Self::export_global_metrics(id),
+            ApiRequest::ExportFilesMetrics(id) => Self::export_files_metrics(id),
+            ApiRequest::ExportAccessPatterns(id) => Self::export_access_patterns(id),
         };
 
+        self.respond(resp);
+
         Ok(())
+    }
+
+    fn respond(&self, resp: Result<ApiResponsePayload>) {
+        if let Err(e) = self.to_http.send(resp) {
+            error!("send API response failed {}", e);
+        }
+    }
+
+    fn get_rafs_instance_info(&self) -> ApiResponse {
+        let response = DaemonInfo {
+            id: self.id.to_string(),
+            version: self.version.to_string(),
+            state: "Running".to_string(),
+        };
+
+        Ok(ApiResponsePayload::DaemonInfo(response))
+    }
+
+    fn mount_rafs(info: MountInfo, rafs_conf: &RafsConfig, vfs: &Arc<Vfs>) -> ApiResponse {
+        rafs_mount(info, &rafs_conf, vfs)
+            .map(|_| ApiResponsePayload::Mount)
+            .map_err(ApiError::MountFailure)
+    }
+
+    fn configure_rafs_instance(&self, conf: DaemonConf) -> ApiResponse {
+        conf.log_level
+            .parse::<log::LevelFilter>()
+            .map_err(|e| {
+                error!("Invalid log level passed, {}", e);
+                ApiError::ResponsePayloadType
+            })
+            .map(|v| {
+                log::set_max_level(v);
+                ApiResponsePayload::Mount
+            })
+    }
+
+    fn export_global_metrics(id: Option<String>) -> ApiResponse {
+        io_stats::export_global_stats(&id)
+            .map(ApiResponsePayload::FsGlobalMetrics)
+            .map_err(|_| ApiError::ResponsePayloadType)
+    }
+
+    fn export_files_metrics(id: Option<String>) -> ApiResponse {
+        // TODO: Use mount point name to refer to per rafs metrics.
+        io_stats::export_files_stats(&id)
+            .map(ApiResponsePayload::FsFilesMetrics)
+            .map_err(|_| ApiError::ResponsePayloadType)
+    }
+
+    fn export_access_patterns(id: Option<String>) -> ApiResponse {
+        io_stats::export_files_access_pattern(&id)
+            .map(ApiResponsePayload::FsFilesPatterns)
+            .map_err(|_| ApiError::ResponsePayloadType)
     }
 }
 
 /// Mount Rafs per as to provided mount-info.
-pub fn rafs_mount(info: MountInfo, default_rafs_conf: &RafsConfig, vfs: &Arc<Vfs>) -> Result<()> {
+pub fn rafs_mount(
+    info: MountInfo,
+    default_rafs_conf: &RafsConfig,
+    vfs: &Arc<Vfs>,
+) -> std::io::Result<()> {
     match info.ops.as_str() {
         "mount" => {
             let mut rafs;
@@ -185,7 +196,7 @@ pub fn rafs_mount(info: MountInfo, default_rafs_conf: &RafsConfig, vfs: &Arc<Vfs
 }
 
 impl SubscriberWrapper for ApiSeverSubscriber {
-    fn get_event_fd(&self) -> Result<EventFd> {
+    fn get_event_fd(&self) -> std::io::Result<EventFd> {
         self.event_fd.try_clone()
     }
 }
@@ -194,7 +205,6 @@ pub struct ApiSeverSubscriber {
     event_fd: EventFd,
     server: ApiServer,
     api_receiver: Receiver<ApiRequest>,
-    mounter: RafsMounter,
     rafs_conf: RafsConfig,
     vfs: Arc<Vfs>,
 }
@@ -202,17 +212,15 @@ pub struct ApiSeverSubscriber {
 impl ApiSeverSubscriber {
     pub fn new(
         vfs: Arc<Vfs>,
-        mounter: RafsMounter,
         server: ApiServer,
         api_receiver: Receiver<ApiRequest>,
-    ) -> Result<Self> {
+    ) -> std::io::Result<Self> {
         match EventFd::new(0) {
             Ok(fd) => Ok(Self {
                 event_fd: fd,
                 rafs_conf: RafsConfig::new(),
                 vfs,
                 server,
-                mounter,
                 api_receiver,
             }),
             Err(e) => {
@@ -233,7 +241,7 @@ impl EventSubscriber for ApiSeverSubscriber {
         match events.event_set() {
             EventSet::IN => {
                 self.server
-                    .process_request(&self.api_receiver, self.mounter, &self.rafs_conf, &self.vfs)
+                    .process_request(&self.api_receiver, &self.rafs_conf, &self.vfs)
                     .unwrap_or_else(|e| error!("API server process events failed, {}", e));
             }
             EventSet::ERROR => {

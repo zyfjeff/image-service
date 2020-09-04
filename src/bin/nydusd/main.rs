@@ -53,7 +53,7 @@ mod fusedev;
 use fusedev::create_nydus_daemon;
 
 mod api_server_glue;
-use api_server_glue::{rafs_mount, ApiServer, ApiSeverSubscriber};
+use api_server_glue::{ApiServer, ApiSeverSubscriber};
 
 lazy_static! {
     static ref EVENT_MANAGER_RUN: AtomicBool = AtomicBool::new(true);
@@ -316,21 +316,22 @@ fn main() -> Result<()> {
     if apisock != "" {
         let vfs = Arc::clone(&vfs);
 
-        let api_server =
-            ApiServer::new("nydusd".to_string(), env!("CARGO_PKG_VERSION").to_string())?;
-        let (api_sender, api_receiver) = channel();
-        let api_server_subscriber = Arc::new(ApiSeverSubscriber::new(
-            vfs,
-            rafs_mount,
-            api_server,
-            api_receiver,
-        )?);
+        let (to_api, from_http) = channel();
+        let (to_http, from_api) = channel();
+
+        let api_server = ApiServer::new(
+            "nydusd".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+            to_http,
+        )?;
+
+        let api_server_subscriber = Arc::new(ApiSeverSubscriber::new(vfs, api_server, from_http)?);
         let api_server_id = event_manager.add_subscriber(api_server_subscriber);
         let evtfd = event_manager
             .subscriber_mut(api_server_id)
             .unwrap()
             .get_event_fd()?;
-        start_http_thread(apisock, evtfd, api_sender)?;
+        start_http_thread(apisock, evtfd, to_api, from_api)?;
         info!("api server running at {}", apisock);
     }
 

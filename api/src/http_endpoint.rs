@@ -4,7 +4,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::io;
-use std::sync::mpsc::{channel, RecvError, SendError, Sender};
+use std::sync::mpsc::{Receiver, RecvError, SendError, Sender};
 
 use micro_http::{Body, Method, Request, Response, StatusCode, Version};
 use serde_json::Error as SerdeError;
@@ -53,15 +53,15 @@ pub enum ApiResponsePayload {
 /// This is the response sent by the API server through the mpsc channel.
 pub type ApiResponse = std::result::Result<ApiResponsePayload, ApiError>;
 
-#[allow(clippy::large_enum_variant)]
+//#[allow(clippy::large_enum_variant)]
 #[derive(Debug)]
 pub enum ApiRequest {
-    DaemonInfo(Sender<ApiResponse>),
-    Mount(MountInfo, Sender<ApiResponse>),
-    ConfigureDaemon(DaemonConf, Sender<ApiResponse>),
-    ExportGlobalMetrics(Sender<ApiResponse>, Option<String>),
-    ExportFilesMetrics(Sender<ApiResponse>, Option<String>),
-    ExportAccessPatterns(Sender<ApiResponse>, Option<String>),
+    DaemonInfo,
+    Mount(MountInfo),
+    ConfigureDaemon(DaemonConf),
+    ExportGlobalMetrics(Option<String>),
+    ExportFilesMetrics(Option<String>),
+    ExportAccessPatterns(Option<String>),
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -88,16 +88,18 @@ pub struct DaemonConf {
     pub log_level: String,
 }
 
-pub fn daemon_info(api_evt: EventFd, api_sender: Sender<ApiRequest>) -> ApiResult<DaemonInfo> {
-    let (response_sender, response_receiver) = channel();
-
+pub fn daemon_info(
+    api_evt: EventFd,
+    to_api: Sender<ApiRequest>,
+    from_api: &Receiver<ApiResponse>,
+) -> ApiResult<DaemonInfo> {
     // Send the VM request.
-    api_sender
-        .send(ApiRequest::DaemonInfo(response_sender))
+    to_api
+        .send(ApiRequest::DaemonInfo)
         .map_err(ApiError::RequestSend)?;
     api_evt.write(1).map_err(ApiError::EventFdWrite)?;
 
-    let info = response_receiver.recv().map_err(ApiError::ResponseRecv)??;
+    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
 
     match info {
         ApiResponsePayload::DaemonInfo(info) => Ok(info),
@@ -107,17 +109,16 @@ pub fn daemon_info(api_evt: EventFd, api_sender: Sender<ApiRequest>) -> ApiResul
 
 pub fn daemon_configure(
     api_evt: EventFd,
-    api_sender: Sender<ApiRequest>,
+    to_api: Sender<ApiRequest>,
     conf: DaemonConf,
+    from_api: &Receiver<ApiResponse>,
 ) -> ApiResult<()> {
-    let (response_sender, response_receiver) = channel();
-
-    api_sender
-        .send(ApiRequest::ConfigureDaemon(conf, response_sender))
+    to_api
+        .send(ApiRequest::ConfigureDaemon(conf))
         .map_err(ApiError::RequestSend)?;
     api_evt.write(1).map_err(ApiError::EventFdWrite)?;
 
-    let info = response_receiver.recv().map_err(ApiError::ResponseRecv)??;
+    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
 
     match info {
         ApiResponsePayload::Empty => Ok(()),
@@ -127,18 +128,17 @@ pub fn daemon_configure(
 
 pub fn mount_info(
     api_evt: EventFd,
-    api_sender: Sender<ApiRequest>,
+    to_api: Sender<ApiRequest>,
     info: MountInfo,
+    from_api: &Receiver<ApiResponse>,
 ) -> ApiResult<()> {
-    let (response_sender, response_receiver) = channel();
-
     // Send the VM request.
-    api_sender
-        .send(ApiRequest::Mount(info, response_sender))
+    to_api
+        .send(ApiRequest::Mount(info))
         .map_err(ApiError::RequestSend)?;
     api_evt.write(1).map_err(ApiError::EventFdWrite)?;
 
-    let info = response_receiver.recv().map_err(ApiError::ResponseRecv)??;
+    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
 
     match info {
         ApiResponsePayload::Mount => Ok(()),
@@ -148,17 +148,16 @@ pub fn mount_info(
 
 pub fn export_global_stats(
     api_evt: EventFd,
-    api_sender: Sender<ApiRequest>,
+    to_api: Sender<ApiRequest>,
     id: Option<String>,
+    from_api: &Receiver<ApiResponse>,
 ) -> ApiResult<String> {
-    let (response_sender, response_receiver) = channel();
-
-    api_sender
-        .send(ApiRequest::ExportGlobalMetrics(response_sender, id))
+    to_api
+        .send(ApiRequest::ExportGlobalMetrics(id))
         .map_err(ApiError::RequestSend)?;
     api_evt.write(1).map_err(ApiError::EventFdWrite)?;
 
-    let info = response_receiver.recv().map_err(ApiError::ResponseRecv)??;
+    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
 
     match info {
         ApiResponsePayload::FsGlobalMetrics(info) => Ok(info),
@@ -168,17 +167,16 @@ pub fn export_global_stats(
 
 pub fn export_files_stats(
     api_evt: EventFd,
-    api_sender: Sender<ApiRequest>,
+    to_api: Sender<ApiRequest>,
     id: Option<String>,
+    from_api: &Receiver<ApiResponse>,
 ) -> ApiResult<String> {
-    let (response_sender, response_receiver) = channel();
-
-    api_sender
-        .send(ApiRequest::ExportFilesMetrics(response_sender, id))
+    to_api
+        .send(ApiRequest::ExportFilesMetrics(id))
         .map_err(ApiError::RequestSend)?;
     api_evt.write(1).map_err(ApiError::EventFdWrite)?;
 
-    let info = response_receiver.recv().map_err(ApiError::ResponseRecv)??;
+    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
 
     match info {
         ApiResponsePayload::FsFilesMetrics(info) => Ok(info),
@@ -188,17 +186,16 @@ pub fn export_files_stats(
 
 pub fn export_files_patterns(
     api_evt: EventFd,
-    api_sender: Sender<ApiRequest>,
+    to_api: Sender<ApiRequest>,
     id: Option<String>,
+    from_api: &Receiver<ApiResponse>,
 ) -> ApiResult<String> {
-    let (response_sender, response_receiver) = channel();
-
-    api_sender
-        .send(ApiRequest::ExportAccessPatterns(response_sender, id))
+    to_api
+        .send(ApiRequest::ExportAccessPatterns(id))
         .map_err(ApiError::RequestSend)?;
     api_evt.write(1).map_err(ApiError::EventFdWrite)?;
 
-    let info = response_receiver.recv().map_err(ApiError::ResponseRecv)??;
+    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
 
     match info {
         ApiResponsePayload::FsFilesPatterns(info) => Ok(info),
@@ -235,19 +232,22 @@ impl EndpointHandler for InfoHandler {
         &self,
         req: &Request,
         api_notifier: EventFd,
-        api_sender: Sender<ApiRequest>,
+        to_api: Sender<ApiRequest>,
+        from_api: &Receiver<ApiResponse>,
     ) -> Response {
         match req.method() {
-            Method::Get => match daemon_info(api_notifier, api_sender).map_err(HttpError::Info) {
-                Ok(info) => {
-                    let mut response = Response::new(Version::Http11, StatusCode::OK);
-                    let info_serialized = serde_json::to_string(&info).unwrap();
+            Method::Get => {
+                match daemon_info(api_notifier, to_api, from_api).map_err(HttpError::Info) {
+                    Ok(info) => {
+                        let mut response = Response::new(Version::Http11, StatusCode::OK);
+                        let info_serialized = serde_json::to_string(&info).unwrap();
 
-                    response.set_body(Body::new(info_serialized));
-                    response
+                        response.set_body(Body::new(info_serialized));
+                        response
+                    }
+                    Err(e) => error_response(e, StatusCode::InternalServerError),
                 }
-                Err(e) => error_response(e, StatusCode::InternalServerError),
-            },
+            }
             Method::Put => match &req.body {
                 Some(body) => {
                     let kv: DaemonConf = match serde_json::from_slice(body.raw())
@@ -257,7 +257,7 @@ impl EndpointHandler for InfoHandler {
                         Err(e) => return error_response(e, StatusCode::BadRequest),
                     };
 
-                    match daemon_configure(api_notifier, api_sender, kv)
+                    match daemon_configure(api_notifier, to_api, kv, from_api)
                         .map_err(HttpError::Configure)
                     {
                         Ok(()) => Response::new(Version::Http11, StatusCode::NoContent),
@@ -279,7 +279,8 @@ impl EndpointHandler for MountHandler {
         &self,
         req: &Request,
         api_notifier: EventFd,
-        api_sender: Sender<ApiRequest>,
+        to_api: Sender<ApiRequest>,
+        from_api: &Receiver<ApiResponse>,
     ) -> Response {
         match req.method() {
             Method::Put => {
@@ -294,7 +295,9 @@ impl EndpointHandler for MountHandler {
                         };
 
                         // Call mount_info()
-                        match mount_info(api_notifier, api_sender, info).map_err(HttpError::Mount) {
+                        match mount_info(api_notifier, to_api, info, from_api)
+                            .map_err(HttpError::Mount)
+                        {
                             Ok(_) => Response::new(Version::Http11, StatusCode::NoContent),
                             Err(e) => error_response(e, StatusCode::InternalServerError),
                         }
@@ -316,12 +319,15 @@ impl EndpointHandler for MetricsHandler {
         &self,
         req: &Request,
         api_notifier: EventFd,
-        api_sender: Sender<ApiRequest>,
+        to_api: Sender<ApiRequest>,
+        from_api: &Receiver<ApiResponse>,
     ) -> Response {
         match req.method() {
             Method::Get => {
                 let id = extract_query_part(req, &"id");
-                match export_global_stats(api_notifier, api_sender, id).map_err(HttpError::Info) {
+                match export_global_stats(api_notifier, to_api, id, from_api)
+                    .map_err(HttpError::Info)
+                {
                     Ok(info) => {
                         let mut response = Response::new(Version::Http11, StatusCode::OK);
                         response.set_body(Body::new(info));
@@ -342,12 +348,15 @@ impl EndpointHandler for MetricsFilesHandler {
         &self,
         req: &Request,
         api_notifier: EventFd,
-        api_sender: Sender<ApiRequest>,
+        to_api: Sender<ApiRequest>,
+        from_api: &Receiver<ApiResponse>,
     ) -> Response {
         match req.method() {
             Method::Get => {
                 let id = extract_query_part(req, &"id");
-                match export_files_stats(api_notifier, api_sender, id).map_err(HttpError::Info) {
+                match export_files_stats(api_notifier, to_api, id, from_api)
+                    .map_err(HttpError::Info)
+                {
                     Ok(info) => {
                         let mut response = Response::new(Version::Http11, StatusCode::OK);
                         response.set_body(Body::new(info));
@@ -368,12 +377,15 @@ impl EndpointHandler for MetricsPatternHandler {
         &self,
         req: &Request,
         api_notifier: EventFd,
-        api_sender: Sender<ApiRequest>,
+        to_api: Sender<ApiRequest>,
+        from_api: &Receiver<ApiResponse>,
     ) -> Response {
         match req.method() {
             Method::Get => {
                 let id = extract_query_part(req, &"id");
-                match export_files_patterns(api_notifier, api_sender, id).map_err(HttpError::Info) {
+                match export_files_patterns(api_notifier, to_api, id, from_api)
+                    .map_err(HttpError::Info)
+                {
                     Ok(info) => {
                         let mut response = Response::new(Version::Http11, StatusCode::OK);
                         response.set_body(Body::new(info));
