@@ -2,11 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::cell::RefCell;
 use std::fs::{File, OpenOptions};
 use std::io;
 use std::ops::Deref;
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
 
 use libc::{c_int, sysconf, _SC_PAGESIZE};
@@ -17,8 +18,11 @@ use nix::unistd::{getgid, getuid, read};
 use nix::Error as nixError;
 
 use crate::error::*;
+use epoll::{ControlOptions, Event, Events};
+use nix::fcntl::{fcntl, FcntlArg, OFlag};
 
 use fuse_rs::transport::{FuseBuf, Reader, Writer};
+use vmm_sys_util::eventfd::EventFd;
 
 /// These follows definition from libfuse
 const FUSE_KERN_BUF_SIZE: usize = 32;
@@ -35,6 +39,8 @@ pub struct FuseSession {
     file: Option<File>,
     bufsize: usize,
 }
+
+const EXIT_FUSE_SERVICE: u64 = 1;
 
 impl FuseSession {
     /// create a new fuse session
@@ -56,6 +62,9 @@ impl FuseSession {
             flags |= MsFlags::MS_RDONLY;
         }
         let file = fuse_kern_mount(&dest, fsname, subtype, flags)?;
+
+        fcntl(file.as_raw_fd(), FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).map_err(|e| einval!(e))?;
+
         Ok(FuseSession {
             mountpoint: dest,
             fsname: fsname.to_owned(),
@@ -95,9 +104,9 @@ impl FuseSession {
     }
 
     /// create a new fuse message channel
-    pub fn new_channel(&self) -> io::Result<FuseChannel> {
+    pub fn new_channel(&self, evtfd: EventFd) -> io::Result<FuseChannel> {
         if let Some(file) = &self.file {
-            Ok(FuseChannel::new(file.as_raw_fd(), self.bufsize))
+            FuseChannel::new(file.as_raw_fd(), evtfd, self.bufsize)
         } else {
             Err(einval!("invalid fuse session"))
         }
@@ -112,44 +121,108 @@ impl Drop for FuseSession {
 
 pub struct FuseChannel {
     fd: c_int,
+    epoll_fd: RawFd,
+    exit_evtfd: EventFd,
     bufsize: usize,
+    events: RefCell<Vec<Event>>,
     // XXX: Ideally we should have write buffer as well
     // write_buf: Vec<u8>,
 }
 
+fn register_event(epoll_fd: c_int, fd: RawFd, evt: Events, data: u64) -> io::Result<()> {
+    let event = Event::new(evt, data);
+    epoll::ctl(epoll_fd, ControlOptions::EPOLL_CTL_ADD, fd, event)
+}
+
 impl FuseChannel {
-    fn new(fd: c_int, bufsize: usize) -> Self {
-        FuseChannel { fd, bufsize }
+    fn new(fd: c_int, evtfd: EventFd, bufsize: usize) -> io::Result<Self> {
+        const EPOLL_EVENTS_LEN: usize = 100;
+        let epoll_fd = epoll::create(true)?;
+
+        register_event(epoll_fd, fd, Events::EPOLLIN, 0)?;
+
+        let exit_evtfd = evtfd.try_clone().unwrap();
+        register_event(
+            epoll_fd,
+            exit_evtfd.as_raw_fd(),
+            Events::EPOLLIN,
+            EXIT_FUSE_SERVICE,
+        )?;
+
+        Ok(FuseChannel {
+            fd,
+            epoll_fd,
+            exit_evtfd,
+            bufsize,
+            events: RefCell::new(vec![Event::new(Events::empty(), 0); EPOLL_EVENTS_LEN]),
+        })
     }
 
     pub fn get_reader<'b>(&self, buf: &'b mut Vec<u8>) -> io::Result<Option<Reader<'b>>> {
         loop {
-            match read(self.fd, buf.as_mut_slice()) {
-                Ok(len) => {
-                    return Ok(Some(
-                        Reader::new(FuseBuf::new(&mut buf[..len])).map_err(|e| eother!(e))?,
-                    ));
-                }
-                Err(nixError::Sys(e)) => match e {
-                    Errno::ENOENT => {
-                        // ENOENT means the operation was interrupted, it's safe
-                        // to restart
-                        trace!("restart reading");
+            let num_events = epoll::wait(self.epoll_fd, -1, &mut self.events.borrow_mut())?;
+
+            for event in self.events.borrow().iter().take(num_events) {
+                let evset = match epoll::Events::from_bits(event.events) {
+                    Some(evset) => evset,
+                    None => {
+                        let evbits = event.events;
+                        warn!("epoll: ignoring unknown event set: 0x{:x}", evbits);
                         continue;
                     }
-                    Errno::ENODEV => {
-                        info!("fuse filesystem umounted");
-                        return Ok(None);
+                };
+
+                match evset {
+                    Events::EPOLLIN => {
+                        if event.data == EXIT_FUSE_SERVICE {
+                            self.exit_evtfd.read().map_err(|e| {
+                                error!("Read event fd failed. {:?}", e);
+                                e
+                            })?;
+                            return Err(ebadf!());
+                        }
+
+                        match read(self.fd, buf.as_mut_slice()) {
+                            Ok(len) => {
+                                return Ok(Some(
+                                    Reader::new(FuseBuf::new(&mut buf[..len]))
+                                        .map_err(|e| eother!(e))?,
+                                ));
+                            }
+                            Err(nixError::Sys(e)) => match e {
+                                Errno::ENOENT => {
+                                    // ENOENT means the operation was interrupted, it's safe
+                                    // to restart
+                                    trace!("restart reading");
+                                    continue;
+                                }
+                                Errno::ENODEV => {
+                                    info!("fuse filesystem umounted");
+                                    return Ok(None);
+                                }
+                                Errno::EAGAIN => {
+                                    continue;
+                                }
+                                e => {
+                                    warn! {"read fuse dev failed on fd {}: {}", self.fd, e};
+                                    return Err(io::Error::from_raw_os_error(e as i32));
+                                }
+                            },
+                            Err(e) => {
+                                return Err(eother!(e));
+                            }
+                        }
                     }
-                    e => {
-                        warn! {"read fuse dev failed on fd {}: {}", self.fd, e};
-                        return Err(io::Error::from_raw_os_error(e as i32));
+                    x if (Events::EPOLLERR | Events::EPOLLHUP).contains(x) => {
+                        warn!("Seems file was already closed!");
+                        return Err(eio!());
                     }
-                },
-                Err(e) => {
-                    return Err(eother!(e));
+                    _ => {
+                        // We should not step into this branch as other event is not registered.
+                        continue;
+                    }
                 }
-            };
+            }
         }
     }
 

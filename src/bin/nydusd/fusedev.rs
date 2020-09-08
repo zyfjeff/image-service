@@ -29,7 +29,7 @@ impl FuseServer {
     fn new(server: Arc<Server<Arc<Vfs>>>, se: &FuseSession, evtfd: EventFd) -> Result<FuseServer> {
         Ok(FuseServer {
             server,
-            ch: se.new_channel()?,
+            ch: se.new_channel(evtfd.try_clone().unwrap())?,
             buf: Vec::with_capacity(se.bufsize()),
             evtfd,
         })
@@ -54,8 +54,6 @@ impl FuseServer {
                 break;
             }
         }
-        EVENT_MANAGER_RUN.store(false, Ordering::Relaxed);
-        self.evtfd.write(1).unwrap();
         Ok(())
     }
 }
@@ -78,7 +76,11 @@ impl FusedevDaemon {
 
         let thread = thread::Builder::new()
             .name("fuse_server".to_string())
-            .spawn(move || s.svc_loop())
+            .spawn(move || {
+                let _ = s.svc_loop();
+                EVENT_MANAGER_RUN.store(false, Ordering::Relaxed);
+                s.evtfd.write(1)
+            })
             .map_err(Error::ThreadSpawn)?;
         self.threads.push(Some(thread));
         Ok(())
@@ -103,6 +105,7 @@ impl NydusDaemon for FusedevDaemon {
     }
 
     fn stop(&mut self) -> Result<()> {
+        self.event_fd.write(1).expect("Stop fuse service loop");
         self.session.umount()
     }
 }

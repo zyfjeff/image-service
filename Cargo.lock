@@ -764,10 +764,12 @@ name = "nydus-utils"
 version = "0.1.0"
 dependencies = [
  "backtrace",
+ "epoll",
  "fuse-rs",
  "libc",
  "log",
  "nix",
+ "vmm-sys-util",
 ]
 
 [[package]]
