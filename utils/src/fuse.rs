@@ -14,7 +14,7 @@ use libc::{c_int, sysconf, _SC_PAGESIZE};
 use nix::errno::Errno;
 use nix::mount::{mount, umount2, MntFlags, MsFlags};
 use nix::poll::{poll, PollFd, PollFlags};
-use nix::unistd::{getgid, getuid, read};
+use nix::unistd::{close, dup, getgid, getuid, read};
 use nix::Error as nixError;
 
 use crate::error::*;
@@ -150,7 +150,7 @@ impl FuseChannel {
         )?;
 
         Ok(FuseChannel {
-            fd,
+            fd: dup(fd).map_err(|e| last_error!(e))?,
             epoll_fd,
             exit_evtfd,
             bufsize,
@@ -228,6 +228,12 @@ impl FuseChannel {
 
     pub fn get_writer(&self) -> io::Result<Writer> {
         Ok(Writer::new(self.fd, self.bufsize).unwrap())
+    }
+}
+
+impl Drop for FuseChannel {
+    fn drop(&mut self) {
+        let _ = close(self.fd);
     }
 }
 
