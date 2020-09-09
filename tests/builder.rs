@@ -8,36 +8,13 @@ use std::io::Read;
 use std::io::{Result, Write};
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use sha2::digest::Digest;
 use sha2::Sha256;
 
-use nydus_utils::einval;
+use nydus_utils::{einval, exec};
 
 const NYDUS_IMAGE: &str = "./target-fusedev/debug/nydus-image";
-
-pub fn exec(cmd: &str) -> Result<String> {
-    println!("exec `{}`", cmd);
-
-    let child = Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .env("RUST_BACKTRACE", "1")
-        .output()?;
-    let status = child.status;
-
-    let status = status.code().ok_or(einval!("exited with unknown status"))?;
-
-    let stdout = std::str::from_utf8(&child.stdout).map_err(|e| einval!(e))?;
-    let stderr = std::str::from_utf8(&child.stderr).map_err(|e| einval!(e))?;
-
-    if status != 0 {
-        return Err(einval!(stderr));
-    }
-
-    Ok(stdout.to_string() + &stderr.to_string())
-}
 
 pub fn hash(data: &[u8]) -> String {
     let mut hash = Sha256::new();
@@ -208,9 +185,14 @@ impl<'a> Builder<'a> {
 
         self.create_dir(&self.work_dir.join("blobs"))?;
 
-        let tree_ret = exec(format!("tree -a -J --sort=name {:?}", lower_dir).as_str())?;
-        let md5_ret =
-            exec(format!("find {:?} -type f -exec md5sum {{}} + | sort", lower_dir).as_str())?;
+        let tree_ret = exec(
+            format!("tree -a -J --sort=name {:?}", lower_dir).as_str(),
+            true,
+        )?;
+        let md5_ret = exec(
+            format!("find {:?} -type f -exec md5sum {{}} + | sort", lower_dir).as_str(),
+            true,
+        )?;
 
         let ret = format!(
             "{}{}",
@@ -218,9 +200,9 @@ impl<'a> Builder<'a> {
             md5_ret.replace(lower_dir.to_str().unwrap(), "")
         );
 
-        let output = exec(
+        exec(
             format!(
-                "{:?} create --bootstrap {:?} --backend-type localfs --backend-config '{{\"dir\": {:?}}}' --log-level trace {} {:?}",
+                "{:?} create --bootstrap {:?} --backend-type localfs --backend-config '{{\"dir\": {:?}}}' --log-level info {} {:?}",
                 NYDUS_IMAGE,
                 self.work_dir.join("bootstrap-lower"),
                 self.work_dir.join("blobs"),
@@ -228,8 +210,8 @@ impl<'a> Builder<'a> {
                 lower_dir,
             )
             .as_str(),
+            false,
         )?;
-        println!("{}", output);
 
         Ok(ret)
     }
@@ -237,9 +219,9 @@ impl<'a> Builder<'a> {
     pub fn build_upper(&mut self, enable_compress: bool) -> Result<()> {
         let upper_dir = self.work_dir.join("upper").to_path_buf();
 
-        let output = exec(
+        exec(
             format!(
-                "{:?} create --parent-bootstrap {:?} --bootstrap {:?} --backend-type localfs --backend-config '{{\"dir\": {:?}}}' --log-level trace {} {:?}",
+                "{:?} create --parent-bootstrap {:?} --bootstrap {:?} --backend-type localfs --backend-config '{{\"dir\": {:?}}}' --log-level info {} {:?}",
                 NYDUS_IMAGE,
                 self.work_dir.join("bootstrap-lower"),
                 self.work_dir.join("bootstrap-overlay"),
@@ -248,8 +230,8 @@ impl<'a> Builder<'a> {
                 upper_dir,
             )
             .as_str(),
+            false,
         )?;
-        println!("{}", output);
 
         Ok(())
     }
@@ -257,9 +239,11 @@ impl<'a> Builder<'a> {
     pub fn mount_check(&mut self, expect_texture: &str) -> Result<()> {
         let mount_path = self.work_dir.join("mnt");
 
-        let tree_ret = exec(format!("tree -a -J -v {:?}", mount_path).as_str())?;
-        let md5_ret =
-            exec(format!("find {:?} -type f -exec md5sum {{}} + | sort", mount_path).as_str())?;
+        let tree_ret = exec(format!("tree -a -J -v {:?}", mount_path).as_str(), true)?;
+        let md5_ret = exec(
+            format!("find {:?} -type f -exec md5sum {{}} + | sort", mount_path).as_str(),
+            true,
+        )?;
 
         let ret = format!(
             "{}{}",
@@ -267,7 +251,9 @@ impl<'a> Builder<'a> {
             md5_ret.replace(mount_path.to_str().unwrap(), "")
         );
 
-        let mut texture = File::open(format!("./tests/texture/{}", expect_texture))?;
+        let texture_file = format!("./tests/texture/{}", expect_texture);
+        let mut texture = File::open(texture_file.clone())
+            .map_err(|_| einval!(format!("invalid texture file path: {:?}", texture_file)))?;
         let mut expected = String::new();
         texture.read_to_string(&mut expected)?;
 

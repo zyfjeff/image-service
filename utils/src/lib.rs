@@ -6,6 +6,9 @@
 pub mod error;
 pub use error::*;
 
+pub mod exec;
+pub use exec::*;
+
 #[macro_use]
 extern crate log;
 #[cfg(feature = "fusedev")]

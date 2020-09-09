@@ -5,36 +5,13 @@
 use std::fs::{self, File};
 use std::io::{Result, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 use std::thread::*;
 use std::time;
 
-use nydus_utils::einval;
+use nydus_utils::{eother, exec};
 use rafs::metadata::RafsMode;
 
 const NYDUSD: &str = "./target-fusedev/debug/nydusd";
-
-pub fn exec(cmd: &str) -> Result<()> {
-    println!("exec `{}`", cmd);
-
-    let mut child = Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
-        .env("RUST_BACKTRACE", "1")
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()?;
-    let status = child.wait()?;
-
-    let status = status.code().ok_or(einval!("exited with unknown status"))?;
-
-    if status != 0 {
-        return Err(einval!("exited with non-zero"));
-    }
-
-    Ok(())
-}
 
 pub struct Nydusd {
     work_dir: PathBuf,
@@ -107,7 +84,7 @@ impl Nydusd {
         spawn(move || {
             exec(
                 format!(
-                    "{} --config {:?} --apisock {:?} --mountpoint {:?} --bootstrap {:?} --log-level trace",
+                    "{} --config {:?} --apisock {:?} --mountpoint {:?} --bootstrap {:?} --log-level info",
                     NYDUSD,
                     work_dir.join("config.json"),
                     work_dir.join("api.sock"),
@@ -115,14 +92,30 @@ impl Nydusd {
                     work_dir.join(bootstrap_file_name),
                 )
                 .as_str(),
-            ).unwrap_or(());
+                false
+            ).unwrap();
         });
 
-        sleep(time::Duration::from_secs(1));
+        sleep(time::Duration::from_secs(2));
+
+        if !self.is_mounted()? {
+            return Err(eother!("nydusd mount failed"));
+        }
 
         Ok(())
     }
+
+    pub fn is_mounted(&self) -> Result<bool> {
+        let ret = exec(format!("cat /proc/mounts").as_str(), true)?;
+        for line in ret.split("\n") {
+            if line.contains(self.mount_path.to_str().unwrap()) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     pub fn stop(&self) {
-        exec(format!("umount {:?}", self.mount_path).as_str()).unwrap();
+        exec(format!("umount {:?}", self.mount_path).as_str(), false).unwrap();
     }
 }

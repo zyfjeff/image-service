@@ -5,14 +5,22 @@
 use std::io::Result;
 use std::path::PathBuf;
 
+#[macro_use]
+extern crate log;
+extern crate stderrlog;
+
+use nydus_utils::{eother, exec};
 use vmm_sys_util::tempdir::TempDir;
 
 mod builder;
 mod nydusd;
 
-use nydus_utils::eother;
-
 fn test(enable_compress: bool, enable_cache: bool, rafs_mode: &str) -> Result<()> {
+    info!(
+        "\n\n==================== testing run: enable_compress {} enable_cache {} rafs_mode {}",
+        enable_compress, enable_cache, rafs_mode
+    );
+
     let tmp_dir = TempDir::new().map_err(|e| eother!(e))?;
     let work_dir = tmp_dir.as_path().to_path_buf();
 
@@ -31,7 +39,7 @@ fn test(enable_compress: bool, enable_cache: bool, rafs_mode: &str) -> Result<()
             "bootstrap-lower".to_string(),
         )?;
         nydusd.start()?;
-        builder.mount_check("lower")?;
+        builder.mount_check("source/lower.result")?;
         nydusd.stop();
     }
 
@@ -49,7 +57,7 @@ fn test(enable_compress: bool, enable_cache: bool, rafs_mode: &str) -> Result<()
             "bootstrap-overlay".to_string(),
         )?;
         nydusd.start()?;
-        builder.mount_check("overlay")?;
+        builder.mount_check("source/overlay.result")?;
         nydusd.stop();
     }
 
@@ -62,7 +70,7 @@ fn test(enable_compress: bool, enable_cache: bool, rafs_mode: &str) -> Result<()
             "bootstrap-overlay".to_string(),
         )?;
         nydusd.start()?;
-        builder.mount_check("overlay")?;
+        builder.mount_check("source/overlay.result")?;
         nydusd.stop();
     }
 
@@ -79,7 +87,8 @@ fn check_compact<'a>(work_dir: &'a PathBuf, bootstrap_name: &str, rafs_mode: &st
     let mut builder = builder::new(&work_dir);
 
     nydusd.start()?;
-    builder.mount_check((bootstrap_name.to_string() + ".result").as_str())?;
+    let result_path = format!("repeatable/{}.result", bootstrap_name);
+    builder.mount_check(result_path.as_str())?;
     nydusd.stop();
 
     Ok(())
@@ -91,9 +100,14 @@ const COMPAT_BOOTSTRAPS: &'static [&'static str] = &[
 ];
 
 fn test_compact() -> Result<()> {
+    info!("\n\n==================== testing run: compact test");
+
     let tmp_dir = TempDir::new().map_err(|e| eother!(e))?;
     let work_dir = tmp_dir.as_path().to_path_buf();
-    let _ = builder::exec(format!("cp -a tests/texture/* {:?}", work_dir).as_str())?;
+    let _ = exec(
+        format!("cp -a tests/texture/repeatable/* {:?}", work_dir).as_str(),
+        false,
+    )?;
 
     for mode in vec!["direct", "cached"].iter() {
         for bs in COMPAT_BOOTSTRAPS.iter() {
@@ -106,6 +120,14 @@ fn test_compact() -> Result<()> {
 
 #[test]
 fn integration_run() -> Result<()> {
+    stderrlog::new()
+        .quiet(false)
+        .timestamp(stderrlog::Timestamp::Second)
+        .verbosity(log::LevelFilter::Trace as usize - 1)
+        .init()
+        .map_err(|e| eother!(e))
+        .unwrap();
+
     test_compact()?;
 
     test(true, true, "direct")?;
