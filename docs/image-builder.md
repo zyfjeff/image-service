@@ -15,7 +15,7 @@ Nydus image builder is used to building the existing container rootfs directory 
 cargo build --release
 ```
 
-## Build nydus image from source
+## Build nydus image from directory source
 
 ```shell
 # $BLOB_PATH: output blob file path, optional
@@ -59,3 +59,19 @@ registry backend,
 ```shell
 --backend_config '{"scheme":"https","host":"my-registry:5000","repo":"test/repo","auth":"<base64_encoded_auth>"}'
 ```
+
+## Build nydus image from stargz index
+
+### Stargz build
+
+```shell
+nydus-image create --source-type stargz_index --bootstrap <parent-bootstrap-path> --blob-id <image-lower-layer-id> --log-level trace <stargz.index-lower.json>
+```
+
+### Stargz layered build:
+
+```shell
+nydus-image create --source-type stargz_index --parent-bootstrap <parent-bootstrap-path> --bootstrap <bootstrap-path> --blob-id <image-upper-layer-id> --log-level trace <stargz.index-upper.json>
+```
+
+Note: the argument value of image layer id specified in nydus-image CLI should omit `sha256:` prefix.
