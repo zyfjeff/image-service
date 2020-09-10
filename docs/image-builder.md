@@ -62,6 +62,14 @@ registry backend,
 
 ## Build nydus image from stargz index
 
+### Convert image layer to stargz format
+
+```shell
+tar --xattrs --selinux -czvf ./layer.tar.gz <layer-directory>
+stargzify file:layer.tar.gz file:layer.stargz
+tar -xzvf layer.stargz stargz.index.json
+```
+
 ### Stargz build
 
 ```shell

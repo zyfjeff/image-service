@@ -29,6 +29,7 @@ oss backend with blobcache:
     "cache": {
       "type": "blobcache",
       "config": {
+        "compressed": false,
         "work_dir": "/cache"
       }
     }
