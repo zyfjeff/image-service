@@ -41,7 +41,7 @@ impl ApiServer {
         &self,
         from_http: &Receiver<ApiRequest>,
         rafs_conf: &RafsConfig,
-        vfs: &Arc<Vfs>,
+        vfs: &Vfs,
     ) -> std::io::Result<()> {
         let request = from_http
             .recv()
@@ -77,7 +77,7 @@ impl ApiServer {
         Ok(ApiResponsePayload::DaemonInfo(response))
     }
 
-    fn mount_rafs(info: MountInfo, rafs_conf: &RafsConfig, vfs: &Arc<Vfs>) -> ApiResponse {
+    fn mount_rafs(info: MountInfo, rafs_conf: &RafsConfig, vfs: &Vfs) -> ApiResponse {
         rafs_mount(info, &rafs_conf, vfs)
             .map(|_| ApiResponsePayload::Mount)
             .map_err(ApiError::MountFailure)
@@ -120,7 +120,7 @@ impl ApiServer {
 pub fn rafs_mount(
     info: MountInfo,
     default_rafs_conf: &RafsConfig,
-    vfs: &Arc<Vfs>,
+    vfs: &Vfs,
 ) -> std::io::Result<()> {
     match info.ops.as_str() {
         "mount" => {
