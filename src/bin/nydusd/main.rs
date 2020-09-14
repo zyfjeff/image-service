@@ -350,13 +350,10 @@ fn main() -> Result<()> {
         .unwrap()
         .get_event_fd()?;
     let exit_evtfd = evtfd.try_clone()?;
-    let mut daemon = {
-        if !vu_sock.is_empty() {
-            create_nydus_daemon(vu_sock, vfs, evtfd, !bootstrap.is_empty())
-        } else {
-            create_nydus_daemon(mountpoint, vfs, evtfd, !bootstrap.is_empty())
-        }
-    }?;
+    #[cfg(feature = "virtiofsd")]
+    let mut daemon = create_nydus_daemon(vu_sock, vfs, evtfd, !bootstrap.is_empty())?;
+    #[cfg(feature = "fusedev")]
+    let mut daemon = create_nydus_daemon(mountpoint, vfs, evtfd, !bootstrap.is_empty())?;
     info!("starting fuse daemon");
 
     *EXIT_EVTFD.lock().unwrap().deref_mut() = Some(exit_evtfd);
