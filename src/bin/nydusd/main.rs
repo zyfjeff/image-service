@@ -216,6 +216,14 @@ fn main() -> Result<()> {
                 .required(false)
                 .global(true),
         )
+        .arg(
+            Arg::with_name("upgrade")
+                .long("upgrade")
+                .help("Start nydusd in Upgrade mode")
+                .takes_value(false)
+                .required(false)
+                .global(true),
+        )
         .get_matches();
 
     let v = cmd_arguments
@@ -362,15 +370,21 @@ fn main() -> Result<()> {
         .get_event_fd()?;
     let exit_evtfd = evtfd.try_clone()?;
 
-    #[cfg(feature = "fusedev")]
-    let supervisor = cmd_arguments.value_of("supervisor").map(OsString::from);
-    #[cfg(feature = "fusedev")]
-    let daemon_id = cmd_arguments.value_of("id").map(|id| id.to_string());
-
     #[cfg(feature = "virtiofsd")]
     let daemon = create_nydus_daemon(vu_sock, vfs)?;
     #[cfg(feature = "fusedev")]
-    let daemon = create_nydus_daemon(mountpoint, vfs, evtfd, supervisor, daemon_id)?;
+    let daemon = {
+        let supervisor = cmd_arguments.value_of("supervisor").map(OsString::from);
+        let daemon_id = cmd_arguments.value_of("id").map(|id| id.to_string());
+        create_nydus_daemon(
+            mountpoint,
+            vfs,
+            evtfd,
+            supervisor,
+            daemon_id,
+            cmd_arguments.is_present("upgrade"),
+        )?
+    };
     info!("starting fuse daemon");
 
     *EXIT_EVTFD.lock().unwrap().deref_mut() = Some(exit_evtfd);
@@ -380,9 +394,11 @@ fn main() -> Result<()> {
     // TODO: This is not a ideal solution, we'd better move nydus daemon event machine
     // into Event Manager?
 
-    if let Err(e) = daemon.lock().unwrap().start(threads) {
-        error!("Failed to start daemon: {:?}", e);
-        process::exit(1);
+    if !cmd_arguments.is_present("upgrade") {
+        if let Err(e) = daemon.lock().unwrap().start(threads) {
+            error!("Failed to start daemon: {:?}", e);
+            process::exit(1);
+        }
     }
 
     while EVENT_MANAGER_RUN.load(Ordering::Relaxed) {

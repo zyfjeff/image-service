@@ -143,11 +143,15 @@ pub fn create_nydus_daemon(
     evtfd: EventFd,
     supervisor: Option<OsString>,
     id: Option<String>,
+    upgrade: bool,
 ) -> Result<Arc<Mutex<dyn NydusDaemon + Send>>> {
-    let mut se = FuseSession::new(Path::new(mountpoint), "nydusfs", "")?;
-    se.mount()?;
+    let mut se = FuseSession::new(Path::new(mountpoint), "rafs", "")?;
 
-    let fuse_fd = se.expose_fuse_fd();
+    let mut fuse_fd = None;
+    if !upgrade {
+        se.mount()?;
+        fuse_fd = Some(se.expose_fuse_fd());
+    }
 
     let daemon = Arc::new(Mutex::new(FusedevDaemon {
         session: se,
@@ -178,7 +182,7 @@ struct ResOpaque {
 }
 
 pub struct FuseDevFdRes {
-    fuse_fd: RawFd,
+    fuse_fd: Option<RawFd>,
     uds_path: OsString,
     stream: Arc<Mutex<Option<UnixStream>>>,
     daemon_id: String,
@@ -187,7 +191,7 @@ pub struct FuseDevFdRes {
 
 impl FuseDevFdRes {
     fn new(
-        fd: RawFd,
+        fd: Option<RawFd>,
         uds: &OsStr,
         daemon_id: String,
         daemon: Arc<Mutex<dyn NydusDaemon + Send>>,
@@ -227,7 +231,7 @@ impl FuseDevFdRes {
 
             let opaque_buf = serde_json::to_string(&opaque).unwrap().into_bytes();
             let mut fds: [RawFd; 8] = Default::default();
-            fds[0] = self.fuse_fd;
+            fds[0] = self.fuse_fd.unwrap();
             sock.send_with_fd(&opaque_buf, &fds)
                 .map_err(|_| last_error!())
         } else {
