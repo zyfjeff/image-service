@@ -82,6 +82,7 @@ struct FusedevDaemon {
     session: FuseSession,
     threads: Vec<Option<thread::JoinHandle<Result<()>>>>,
     event_fd: EventFd,
+    supervisor: Option<OsString>,
 }
 
 impl FusedevDaemon {
@@ -93,11 +94,7 @@ impl FusedevDaemon {
             self.event_fd.try_clone().unwrap(),
         )?;
 
-        let res = FuseDevFdRes::new(self.session.expose_fuse_fd(), &OsString::from("fixme"));
-        UPGRADE_MRG
-            .lock()
-            .unwrap()
-            .add_resource(res, ResourceType::Fd);
+        self.add_myself_upgrade_manager();
 
         let thread = thread::Builder::new()
             .name("fuse_server".to_string())
@@ -109,6 +106,16 @@ impl FusedevDaemon {
             .map_err(Error::ThreadSpawn)?;
         self.threads.push(Some(thread));
         Ok(())
+    }
+
+    fn add_myself_upgrade_manager(&self) {
+        if let Some(supervisor) = &self.supervisor {
+            let res = FuseDevFdRes::new(self.session.expose_fuse_fd(), &supervisor);
+            UPGRADE_MRG
+                .lock()
+                .unwrap()
+                .add_resource(res, ResourceType::Fd);
+        }
     }
 }
 
@@ -140,12 +147,14 @@ pub fn create_nydus_daemon(
     fs: Arc<Vfs>,
     evtfd: EventFd,
     readonly: bool,
+    supervisor: Option<OsString>,
 ) -> Result<Box<dyn NydusDaemon>> {
     Ok(Box::new(FusedevDaemon {
         session: FuseSession::new(Path::new(mountpoint), "nydusfs", "", readonly)?,
         server: Arc::new(Server::new(fs)),
         threads: Vec::new(),
         event_fd: evtfd,
+        supervisor,
     }))
 }
 

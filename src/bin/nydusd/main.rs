@@ -13,6 +13,8 @@ extern crate rafs;
 extern crate serde_json;
 extern crate stderrlog;
 
+#[cfg(feature = "fusedev")]
+use std::ffi::OsString;
 use std::fs::File;
 use std::io::{Read, Result};
 use std::ops::{Deref, DerefMut};
@@ -350,10 +352,15 @@ fn main() -> Result<()> {
         .unwrap()
         .get_event_fd()?;
     let exit_evtfd = evtfd.try_clone()?;
+
+    #[cfg(feature = "fusedev")]
+    let supervisor = cmd_arguments.value_of("supervisor").map(OsString::from);
+
     #[cfg(feature = "virtiofsd")]
     let mut daemon = create_nydus_daemon(vu_sock, vfs, evtfd, !bootstrap.is_empty())?;
     #[cfg(feature = "fusedev")]
-    let mut daemon = create_nydus_daemon(mountpoint, vfs, evtfd, !bootstrap.is_empty())?;
+    let mut daemon =
+        create_nydus_daemon(mountpoint, vfs, evtfd, !bootstrap.is_empty(), supervisor)?;
     info!("starting fuse daemon");
 
     *EXIT_EVTFD.lock().unwrap().deref_mut() = Some(exit_evtfd);
