@@ -197,6 +197,14 @@ fn main() -> Result<()> {
                 .multiple(true)
                 .global(true),
         )
+        .arg(
+            Arg::with_name("supervisor")
+                .long("supervisor")
+                .help("A socket by which communicate to external supervisor")
+                .takes_value(true)
+                .required(false)
+                .global(true),
+        )
         .get_matches();
 
     let v = cmd_arguments
