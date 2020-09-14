@@ -207,6 +207,14 @@ fn main() -> Result<()> {
                 .required(false)
                 .global(true),
         )
+        .arg(
+            Arg::with_name("id")
+                .long("id")
+                .help("Assigned ID to identify a daemon")
+                .takes_value(true)
+                .required(false)
+                .global(true),
+        )
         .get_matches();
 
     let v = cmd_arguments
@@ -355,12 +363,20 @@ fn main() -> Result<()> {
 
     #[cfg(feature = "fusedev")]
     let supervisor = cmd_arguments.value_of("supervisor").map(OsString::from);
+    #[cfg(feature = "fusedev")]
+    let daemon_id = cmd_arguments.value_of("id").map(|id| id.to_string());
 
     #[cfg(feature = "virtiofsd")]
     let mut daemon = create_nydus_daemon(vu_sock, vfs, evtfd, !bootstrap.is_empty())?;
     #[cfg(feature = "fusedev")]
-    let mut daemon =
-        create_nydus_daemon(mountpoint, vfs, evtfd, !bootstrap.is_empty(), supervisor)?;
+    let mut daemon = create_nydus_daemon(
+        mountpoint,
+        vfs,
+        evtfd,
+        !bootstrap.is_empty(),
+        supervisor,
+        daemon_id,
+    )?;
     info!("starting fuse daemon");
 
     *EXIT_EVTFD.lock().unwrap().deref_mut() = Some(exit_evtfd);

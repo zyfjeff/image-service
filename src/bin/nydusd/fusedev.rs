@@ -83,6 +83,7 @@ struct FusedevDaemon {
     threads: Vec<Option<thread::JoinHandle<Result<()>>>>,
     event_fd: EventFd,
     supervisor: Option<OsString>,
+    id: Option<String>,
 }
 
 impl FusedevDaemon {
@@ -110,11 +111,17 @@ impl FusedevDaemon {
 
     fn add_myself_upgrade_manager(&self) {
         if let Some(supervisor) = &self.supervisor {
-            let res = FuseDevFdRes::new(self.session.expose_fuse_fd(), &supervisor);
-            UPGRADE_MRG
-                .lock()
-                .unwrap()
-                .add_resource(res, ResourceType::Fd);
+            if let Some(daemon_id) = &self.id {
+                let res = FuseDevFdRes::new(
+                    self.session.expose_fuse_fd(),
+                    &supervisor,
+                    daemon_id.to_string(),
+                );
+                UPGRADE_MRG
+                    .lock()
+                    .unwrap()
+                    .add_resource(res, ResourceType::Fd);
+            }
         }
     }
 }
@@ -148,6 +155,7 @@ pub fn create_nydus_daemon(
     evtfd: EventFd,
     readonly: bool,
     supervisor: Option<OsString>,
+    id: Option<String>,
 ) -> Result<Box<dyn NydusDaemon>> {
     Ok(Box::new(FusedevDaemon {
         session: FuseSession::new(Path::new(mountpoint), "nydusfs", "", readonly)?,
@@ -155,6 +163,7 @@ pub fn create_nydus_daemon(
         threads: Vec::new(),
         event_fd: evtfd,
         supervisor,
+        id,
     }))
 }
 
@@ -170,13 +179,15 @@ pub struct FuseDevFdRes {
     fuse_fd: RawFd,
     uds_path: OsString,
     stream: Arc<Mutex<Option<UnixStream>>>,
+    daemon_id: String,
 }
 
 impl FuseDevFdRes {
-    fn new(fd: RawFd, uds: &OsStr) -> Self {
+    fn new(fd: RawFd, uds: &OsStr, daemon_id: String) -> Self {
         FuseDevFdRes {
             fuse_fd: fd,
             uds_path: uds.to_os_string(),
+            daemon_id,
             ..Default::default()
         }
     }
