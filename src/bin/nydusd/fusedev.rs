@@ -3,10 +3,20 @@
 //
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
+use nydus_utils::last_error;
+use sendfd::{RecvWithFd, SendWithFd};
+use std::ffi::{OsStr, OsString};
+use std::io;
 use std::io::Result;
+use std::net::Shutdown;
+use std::ops::Deref;
+use std::os::unix::io::RawFd;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
-use std::sync::{atomic::Ordering, Arc};
+use std::sync::{atomic::Ordering, Arc, Mutex};
 use std::thread;
+
+use serde::{Deserialize, Serialize};
 
 use fuse_rs::api::{server::Server, Vfs};
 use nydus_utils::{eio, FuseChannel, FuseSession};
@@ -15,6 +25,7 @@ use vmm_sys_util::eventfd::EventFd;
 use crate::daemon;
 use daemon::{Error, NydusDaemon};
 
+use crate::upgrade_manager::{Resource, ResourceType, UPGRADE_MRG};
 use crate::EVENT_MANAGER_RUN;
 
 struct FuseServer {
@@ -82,6 +93,12 @@ impl FusedevDaemon {
             self.event_fd.try_clone().unwrap(),
         )?;
 
+        let res = FuseDevFdRes::new(self.session.expose_fuse_fd(), &OsString::from("fixme"));
+        UPGRADE_MRG
+            .lock()
+            .unwrap()
+            .add_resource(res, ResourceType::Fd);
+
         let thread = thread::Builder::new()
             .name("fuse_server".to_string())
             .spawn(move || {
@@ -130,4 +147,99 @@ pub fn create_nydus_daemon(
         threads: Vec::new(),
         event_fd: evtfd,
     }))
+}
+
+#[derive(Default, Debug, Serialize, Deserialize)]
+struct ResOpaque {
+    version: u32,
+    daemon_id: String,
+    opaque: String,
+}
+
+#[derive(Default)]
+pub struct FuseDevFdRes {
+    fuse_fd: RawFd,
+    uds_path: OsString,
+    stream: Arc<Mutex<Option<UnixStream>>>,
+}
+
+impl FuseDevFdRes {
+    fn new(fd: RawFd, uds: &OsStr) -> Self {
+        FuseDevFdRes {
+            fuse_fd: fd,
+            uds_path: uds.to_os_string(),
+            ..Default::default()
+        }
+    }
+
+    // TODO: unlink unix domain socket when drop such resource.
+    pub fn connect(&self) -> Result<()> {
+        let stream = UnixStream::connect(&self.uds_path).map_err(|e| {
+            error!("Connect to {:?} failed, {:?}", &self.uds_path, e);
+            e
+        })?;
+        *self.stream.lock().unwrap() = Some(stream);
+        Ok(())
+    }
+
+    #[allow(dead_code)]
+    fn listen(&self, path: &OsStr) -> Result<UnixListener> {
+        std::fs::remove_file(path).unwrap_or_default();
+        UnixListener::bind(path).map_err(|e| last_error!(e))
+    }
+
+    fn send_fd(&self) -> Result<usize> {
+        if let Some(ref sock) = self.stream.lock().unwrap().deref() {
+            let opaque = ResOpaque {
+                version: 1,
+                daemon_id: self.daemon_id.clone(),
+                ..Default::default()
+            };
+
+            let opaque_buf = serde_json::to_string(&opaque).unwrap().into_bytes();
+            let mut fds: [RawFd; 8] = Default::default();
+            fds[0] = self.fuse_fd;
+            sock.send_with_fd(&opaque_buf, &fds)
+                .map_err(|_| last_error!())
+        } else {
+            error!("Send fd error!");
+            Err(io::Error::from_raw_os_error(libc::ENOTCONN))
+        }
+    }
+
+    fn recv_fd(&self) -> Result<()> {
+        let mut opaque = vec![0u8; 8192];
+        let mut fds: [RawFd; 8] = Default::default();
+        self.stream
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .recv_with_fd(&mut opaque, &mut fds)?;
+        Ok(())
+    }
+}
+
+impl Resource for FuseDevFdRes {
+    fn store(&self) -> Result<()> {
+        self.connect()?;
+        self.send_fd()?;
+        self.stream
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .shutdown(Shutdown::Both)?;
+
+        Ok(())
+    }
+
+    fn load(&self) -> Result<()> {
+        self.connect()?;
+        let _opaque = self.recv_fd()?;
+        // TODO: Read config file again? or store config as opaque into backend?
+        // FIXME:
+        self.daemon.lock().unwrap().start(4)?;
+        Ok(())
+    }
 }
