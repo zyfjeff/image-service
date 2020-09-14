@@ -14,10 +14,12 @@ use rafs::fs::{Rafs, RafsConfig};
 use rafs::io_stats;
 use std::fs::File;
 use std::ops::Deref;
+use std::process;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
+use crate::upgrade_manager::{ResourceType, UPGRADE_MRG};
 use crate::SubscriberWrapper;
 
 pub struct ApiServer {
@@ -54,6 +56,9 @@ impl ApiServer {
             ApiRequest::ExportGlobalMetrics(id) => Self::export_global_metrics(id),
             ApiRequest::ExportFilesMetrics(id) => Self::export_files_metrics(id),
             ApiRequest::ExportAccessPatterns(id) => Self::export_access_patterns(id),
+            ApiRequest::SendFuseFd => Self::send_fuse_fd(),
+            ApiRequest::Takeover => Self::do_takeover(),
+            ApiRequest::Exit => Self::do_exit(),
         };
 
         self.respond(resp);
@@ -113,6 +118,33 @@ impl ApiServer {
         io_stats::export_files_access_pattern(&id)
             .map(ApiResponsePayload::FsFilesPatterns)
             .map_err(|_| ApiError::ResponsePayloadType)
+    }
+
+    fn send_fuse_fd() -> ApiResponse {
+        let mgr = UPGRADE_MRG.lock().expect("Lock is not poisoned");
+        if let Some(fuse_fd_res) = mgr.get_resource(ResourceType::Fd) {
+            fuse_fd_res
+                .store()
+                .map(|_| ApiResponsePayload::Empty)
+                .map_err(|_| ApiError::ResponsePayloadType)
+        } else {
+            Err(ApiError::NoResource)
+        }
+    }
+
+    fn do_takeover() -> ApiResponse {
+        let mgr = UPGRADE_MRG.lock().expect("Lock is not poisoned");
+        if let Some(res) = mgr.get_resource(ResourceType::Fd) {
+            res.load()
+                .map(|_| ApiResponsePayload::Empty)
+                .map_err(|_| ApiError::ResponsePayloadType)
+        } else {
+            Err(ApiError::NoResource)
+        }
+    }
+
+    fn do_exit() -> ApiResponse {
+        process::exit(0);
     }
 }
 

@@ -29,6 +29,8 @@ pub enum ApiError {
 
     /// API response receive error
     ResponseRecv(RecvError),
+
+    NoResource,
 }
 pub type ApiResult<T> = std::result::Result<T, ApiError>;
 
@@ -62,6 +64,9 @@ pub enum ApiRequest {
     ExportGlobalMetrics(Option<String>),
     ExportFilesMetrics(Option<String>),
     ExportAccessPatterns(Option<String>),
+    SendFuseFd,
+    Takeover,
+    Exit,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -203,6 +208,60 @@ pub fn export_files_patterns(
     }
 }
 
+pub fn send_fuse_fd(
+    api_evt: EventFd,
+    to_api: Sender<ApiRequest>,
+    from_api: &Receiver<ApiResponse>,
+) -> ApiResult<()> {
+    to_api
+        .send(ApiRequest::SendFuseFd)
+        .map_err(ApiError::RequestSend)?;
+    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
+
+    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
+
+    match info {
+        ApiResponsePayload::Empty => Ok(()),
+        _ => Err(ApiError::ResponsePayloadType),
+    }
+}
+
+pub fn do_takeover(
+    api_evt: EventFd,
+    to_api: Sender<ApiRequest>,
+    from_api: &Receiver<ApiResponse>,
+) -> ApiResult<()> {
+    to_api
+        .send(ApiRequest::Takeover)
+        .map_err(ApiError::RequestSend)?;
+    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
+
+    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
+
+    match info {
+        ApiResponsePayload::Empty => Ok(()),
+        _ => Err(ApiError::ResponsePayloadType),
+    }
+}
+
+pub fn do_exit(
+    api_evt: EventFd,
+    to_api: Sender<ApiRequest>,
+    from_api: &Receiver<ApiResponse>,
+) -> ApiResult<()> {
+    to_api
+        .send(ApiRequest::Exit)
+        .map_err(ApiError::RequestSend)?;
+    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
+
+    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
+
+    match info {
+        ApiResponsePayload::Empty => Ok(()),
+        _ => Err(ApiError::ResponsePayloadType),
+    }
+}
+
 /// Errors associated with VMM management
 #[derive(Debug)]
 pub enum HttpError {
@@ -215,6 +274,8 @@ pub enum HttpError {
     /// Could not mount resource
     Mount(ApiError),
     Configure(ApiError),
+
+    Upgrade(ApiError),
 }
 
 fn error_response(error: HttpError, status: StatusCode) -> Response {
@@ -391,6 +452,72 @@ impl EndpointHandler for MetricsPatternHandler {
                         response.set_body(Body::new(info));
                         response
                     }
+                    Err(e) => error_response(e, StatusCode::InternalServerError),
+                }
+            }
+            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+        }
+    }
+}
+
+pub struct SendFuseFdHandler {}
+
+impl EndpointHandler for SendFuseFdHandler {
+    fn handle_request(
+        &self,
+        req: &Request,
+        api_notifier: EventFd,
+        to_api: Sender<ApiRequest>,
+        from_api: &Receiver<ApiResponse>,
+    ) -> Response {
+        match req.method() {
+            Method::Put => {
+                match send_fuse_fd(api_notifier, to_api, from_api).map_err(HttpError::Upgrade) {
+                    Ok(_) => Response::new(Version::Http11, StatusCode::NoContent),
+                    Err(e) => error_response(e, StatusCode::InternalServerError),
+                }
+            }
+            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+        }
+    }
+}
+
+pub struct TakeoverHandler {}
+
+impl EndpointHandler for TakeoverHandler {
+    fn handle_request(
+        &self,
+        req: &Request,
+        api_notifier: EventFd,
+        to_api: Sender<ApiRequest>,
+        from_api: &Receiver<ApiResponse>,
+    ) -> Response {
+        match req.method() {
+            Method::Put => {
+                match do_takeover(api_notifier, to_api, from_api).map_err(HttpError::Upgrade) {
+                    Ok(_) => Response::new(Version::Http11, StatusCode::NoContent),
+                    Err(e) => error_response(e, StatusCode::InternalServerError),
+                }
+            }
+            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+        }
+    }
+}
+
+pub struct ExitHandler {}
+
+impl EndpointHandler for ExitHandler {
+    fn handle_request(
+        &self,
+        req: &Request,
+        api_notifier: EventFd,
+        to_api: Sender<ApiRequest>,
+        from_api: &Receiver<ApiResponse>,
+    ) -> Response {
+        match req.method() {
+            Method::Put => {
+                match do_exit(api_notifier, to_api, from_api).map_err(HttpError::Upgrade) {
+                    Ok(_) => Response::new(Version::Http11, StatusCode::NoContent),
                     Err(e) => error_response(e, StatusCode::InternalServerError),
                 }
             }
