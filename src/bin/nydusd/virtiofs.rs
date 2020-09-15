@@ -194,17 +194,15 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
     }
 }
 
-pub fn create_nydus_daemon(
-    sock: &str,
-    fs: Arc<Vfs>,
-    _evtfd: EventFd,
-    _readonly: bool,
-) -> Result<Box<dyn NydusDaemon>> {
+pub fn create_nydus_daemon(sock: &str, fs: Arc<Vfs>) -> Result<Arc<Mutex<dyn NydusDaemon + Send>>> {
     let daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),
         sock.to_owned(),
         Arc::new(RwLock::new(VhostUserFsBackendHandler::new(fs)?)),
     )
     .map_err(|e| Error::DaemonFailure(format!("{:?}", e)))?;
-    Ok(Box::new(VirtiofsDaemon { daemon }))
+    Ok(Arc::new(Mutex::new(VirtiofsDaemon {
+        sock: sock.to_owned(),
+        daemon,
+    })))
 }

@@ -76,14 +76,20 @@ impl FuseServer {
         Ok(())
     }
 }
+#[allow(dead_code)]
+#[derive(Hash, PartialEq, Eq)]
+enum DaemonStatus {
+    INIT,
+    RUNNING,
+    STOP,
+    UPGRADE,
+}
 
 struct FusedevDaemon {
     server: Arc<Server<Arc<Vfs>>>,
     session: FuseSession,
     threads: Vec<Option<thread::JoinHandle<Result<()>>>>,
     event_fd: EventFd,
-    supervisor: Option<OsString>,
-    id: Option<String>,
 }
 
 impl FusedevDaemon {
@@ -95,8 +101,6 @@ impl FusedevDaemon {
             self.event_fd.try_clone().unwrap(),
         )?;
 
-        self.add_myself_upgrade_manager();
-
         let thread = thread::Builder::new()
             .name("fuse_server".to_string())
             .spawn(move || {
@@ -107,22 +111,6 @@ impl FusedevDaemon {
             .map_err(Error::ThreadSpawn)?;
         self.threads.push(Some(thread));
         Ok(())
-    }
-
-    fn add_myself_upgrade_manager(&self) {
-        if let Some(supervisor) = &self.supervisor {
-            if let Some(daemon_id) = &self.id {
-                let res = FuseDevFdRes::new(
-                    self.session.expose_fuse_fd(),
-                    &supervisor,
-                    daemon_id.to_string(),
-                );
-                UPGRADE_MRG
-                    .lock()
-                    .unwrap()
-                    .add_resource(res, ResourceType::Fd);
-            }
-        }
     }
 }
 
@@ -153,18 +141,33 @@ pub fn create_nydus_daemon(
     mountpoint: &str,
     fs: Arc<Vfs>,
     evtfd: EventFd,
-    readonly: bool,
     supervisor: Option<OsString>,
     id: Option<String>,
-) -> Result<Box<dyn NydusDaemon>> {
-    Ok(Box::new(FusedevDaemon {
-        session: FuseSession::new(Path::new(mountpoint), "nydusfs", "", readonly)?,
+) -> Result<Arc<Mutex<dyn NydusDaemon + Send>>> {
+    let mut se = FuseSession::new(Path::new(mountpoint), "nydusfs", "")?;
+    se.mount()?;
+
+    let fuse_fd = se.expose_fuse_fd();
+
+    let daemon = Arc::new(Mutex::new(FusedevDaemon {
+        session: se,
         server: Arc::new(Server::new(fs)),
         threads: Vec::new(),
         event_fd: evtfd,
-        supervisor,
-        id,
-    }))
+    }));
+
+    if let Some(id) = id {
+        if let Some(supervisor) = supervisor {
+            let res = FuseDevFdRes::new(fuse_fd, supervisor.as_ref(), id, daemon.clone());
+
+            UPGRADE_MRG
+                .lock()
+                .expect("Not expect a poisoned Upgrade Manger lock!")
+                .add_resource(res, ResourceType::Fd);
+        }
+    }
+
+    Ok(daemon)
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -174,21 +177,27 @@ struct ResOpaque {
     opaque: String,
 }
 
-#[derive(Default)]
 pub struct FuseDevFdRes {
     fuse_fd: RawFd,
     uds_path: OsString,
     stream: Arc<Mutex<Option<UnixStream>>>,
     daemon_id: String,
+    daemon: Arc<Mutex<dyn NydusDaemon + Send>>,
 }
 
 impl FuseDevFdRes {
-    fn new(fd: RawFd, uds: &OsStr, daemon_id: String) -> Self {
+    fn new(
+        fd: RawFd,
+        uds: &OsStr,
+        daemon_id: String,
+        daemon: Arc<Mutex<dyn NydusDaemon + Send>>,
+    ) -> Self {
         FuseDevFdRes {
             fuse_fd: fd,
             uds_path: uds.to_os_string(),
+            stream: Default::default(),
             daemon_id,
-            ..Default::default()
+            daemon,
         }
     }
 

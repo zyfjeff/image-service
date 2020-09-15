@@ -38,47 +38,45 @@ pub struct FuseSession {
     subtype: String,
     file: Option<File>,
     bufsize: usize,
-    fuse_fd: RawFd,
+    fuse_fd: Option<RawFd>,
 }
 
 const EXIT_FUSE_SERVICE: u64 = 1;
 
 impl FuseSession {
-    /// create a new fuse session
-    pub fn new(
-        mountpoint: &Path,
-        fsname: &str,
-        subtype: &str,
-        readonly: bool,
-    ) -> io::Result<FuseSession> {
+    pub fn new(mountpoint: &Path, fsname: &str, subtype: &str) -> io::Result<FuseSession> {
         let dest = mountpoint.canonicalize()?;
         if !dest.is_dir() {
-            return Err(einval!(format!(
-                "{} is not a directory",
-                dest.to_str().unwrap()
-            )));
+            return Err(enotdir!(format!("{:?} is not a directory", dest)));
         }
-        let mut flags = MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOATIME;
-        if readonly {
-            flags |= MsFlags::MS_RDONLY;
-        }
-        let file = fuse_kern_mount(&dest, fsname, subtype, flags)?;
-        let fuse_fd = file.as_raw_fd();
-
-        fcntl(file.as_raw_fd(), FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).map_err(|e| einval!(e))?;
 
         Ok(FuseSession {
             mountpoint: dest,
             fsname: fsname.to_owned(),
             subtype: subtype.to_owned(),
-            file: Some(file),
+            file: None,
             bufsize: FUSE_KERN_BUF_SIZE * pagesize() + FUSE_HEADER_SIZE,
-            fuse_fd,
+            fuse_fd: None,
         })
     }
 
+    pub fn mount(&mut self) -> io::Result<()> {
+        let flags =
+            MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOATIME | MsFlags::MS_RDONLY;
+
+        let file = fuse_kern_mount(&self.mountpoint, &self.fsname, &self.subtype, flags)?;
+        let fuse_fd = file.as_raw_fd();
+
+        fcntl(file.as_raw_fd(), FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).map_err(|e| einval!(e))?;
+
+        self.fuse_fd = Some(fuse_fd);
+        self.file = Some(file);
+
+        Ok(())
+    }
+
     pub fn expose_fuse_fd(&self) -> RawFd {
-        self.fuse_fd
+        self.fuse_fd.unwrap()
     }
 
     /// destroy a fuse session

@@ -13,6 +13,8 @@ extern crate rafs;
 extern crate serde_json;
 extern crate stderrlog;
 
+use nix::sys::signal;
+use rlimit::{rlim, Resource};
 #[cfg(feature = "fusedev")]
 use std::ffi::OsString;
 use std::fs::File;
@@ -25,9 +27,6 @@ use std::sync::{
     Arc, Mutex,
 };
 use std::{io, process};
-
-use nix::sys::signal;
-use rlimit::{rlim, Resource};
 
 use clap::{App, Arg};
 use fuse_rs::{
@@ -369,23 +368,19 @@ fn main() -> Result<()> {
     let daemon_id = cmd_arguments.value_of("id").map(|id| id.to_string());
 
     #[cfg(feature = "virtiofsd")]
-    let mut daemon = create_nydus_daemon(vu_sock, vfs, evtfd, !bootstrap.is_empty())?;
+    let daemon = create_nydus_daemon(vu_sock, vfs)?;
     #[cfg(feature = "fusedev")]
-    let mut daemon = create_nydus_daemon(
-        mountpoint,
-        vfs,
-        evtfd,
-        !bootstrap.is_empty(),
-        supervisor,
-        daemon_id,
-    )?;
+    let daemon = create_nydus_daemon(mountpoint, vfs, evtfd, supervisor, daemon_id)?;
     info!("starting fuse daemon");
 
     *EXIT_EVTFD.lock().unwrap().deref_mut() = Some(exit_evtfd);
     nydus_utils::signal::register_signal_handler(signal::SIGINT, sig_exit);
     nydus_utils::signal::register_signal_handler(signal::SIGTERM, sig_exit);
 
-    if let Err(e) = daemon.start(threads) {
+    // TODO: This is not a ideal solution, we'd better move nydus daemon event machine
+    // into Event Manager?
+
+    if let Err(e) = daemon.lock().unwrap().start(threads) {
         error!("Failed to start daemon: {:?}", e);
         process::exit(1);
     }
@@ -395,11 +390,11 @@ fn main() -> Result<()> {
         event_manager.run().unwrap();
     }
 
-    if let Err(e) = daemon.stop() {
+    if let Err(e) = daemon.lock().unwrap().stop() {
         error!("Error shutting down worker thread: {:?}", e)
     }
 
-    if let Err(e) = daemon.wait() {
+    if let Err(e) = daemon.lock().unwrap().wait() {
         error!("Waiting for daemon failed: {:?}", e);
     }
 
