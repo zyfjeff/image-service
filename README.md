@@ -28,8 +28,8 @@ oss backend with blobcache:
     },
     "cache": {
       "type": "blobcache",
+      "compressed": false,
       "config": {
-        "compressed": false,
         "work_dir": "/cache"
       }
     }
