@@ -36,9 +36,9 @@ pub struct FuseSession {
     mountpoint: PathBuf,
     fsname: String,
     subtype: String,
-    file: Option<File>,
+    pub file: Option<File>,
     bufsize: usize,
-    fuse_fd: Option<RawFd>,
+    pub fuse_fd: Option<RawFd>,
 }
 
 const EXIT_FUSE_SERVICE: u64 = 1;

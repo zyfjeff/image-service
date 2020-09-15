@@ -4,6 +4,7 @@
 //
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
+use std::any::Any;
 use std::io::Result;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -191,6 +192,10 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
         if let Err(e) = kill_evt.write(1) {}
         */
         Ok(())
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
     }
 }
 

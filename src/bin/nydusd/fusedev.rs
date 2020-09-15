@@ -5,12 +5,14 @@
 
 use nydus_utils::last_error;
 use sendfd::{RecvWithFd, SendWithFd};
+use std::any::Any;
 use std::ffi::{OsStr, OsString};
+use std::fs::File;
 use std::io;
 use std::io::Result;
 use std::net::Shutdown;
 use std::ops::Deref;
-use std::os::unix::io::RawFd;
+use std::os::unix::io::{FromRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::{
@@ -90,7 +92,7 @@ enum DaemonStatus {
 
 struct FusedevDaemon {
     server: Arc<Server<Arc<Vfs>>>,
-    session: FuseSession,
+    pub session: FuseSession,
     threads: Vec<Option<thread::JoinHandle<Result<()>>>>,
     event_fd: EventFd,
 }
@@ -137,6 +139,10 @@ impl NydusDaemon for FusedevDaemon {
     fn stop(&mut self) -> Result<()> {
         self.event_fd.write(1).expect("Stop fuse service loop");
         self.session.umount()
+    }
+
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
@@ -265,8 +271,6 @@ impl FuseDevFdRes {
 
         debug!("daemon id is {}", self.daemon_id);
 
-        error!("{:?}", std::str::from_utf8(&opaque[..opaque_size]));
-
         self.fuse_fd.store(fds[1], Ordering::Release);
 
         serde_json::from_str::<ResOpaque>(
@@ -298,7 +302,13 @@ impl Resource for FuseDevFdRes {
         let _opaque = self.recv_fd()?;
         // TODO: Read config file again? or store config as opaque into backend?
         // FIXME:
+        let mut d_guard = self.daemon.lock().unwrap();
+        let d = d_guard.as_any().downcast_mut::<FusedevDaemon>().unwrap();
+
+        d.session.file = unsafe { Some(File::from_raw_fd(self.fuse_fd.load(Ordering::Acquire))) };
+
         self.daemon.lock().unwrap().start(4)?;
+
         Ok(())
     }
 }

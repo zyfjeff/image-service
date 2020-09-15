@@ -7,6 +7,7 @@
 #[cfg(feature = "virtiofsd")]
 use fuse_rs::transport::Error as FuseTransportError;
 use fuse_rs::Error as VhostUserFsError;
+use std::any::Any;
 use std::io::Result;
 use std::{convert, error, fmt, io};
 
@@ -23,6 +24,7 @@ pub trait NydusDaemon {
     fn start(&mut self, cnt: u32) -> Result<()>;
     fn wait(&mut self) -> Result<()>;
     fn stop(&mut self) -> Result<()>;
+    fn as_any(&mut self) -> &mut dyn Any;
 }
 
 #[allow(dead_code)]
