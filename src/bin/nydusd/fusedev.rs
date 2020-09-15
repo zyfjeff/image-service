@@ -59,13 +59,14 @@ impl FuseServer {
 
         // Given error EBADF, it means kernel has shut down this session.
         let _ebadf = std::io::Error::from_raw_os_error(libc::EBADF);
+        let mut exit = false;
         loop {
-            if let Some(reader) = self.ch.get_reader(&mut self.buf)? {
+            if let Some(reader) = self.ch.get_reader(&mut self.buf, &mut exit)? {
                 let writer = self.ch.get_writer()?;
                 if let Err(e) = self.server.handle_message(reader, writer, None) {
                     match e {
                         fuse_rs::Error::EncodeMessage(_ebadf) => {
-                            return Err(eio!("fuse session has been shut down: {:?}"));
+                            return Err(eio!("fuse session has been shut down"));
                         }
                         _ => {
                             error!("Handling fuse message, {}", Error::ProcessQueue(e));
@@ -75,6 +76,11 @@ impl FuseServer {
                 }
             } else {
                 info!("fuse server exits");
+                break;
+            }
+
+            if exit {
+                info!("Fuse service is stopped manually");
                 break;
             }
         }
@@ -90,7 +96,7 @@ enum DaemonStatus {
     UPGRADE,
 }
 
-struct FusedevDaemon {
+pub struct FusedevDaemon {
     server: Arc<Server<Arc<Vfs>>>,
     pub session: FuseSession,
     threads: Vec<Option<thread::JoinHandle<Result<()>>>>,
@@ -137,19 +143,22 @@ impl NydusDaemon for FusedevDaemon {
     }
 
     fn stop(&mut self) -> Result<()> {
-        self.event_fd.write(1).expect("Stop fuse service loop");
+        self.interrupt();
         self.session.umount()
     }
 
     fn as_any(&mut self) -> &mut dyn Any {
         self
     }
+
+    fn interrupt(&self) {
+        self.event_fd.write(1).expect("Stop fuse service loop");
+    }
 }
 
 pub fn create_nydus_daemon(
     mountpoint: &str,
     fs: Arc<Vfs>,
-    evtfd: EventFd,
     supervisor: Option<OsString>,
     id: Option<String>,
     upgrade: bool,
@@ -166,7 +175,7 @@ pub fn create_nydus_daemon(
         session: se,
         server: Arc::new(Server::new(fs)),
         threads: Vec::new(),
-        event_fd: evtfd,
+        event_fd: EventFd::new(0).unwrap(),
     }));
 
     if let Some(id) = id {
@@ -269,9 +278,9 @@ impl FuseDevFdRes {
             warn!("There should be only one fd sent, but {} comes", fds_count);
         }
 
-        debug!("daemon id is {}", self.daemon_id);
+        info!("daemon id is {}, receiving fd {}", self.daemon_id, fds[0]);
 
-        self.fuse_fd.store(fds[1], Ordering::Release);
+        self.fuse_fd.store(fds[0], Ordering::Release);
 
         serde_json::from_str::<ResOpaque>(
             std::str::from_utf8(&opaque[..opaque_size]).map_err(|e| einval!(e))?,
@@ -304,10 +313,9 @@ impl Resource for FuseDevFdRes {
         // FIXME:
         let mut d_guard = self.daemon.lock().unwrap();
         let d = d_guard.as_any().downcast_mut::<FusedevDaemon>().unwrap();
-
         d.session.file = unsafe { Some(File::from_raw_fd(self.fuse_fd.load(Ordering::Acquire))) };
 
-        self.daemon.lock().unwrap().start(4)?;
+        d_guard.start(4)?;
 
         Ok(())
     }

@@ -25,6 +25,7 @@ pub trait NydusDaemon {
     fn wait(&mut self) -> Result<()>;
     fn stop(&mut self) -> Result<()>;
     fn as_any(&mut self) -> &mut dyn Any;
+    fn interrupt(&self) {}
 }
 
 #[allow(dead_code)]

@@ -5,6 +5,8 @@
 
 use event_manager::{EventOps, EventSubscriber, Events};
 use fuse_rs::api::Vfs;
+use nix::sys::signal::{kill, SIGTERM};
+use nix::unistd::Pid;
 use nydus_api::http_endpoint::{
     ApiError, ApiRequest, ApiResponse, ApiResponsePayload, ApiResult, DaemonConf, DaemonInfo,
     MountInfo,
@@ -14,11 +16,11 @@ use rafs::fs::{Rafs, RafsConfig};
 use rafs::io_stats;
 use std::fs::File;
 use std::ops::Deref;
-use std::process;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
+use crate::daemon::NydusDaemon;
 use crate::upgrade_manager::{ResourceType, UPGRADE_MRG};
 use crate::SubscriberWrapper;
 
@@ -26,16 +28,23 @@ pub struct ApiServer {
     id: String,
     version: String,
     to_http: Sender<ApiResponse>,
+    daemon: Arc<Mutex<dyn NydusDaemon>>,
 }
 
 type Result<T> = ApiResult<T>;
 
 impl ApiServer {
-    pub fn new(id: String, version: String, to_http: Sender<ApiResponse>) -> std::io::Result<Self> {
+    pub fn new(
+        id: String,
+        version: String,
+        to_http: Sender<ApiResponse>,
+        daemon: Arc<Mutex<dyn NydusDaemon>>,
+    ) -> std::io::Result<Self> {
         Ok(ApiServer {
             id,
             version,
             to_http,
+            daemon,
         })
     }
 
@@ -58,7 +67,7 @@ impl ApiServer {
             ApiRequest::ExportAccessPatterns(id) => Self::export_access_patterns(id),
             ApiRequest::SendFuseFd => Self::send_fuse_fd(),
             ApiRequest::Takeover => Self::do_takeover(),
-            ApiRequest::Exit => Self::do_exit(),
+            ApiRequest::Exit => self.do_exit(),
         };
 
         self.respond(resp);
@@ -143,8 +152,18 @@ impl ApiServer {
         }
     }
 
-    fn do_exit() -> ApiResponse {
-        process::exit(0);
+    fn do_exit(&self) -> ApiResponse {
+        self.daemon.lock().unwrap().interrupt();
+        self.daemon
+            .lock()
+            .unwrap()
+            .wait()
+            .unwrap_or_else(|e| error!("Wait fuse thread failed. {}", e));
+
+        // Should be reliable since this Api server works under event manager.
+        kill(Pid::this(), SIGTERM).unwrap_or_else(|e| error!("Send signal error. {}", e));
+
+        Ok(ApiResponsePayload::Empty)
     }
 }
 

@@ -340,6 +340,32 @@ fn main() -> Result<()> {
     let mut event_manager = EventManager::<Arc<dyn SubscriberWrapper>>::new().unwrap();
 
     let vfs = Arc::new(vfs);
+
+    let daemon_subscriber = Arc::new(NydusDaemonSubscriber::new()?);
+    let daemon_subscriber_id = event_manager.add_subscriber(daemon_subscriber);
+
+    // Send a event to exit from Event Manager so sa to exit from nydusd
+    let exit_evtfd = event_manager
+        .subscriber_mut(daemon_subscriber_id)
+        .unwrap()
+        .get_event_fd()?;
+
+    #[cfg(feature = "virtiofsd")]
+    let daemon = create_nydus_daemon(vu_sock, vfs.clone())?;
+    #[cfg(feature = "fusedev")]
+    let daemon = {
+        let supervisor = cmd_arguments.value_of("supervisor").map(OsString::from);
+        let daemon_id = cmd_arguments.value_of("id").map(|id| id.to_string());
+        create_nydus_daemon(
+            mountpoint,
+            vfs.clone(),
+            supervisor,
+            daemon_id,
+            cmd_arguments.is_present("upgrade"),
+        )?
+    };
+    info!("starting fuse daemon");
+
     if apisock != "" {
         let vfs = Arc::clone(&vfs);
 
@@ -350,6 +376,7 @@ fn main() -> Result<()> {
             "nydusd".to_string(),
             env!("CARGO_PKG_VERSION").to_string(),
             to_http,
+            daemon.clone(),
         )?;
 
         let api_server_subscriber = Arc::new(ApiSeverSubscriber::new(vfs, api_server, from_http)?);
@@ -361,31 +388,6 @@ fn main() -> Result<()> {
         start_http_thread(apisock, evtfd, to_api, from_api)?;
         info!("api server running at {}", apisock);
     }
-
-    let daemon_subscriber = Arc::new(NydusDaemonSubscriber::new()?);
-    let daemon_subscriber_id = event_manager.add_subscriber(daemon_subscriber);
-    let evtfd = event_manager
-        .subscriber_mut(daemon_subscriber_id)
-        .unwrap()
-        .get_event_fd()?;
-    let exit_evtfd = evtfd.try_clone()?;
-
-    #[cfg(feature = "virtiofsd")]
-    let daemon = create_nydus_daemon(vu_sock, vfs)?;
-    #[cfg(feature = "fusedev")]
-    let daemon = {
-        let supervisor = cmd_arguments.value_of("supervisor").map(OsString::from);
-        let daemon_id = cmd_arguments.value_of("id").map(|id| id.to_string());
-        create_nydus_daemon(
-            mountpoint,
-            vfs,
-            evtfd,
-            supervisor,
-            daemon_id,
-            cmd_arguments.is_present("upgrade"),
-        )?
-    };
-    info!("starting fuse daemon");
 
     *EXIT_EVTFD.lock().unwrap().deref_mut() = Some(exit_evtfd);
     nydus_utils::signal::register_signal_handler(signal::SIGINT, sig_exit);
