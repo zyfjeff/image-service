@@ -13,13 +13,16 @@ use std::ops::Deref;
 use std::os::unix::io::RawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
-use std::sync::{atomic::Ordering, Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicI32, Ordering},
+    Arc, Mutex,
+};
 use std::thread;
 
 use serde::{Deserialize, Serialize};
 
 use fuse_rs::api::{server::Server, Vfs};
-use nydus_utils::{eio, FuseChannel, FuseSession};
+use nydus_utils::{einval, eio, FuseChannel, FuseSession};
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::daemon;
@@ -182,7 +185,7 @@ struct ResOpaque {
 }
 
 pub struct FuseDevFdRes {
-    fuse_fd: Option<RawFd>,
+    fuse_fd: AtomicI32,
     uds_path: OsString,
     stream: Arc<Mutex<Option<UnixStream>>>,
     daemon_id: String,
@@ -197,7 +200,7 @@ impl FuseDevFdRes {
         daemon: Arc<Mutex<dyn NydusDaemon + Send>>,
     ) -> Self {
         FuseDevFdRes {
-            fuse_fd: fd,
+            fuse_fd: fd.map(AtomicI32::new).unwrap_or_else(|| AtomicI32::new(-1)),
             uds_path: uds.to_os_string(),
             stream: Default::default(),
             daemon_id,
@@ -231,7 +234,7 @@ impl FuseDevFdRes {
 
             let opaque_buf = serde_json::to_string(&opaque).unwrap().into_bytes();
             let mut fds: [RawFd; 8] = Default::default();
-            fds[0] = self.fuse_fd.unwrap();
+            fds[0] = self.fuse_fd.load(Ordering::Acquire);
             sock.send_with_fd(&opaque_buf, &fds)
                 .map_err(|_| last_error!())
         } else {
@@ -240,16 +243,27 @@ impl FuseDevFdRes {
         }
     }
 
-    fn recv_fd(&self) -> Result<()> {
+    fn recv_fd(&self) -> Result<ResOpaque> {
+        // TODO: Is 8K buffer large enough?
         let mut opaque = vec![0u8; 8192];
         let mut fds: [RawFd; 8] = Default::default();
-        self.stream
+        let (_, fds_count) = self
+            .stream
             .lock()
             .unwrap()
             .as_ref()
             .unwrap()
             .recv_with_fd(&mut opaque, &mut fds)?;
-        Ok(())
+
+        if fds_count != 1 {
+            warn!("There should be only one fd sent!");
+        }
+
+        let o =
+            serde_json::from_str(std::str::from_utf8(&opaque).map_err(|e| einval!(e))?).unwrap();
+
+        self.fuse_fd.store(fds[1], Ordering::Release);
+        Ok(o)
     }
 }
 
