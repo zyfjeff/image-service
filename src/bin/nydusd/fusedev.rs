@@ -247,23 +247,35 @@ impl FuseDevFdRes {
         // TODO: Is 8K buffer large enough?
         let mut opaque = vec![0u8; 8192];
         let mut fds: [RawFd; 8] = Default::default();
-        let (_, fds_count) = self
+        let (opaque_size, fds_count) = self
             .stream
             .lock()
             .unwrap()
             .as_ref()
             .unwrap()
-            .recv_with_fd(&mut opaque, &mut fds)?;
+            .recv_with_fd(&mut opaque, &mut fds)
+            .map_err(|e| {
+                error!("Failed in receiving fd");
+                e
+            })?;
 
         if fds_count != 1 {
-            warn!("There should be only one fd sent!");
+            warn!("There should be only one fd sent, but {} comes", fds_count);
         }
 
-        let o =
-            serde_json::from_str(std::str::from_utf8(&opaque).map_err(|e| einval!(e))?).unwrap();
+        debug!("daemon id is {}", self.daemon_id);
+
+        error!("{:?}", std::str::from_utf8(&opaque[..opaque_size]));
 
         self.fuse_fd.store(fds[1], Ordering::Release);
-        Ok(o)
+
+        serde_json::from_str::<ResOpaque>(
+            std::str::from_utf8(&opaque[..opaque_size]).map_err(|e| einval!(e))?,
+        )
+        .map_err(|e| {
+            error!(" Opaque can't ba parsed, {} ", e);
+            einval!(e)
+        })
     }
 }
 
