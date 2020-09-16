@@ -20,7 +20,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
-use crate::daemon::NydusDaemon;
+use crate::daemon::{DaemonState, NydusDaemon};
 use crate::upgrade_manager::{ResourceType, UPGRADE_MRG};
 use crate::SubscriberWrapper;
 
@@ -153,12 +153,12 @@ impl ApiServer {
     }
 
     fn do_exit(&self) -> ApiResponse {
-        self.daemon.lock().unwrap().interrupt();
-        self.daemon
-            .lock()
-            .unwrap()
-            .wait()
+        let mut d = self.daemon.lock().unwrap();
+        d.interrupt();
+        d.wait()
             .unwrap_or_else(|e| error!("Wait fuse thread failed. {}", e));
+
+        d.set_state(DaemonState::INTERRUPT);
 
         // Should be reliable since this Api server works under event manager.
         kill(Pid::this(), SIGTERM).unwrap_or_else(|e| error!("Send signal error. {}", e));

@@ -28,7 +28,7 @@ use nydus_utils::{einval, eio, FuseChannel, FuseSession};
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::daemon;
-use daemon::{Error, NydusDaemon};
+use daemon::{DaemonState, Error, NydusDaemon};
 
 use crate::upgrade_manager::{Resource, ResourceType, UPGRADE_MRG};
 use crate::EVENT_MANAGER_RUN;
@@ -87,20 +87,13 @@ impl FuseServer {
         Ok(())
     }
 }
-#[allow(dead_code)]
-#[derive(Hash, PartialEq, Eq)]
-enum DaemonStatus {
-    INIT,
-    RUNNING,
-    STOP,
-    UPGRADE,
-}
 
 pub struct FusedevDaemon {
     server: Arc<Server<Arc<Vfs>>>,
     pub session: FuseSession,
     threads: Vec<Option<thread::JoinHandle<Result<()>>>>,
     event_fd: EventFd,
+    state: AtomicI32,
 }
 
 impl FusedevDaemon {
@@ -144,7 +137,12 @@ impl NydusDaemon for FusedevDaemon {
 
     fn stop(&mut self) -> Result<()> {
         self.interrupt();
-        self.session.umount()
+
+        if self.get_state() != DaemonState::INTERRUPT {
+            self.session.umount()
+        } else {
+            Ok(())
+        }
     }
 
     fn as_any(&mut self) -> &mut dyn Any {
@@ -153,6 +151,16 @@ impl NydusDaemon for FusedevDaemon {
 
     fn interrupt(&self) {
         self.event_fd.write(1).expect("Stop fuse service loop");
+    }
+
+    fn set_state(&mut self, state: DaemonState) -> DaemonState {
+        let old = self.get_state();
+        self.state.store(state as i32, Ordering::Relaxed);
+        old
+    }
+
+    fn get_state(&self) -> DaemonState {
+        self.state.load(Ordering::Relaxed).into()
     }
 }
 
@@ -176,6 +184,7 @@ pub fn create_nydus_daemon(
         server: Arc::new(Server::new(fs)),
         threads: Vec::new(),
         event_fd: EventFd::new(0).unwrap(),
+        state: AtomicI32::new(DaemonState::INIT as i32),
     }));
 
     if let Some(id) = id {

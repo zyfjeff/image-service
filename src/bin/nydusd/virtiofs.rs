@@ -19,7 +19,7 @@ use vm_memory::GuestMemoryMmap;
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::daemon;
-use daemon::{Error, NydusDaemon};
+use daemon::{DaemonState, Error, NydusDaemon};
 
 use nydus_utils::einval;
 
@@ -196,6 +196,14 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
 
     fn as_any(&mut self) -> &mut dyn Any {
         self
+    }
+
+    fn get_state(&self) -> DaemonState {
+        DaemonState::INIT
+    }
+
+    fn set_state(&mut self, _state: DaemonState) -> DaemonState {
+        DaemonState::INIT
     }
 }
 

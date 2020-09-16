@@ -8,6 +8,7 @@
 use fuse_rs::transport::Error as FuseTransportError;
 use fuse_rs::Error as VhostUserFsError;
 use std::any::Any;
+use std::convert::From;
 use std::io::Result;
 use std::{convert, error, fmt, io};
 
@@ -20,12 +21,38 @@ use crate::SubscriberWrapper;
 
 use crate::EVENT_MANAGER_RUN;
 
+#[allow(dead_code)]
+#[derive(Hash, PartialEq, Eq)]
+pub enum DaemonState {
+    INIT = 1,
+    RUNNING = 2,
+    INTERRUPT = 3,
+    UPGRADE = 4,
+    STOP = 5,
+    INVALID = -1,
+}
+
+impl From<i32> for DaemonState {
+    fn from(i: i32) -> Self {
+        match i {
+            1 => DaemonState::INIT,
+            2 => DaemonState::RUNNING,
+            3 => DaemonState::INTERRUPT,
+            4 => DaemonState::UPGRADE,
+            5 => DaemonState::STOP,
+            _ => DaemonState::INVALID,
+        }
+    }
+}
+
 pub trait NydusDaemon {
     fn start(&mut self, cnt: u32) -> Result<()>;
     fn wait(&mut self) -> Result<()>;
     fn stop(&mut self) -> Result<()>;
     fn as_any(&mut self) -> &mut dyn Any;
     fn interrupt(&self) {}
+    fn get_state(&self) -> DaemonState;
+    fn set_state(&mut self, s: DaemonState) -> DaemonState;
 }
 
 #[allow(dead_code)]
