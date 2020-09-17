@@ -20,7 +20,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
-use crate::daemon::{DaemonState, NydusDaemon};
+use crate::daemon::NydusDaemon;
 use crate::upgrade_manager::{ResourceType, UPGRADE_MGR};
 use crate::SubscriberWrapper;
 
@@ -66,7 +66,7 @@ impl ApiServer {
             ApiRequest::ExportFilesMetrics(id) => Self::export_files_metrics(id),
             ApiRequest::ExportAccessPatterns(id) => Self::export_access_patterns(id),
             ApiRequest::SendFuseFd => Self::send_fuse_fd(),
-            ApiRequest::Takeover => Self::do_takeover(),
+            ApiRequest::Takeover => self.do_takeover(),
             ApiRequest::Exit => self.do_exit(),
         };
 
@@ -141,24 +141,16 @@ impl ApiServer {
         }
     }
 
-    fn do_takeover() -> ApiResponse {
-        let mgr = UPGRADE_MGR.lock().expect("Lock is not poisoned");
-        if let Some(res) = mgr.get_resource(ResourceType::Fd) {
-            res.load()
-                .map(|_| ApiResponsePayload::Empty)
-                .map_err(|_| ApiError::ResponsePayloadType)
-        } else {
-            Err(ApiError::NoResource)
-        }
+    fn do_takeover(&self) -> ApiResponse {
+        let d = self.daemon.lock().expect("Not expect poisoned lock");
+        d.trigger_takeover()
+            .map(|_| ApiResponsePayload::Empty)
+            .map_err(|e| ApiError::DaemonAbnormal(e.to_string()))
     }
 
     fn do_exit(&self) -> ApiResponse {
-        let mut d = self.daemon.lock().unwrap();
-        d.interrupt();
-        d.wait()
-            .unwrap_or_else(|e| error!("Wait fuse thread failed. {}", e));
-
-        d.set_state(DaemonState::INTERRUPT);
+        let d = self.daemon.lock().unwrap();
+        d.trigger_exit().unwrap();
 
         // Should be reliable since this Api server works under event manager.
         kill(Pid::this(), SIGTERM).unwrap_or_else(|e| error!("Send signal error. {}", e));

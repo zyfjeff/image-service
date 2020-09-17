@@ -53,6 +53,12 @@ pub trait NydusDaemon {
     fn interrupt(&self) {}
     fn get_state(&self) -> DaemonState;
     fn set_state(&mut self, s: DaemonState) -> DaemonState;
+    fn trigger_exit(&self) -> Result<()> {
+        Ok(())
+    }
+    fn trigger_takeover(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[allow(dead_code)]

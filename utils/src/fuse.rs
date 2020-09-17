@@ -127,7 +127,6 @@ impl Drop for FuseSession {
 pub struct FuseChannel {
     fd: c_int,
     epoll_fd: RawFd,
-    exit_evtfd: EventFd,
     bufsize: usize,
     events: RefCell<Vec<Event>>,
     // XXX: Ideally we should have write buffer as well
@@ -157,7 +156,6 @@ impl FuseChannel {
         Ok(FuseChannel {
             fd: dup(fd).map_err(|e| last_error!(e))?,
             epoll_fd,
-            exit_evtfd,
             bufsize,
             events: RefCell::new(vec![Event::new(Events::empty(), 0); EPOLL_EVENTS_LEN]),
         })
@@ -184,10 +182,13 @@ impl FuseChannel {
                 match evset {
                     Events::EPOLLIN => {
                         if event.data == EXIT_FUSE_SERVICE {
+                            // Trick is we don't read the event fd so as to make each thread exit.
+                            /*
                             self.exit_evtfd.read().map_err(|e| {
                                 error!("Read event fd failed. {:?}", e);
                                 e
                             })?;
+                            */
                             // We don't directly exit from here because we may already read
                             // a fuse message previously, which must be handled.
                             info!("Will exit from fuse service");

@@ -3,6 +3,7 @@
 //
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
+use std::any::Any;
 use std::collections::HashMap;
 use std::io::Result;
 use std::sync::{Arc, Mutex};
@@ -46,4 +47,5 @@ impl UpgradeManager {
 pub trait Resource {
     fn load(&self) -> Result<()>;
     fn store(&self) -> Result<()>;
+    fn as_any(&self) -> &dyn Any;
 }
