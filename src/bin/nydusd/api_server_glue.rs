@@ -138,7 +138,7 @@ impl ApiServer {
                 DaemonError::NoResource.to_string(),
             )),
             |r| {
-                r.load()
+                r.store()
                     .map_err(|e| ApiError::DaemonAbnormal(e.to_string()))
                     .map(|_| ApiResponsePayload::Empty)
             },

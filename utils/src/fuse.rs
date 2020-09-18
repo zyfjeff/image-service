@@ -182,18 +182,12 @@ impl FuseChannel {
                 match evset {
                     Events::EPOLLIN => {
                         if event.data == EXIT_FUSE_SERVICE {
-                            // Trick is we don't read the event fd so as to make each thread exit.
-                            /*
-                            self.exit_evtfd.read().map_err(|e| {
-                                error!("Read event fd failed. {:?}", e);
-                                e
-                            })?;
-                            */
-                            // We don't directly exit from here because we may already read
-                            // a fuse message previously, which must be handled.
+                            // Directly return from here is reliable as we handle only one epoll event
+                            // which is `Read` or `Exit` once this function is called.
+                            // One more trick is we don't read the event fd so as to make all fuse threads exit.
+                            // That is because we configure this event fd as LEVEL triggered.
                             info!("Will exit from fuse service");
                             *exit = true;
-                            // Directly return from here is reliable as we handle
                             return Ok(None);
                         }
 

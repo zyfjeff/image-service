@@ -97,6 +97,9 @@ impl FuseServer {
                 break;
             }
 
+            // We have to ensure that fuse service loop actually runs, which means
+            // the first `init` message has been handled and kernel and daemon have
+            // negotiated capabilities. Then we can store those capabilities.
             FUSE_INIT.call_once(|| {
                 self.trigger
                     .send(FusedevStateMachineInput::InitMsg)
@@ -174,14 +177,24 @@ impl FusedevDaemonSM {
         thread::Builder::new()
             .name("state_machine".to_string())
             .spawn(move || loop {
-                let event = self.event_collector.recv().unwrap();
+                let event = self
+                    .event_collector
+                    .recv()
+                    .expect("Event channel can't be broken!");
                 let last = self.sm.state().clone();
-                info!("Input {:?}", &event);
-                let action = self.sm.consume(&event).unwrap().unwrap();
+                let input = &event;
+                let action = self
+                    .sm
+                    .consume(&event)
+                    .expect("Daemon state machine goes insane, this is critical error!");
+
                 let mut d = self.daemon.lock().unwrap();
                 let cnt = d.threads_cnt;
                 let cur = self.sm.state();
-                info!("From {:?} to {:?}, output {:?}", last, cur, &action);
+                info!(
+                    "From {:?} to {:?}, input {:?} output {:?}",
+                    last, cur, input, &action
+                );
                 match action {
                     Some(a) => match a {
                         FusedevStateMachineOutput::StartService => {
@@ -350,7 +363,7 @@ pub fn create_nydus_daemon(
     }));
 
     let machine = FusedevDaemonSM::new(daemon.clone(), rx);
-    machine.kick_state_machine().unwrap();
+    machine.kick_state_machine()?;
 
     let mut se = FuseSession::new(Path::new(mountpoint), "rafs", "")?;
     let mut fuse_fd = None;
@@ -368,7 +381,7 @@ pub fn create_nydus_daemon(
 
     let d = daemon.clone() as Arc<Mutex<dyn NydusDaemon + Send>>;
     if !upgrade {
-        d.lock().unwrap().start(threads_cnt).unwrap();
+        d.lock().expect("Not poisoned").start(threads_cnt)?;
     }
 
     if let Some(id) = id {
@@ -447,13 +460,21 @@ impl FuseDevFdRes {
         }
     }
 
-    // TODO: unlink unix domain socket when drop such resource.
     pub fn connect(&self) -> Result<()> {
         let stream = UnixStream::connect(&self.uds_path).map_err(|e| {
             error!("Connect to {:?} failed, {:?}", &self.uds_path, e);
             e
         })?;
         *self.stream.lock().unwrap() = Some(stream);
+        Ok(())
+    }
+
+    pub fn disconnect(&self) -> Result<()> {
+        let mut guard = self.stream.lock().unwrap();
+        if let Some(ref s) = guard.deref() {
+            s.shutdown(Shutdown::Both)?;
+            *guard = None;
+        }
         Ok(())
     }
 
@@ -469,7 +490,7 @@ impl FuseDevFdRes {
             let mut fds: [RawFd; 8] = Default::default();
             fds[0] = self.fuse_fd.load(Ordering::Acquire);
             sock.send_with_fd(&opaque_buf, &fds)
-                .map_err(|_| last_error!())
+                .map_err(|e| last_error!(e))
         } else {
             error!("Send fd error!");
             Err(io::Error::from_raw_os_error(libc::ENOTCONN))
@@ -514,14 +535,7 @@ impl Resource for FuseDevFdRes {
     fn store(&self) -> Result<()> {
         self.connect()?;
         self.send_fd()?;
-        self.stream
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .shutdown(Shutdown::Both)?;
-
-        Ok(())
+        self.disconnect()
     }
 
     fn load(&self) -> Result<()> {
@@ -534,8 +548,7 @@ impl Resource for FuseDevFdRes {
         d.session.as_mut().unwrap().file =
             unsafe { Some(File::from_raw_fd(self.fuse_fd.load(Ordering::Acquire))) };
         self.vfs.swap_opts(opaque.vfs_opts);
-
-        Ok(())
+        self.disconnect()
     }
 
     fn as_any(&self) -> &dyn Any {
