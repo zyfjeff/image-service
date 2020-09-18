@@ -20,7 +20,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
-use crate::daemon::NydusDaemon;
+use crate::daemon::{DaemonError, NydusDaemon};
 use crate::upgrade_manager::{ResourceType, UPGRADE_MGR};
 use crate::SubscriberWrapper;
 
@@ -59,9 +59,9 @@ impl ApiServer {
             .map_err(|e| epipe!(format!("receive API channel failed {}", e)))?;
 
         let resp = match request {
-            ApiRequest::DaemonInfo => self.get_rafs_instance_info(),
-            ApiRequest::Mount(info) => Self::mount_rafs(info, rafs_conf, vfs),
-            ApiRequest::ConfigureDaemon(conf) => self.configure_rafs_instance(conf),
+            ApiRequest::DaemonInfo => self.daemon_info(),
+            ApiRequest::Mount(info) => Self::do_mount(info, rafs_conf, vfs),
+            ApiRequest::ConfigureDaemon(conf) => self.configure_daemon(conf),
             ApiRequest::ExportGlobalMetrics(id) => Self::export_global_metrics(id),
             ApiRequest::ExportFilesMetrics(id) => Self::export_files_metrics(id),
             ApiRequest::ExportAccessPatterns(id) => Self::export_access_patterns(id),
@@ -81,7 +81,7 @@ impl ApiServer {
         }
     }
 
-    fn get_rafs_instance_info(&self) -> ApiResponse {
+    fn daemon_info(&self) -> ApiResponse {
         let response = DaemonInfo {
             id: self.id.to_string(),
             version: self.version.to_string(),
@@ -91,13 +91,13 @@ impl ApiServer {
         Ok(ApiResponsePayload::DaemonInfo(response))
     }
 
-    fn mount_rafs(info: MountInfo, rafs_conf: &RafsConfig, vfs: &Vfs) -> ApiResponse {
+    fn do_mount(info: MountInfo, rafs_conf: &RafsConfig, vfs: &Vfs) -> ApiResponse {
         rafs_mount(info, &rafs_conf, vfs)
-            .map(|_| ApiResponsePayload::Mount)
+            .map(|_| ApiResponsePayload::Empty)
             .map_err(ApiError::MountFailure)
     }
 
-    fn configure_rafs_instance(&self, conf: DaemonConf) -> ApiResponse {
+    fn configure_daemon(&self, conf: DaemonConf) -> ApiResponse {
         conf.log_level
             .parse::<log::LevelFilter>()
             .map_err(|e| {
@@ -106,7 +106,7 @@ impl ApiServer {
             })
             .map(|v| {
                 log::set_max_level(v);
-                ApiResponsePayload::Mount
+                ApiResponsePayload::Empty
             })
     }
 
@@ -131,14 +131,18 @@ impl ApiServer {
 
     fn send_fuse_fd() -> ApiResponse {
         let mgr = UPGRADE_MGR.lock().expect("Lock is not poisoned");
-        if let Some(fuse_fd_res) = mgr.get_resource(ResourceType::Fd) {
-            fuse_fd_res
-                .store()
-                .map(|_| ApiResponsePayload::Empty)
-                .map_err(|_| ApiError::ResponsePayloadType)
-        } else {
-            Err(ApiError::NoResource)
-        }
+
+        // Let Api error carry string rather than daemon error code.
+        mgr.get_resource(ResourceType::Fd).map_or(
+            Err(ApiError::DaemonAbnormal(
+                DaemonError::NoResource.to_string(),
+            )),
+            |r| {
+                r.load()
+                    .map_err(|e| ApiError::DaemonAbnormal(e.to_string()))
+                    .map(|_| ApiResponsePayload::Empty)
+            },
+        )
     }
 
     fn do_takeover(&self) -> ApiResponse {
@@ -150,7 +154,9 @@ impl ApiServer {
 
     fn do_exit(&self) -> ApiResponse {
         let d = self.daemon.lock().unwrap();
-        d.trigger_exit().unwrap();
+        d.trigger_exit()
+            .map(|_| ApiResponsePayload::Empty)
+            .map_err(|e| ApiError::DaemonAbnormal(e.to_string()))?;
 
         // Should be reliable since this Api server works under event manager.
         kill(Pid::this(), SIGTERM).unwrap_or_else(|e| error!("Send signal error. {}", e));

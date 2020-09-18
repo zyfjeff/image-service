@@ -30,11 +30,11 @@ use rust_fsm::*;
 use serde::{Deserialize, Serialize};
 
 use fuse_rs::api::{server::Server, Vfs, VfsOptions};
-use nydus_utils::{einval, eio, FuseChannel, FuseSession};
+use nydus_utils::{einval, eio, eother, FuseChannel, FuseSession};
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::daemon;
-use daemon::{DaemonState, Error, NydusDaemon};
+use daemon::{DaemonError, DaemonResult, DaemonState, Error, NydusDaemon};
 
 use crate::upgrade_manager::{Resource, ResourceType, UPGRADE_MGR};
 use crate::{EVENT_MANAGER_RUN, EXIT_EVTFD};
@@ -265,12 +265,16 @@ impl FusedevDaemon {
         Ok(())
     }
 
-    fn on_event(&self, event: FusedevStateMachineInput) {
-        self.trigger.send(event).unwrap();
+    fn on_event(&self, event: FusedevStateMachineInput) -> DaemonResult<()> {
+        self.trigger.send(event).map_err(|_| DaemonError::Channel)
     }
 }
 
 impl NydusDaemon for FusedevDaemon {
+    fn as_any(&mut self) -> &mut dyn Any {
+        self
+    }
+
     fn start(&mut self, cnt: u32) -> Result<()> {
         for _ in 0..cnt {
             self.kick_one_server(self.trigger.clone())?;
@@ -308,8 +312,8 @@ impl NydusDaemon for FusedevDaemon {
         self.state.load(Ordering::Relaxed).into()
     }
 
-    fn trigger_exit(&self) -> Result<()> {
-        self.on_event(FusedevStateMachineInput::Exit);
+    fn trigger_exit(&self) -> DaemonResult<()> {
+        self.on_event(FusedevStateMachineInput::Exit)?;
         Ok(())
     }
 
@@ -341,8 +345,8 @@ pub fn create_nydus_daemon(
         state: AtomicI32::new(DaemonState::INIT as i32),
         threads_cnt,
         trigger,
-        //supervisor: supervisor.clone(),
-        //id: id.clone(),
+        // supervisor: supervisor.clone(),
+        // id: id.clone(),
     }));
 
     let machine = FusedevDaemonSM::new(daemon.clone(), rx);
@@ -356,7 +360,8 @@ pub fn create_nydus_daemon(
         daemon
             .lock()
             .unwrap()
-            .on_event(FusedevStateMachineInput::Mount);
+            .on_event(FusedevStateMachineInput::Mount)
+            .map_err(|e| eother!(e))?
     }
 
     daemon.lock().unwrap().session = Some(se);

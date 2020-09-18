@@ -30,23 +30,17 @@ pub enum ApiError {
     /// API response receive error
     ResponseRecv(RecvError),
 
-    NoResource,
+    DaemonAbnormal(String),
 }
 pub type ApiResult<T> = std::result::Result<T, ApiError>;
 
 pub enum ApiResponsePayload {
     /// No data is sent on the channel.
     Empty,
-
-    /// Virtual machine information
+    /// Nydus daemon general working information.
     DaemonInfo(DaemonInfo),
-
-    /// Vmm ping response
-    Mount,
-
     /// Nydus filesystem global metrics
     FsGlobalMetrics(String),
-
     /// Nydus filesystem per-file metrics
     FsFilesMetrics(String),
     FsFilesPatterns(String),
@@ -146,7 +140,7 @@ pub fn mount_info(
     let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
 
     match info {
-        ApiResponsePayload::Mount => Ok(()),
+        ApiResponsePayload::Empty => Ok(()),
         _ => Err(ApiError::ResponsePayloadType),
     }
 }

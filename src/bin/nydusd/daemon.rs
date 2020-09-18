@@ -9,6 +9,7 @@ use fuse_rs::transport::Error as FuseTransportError;
 use fuse_rs::Error as VhostUserFsError;
 use std::any::Any;
 use std::convert::From;
+use std::fmt::{Display, Formatter};
 use std::io::Result;
 use std::{convert, error, fmt, io};
 
@@ -45,6 +46,23 @@ impl From<i32> for DaemonState {
     }
 }
 
+#[derive(Debug)]
+#[allow(dead_code)]
+pub enum DaemonError {
+    NoResource,
+    RestoreState,
+    Channel,
+}
+
+impl Display for DaemonError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        //use self::DaemonError::*;
+        write!(f, "{:?}", self)
+    }
+}
+
+pub type DaemonResult<T> = std::result::Result<T, DaemonError>;
+
 pub trait NydusDaemon {
     fn start(&mut self, cnt: u32) -> Result<()>;
     fn wait(&mut self) -> Result<()>;
@@ -53,10 +71,10 @@ pub trait NydusDaemon {
     fn interrupt(&self) {}
     fn get_state(&self) -> DaemonState;
     fn set_state(&mut self, s: DaemonState) -> DaemonState;
-    fn trigger_exit(&self) -> Result<()> {
+    fn trigger_exit(&self) -> DaemonResult<()> {
         Ok(())
     }
-    fn trigger_takeover(&self) -> Result<()> {
+    fn trigger_takeover(&self) -> DaemonResult<()> {
         Ok(())
     }
 }
