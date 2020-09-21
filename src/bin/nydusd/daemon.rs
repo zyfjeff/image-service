@@ -23,7 +23,7 @@ use crate::SubscriberWrapper;
 use crate::EVENT_MANAGER_RUN;
 
 #[allow(dead_code)]
-#[derive(Hash, PartialEq, Eq)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub enum DaemonState {
     INIT = 1,
     RUNNING = 2,
@@ -31,6 +31,12 @@ pub enum DaemonState {
     UPGRADE = 4,
     STOP = 5,
     INVALID = -1,
+}
+
+impl Display for DaemonState {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 impl From<i32> for DaemonState {
@@ -77,6 +83,8 @@ pub trait NydusDaemon {
     fn trigger_takeover(&self) -> DaemonResult<()> {
         Ok(())
     }
+    fn id(&self) -> Option<String>;
+    fn supervisor(&self) -> Option<String>;
 }
 
 #[allow(dead_code)]

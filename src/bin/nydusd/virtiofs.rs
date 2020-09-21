@@ -175,6 +175,8 @@ impl VhostUserBackend for VhostUserFsBackendHandler {
 
 struct VirtiofsDaemon<S: VhostUserBackend> {
     daemon: VhostUserDaemon<S>,
+    id: Option<String>,
+    supervisor: Option<String>,
 }
 
 impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
@@ -192,6 +194,14 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
         if let Err(e) = kill_evt.write(1) {}
         */
         Ok(())
+    }
+
+    fn id(&self) -> Option<String> {
+        self.id.clone()
+    }
+
+    fn supervisor(&self) -> Option<String> {
+        self.supervisor.clone()
     }
 
     fn as_any(&mut self) -> &mut dyn Any {
@@ -217,5 +227,7 @@ pub fn create_nydus_daemon(sock: &str, fs: Arc<Vfs>) -> Result<Arc<Mutex<dyn Nyd
     Ok(Arc::new(Mutex::new(VirtiofsDaemon {
         sock: sock.to_owned(),
         daemon,
+        id: None,
+        supervisor: None,
     })))
 }

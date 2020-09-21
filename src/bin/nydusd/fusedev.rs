@@ -118,11 +118,10 @@ pub struct FusedevDaemon {
     threads: Vec<Option<thread::JoinHandle<Result<()>>>>,
     event_fd: EventFd,
     state: AtomicI32,
-    threads_cnt: u32,
+    pub threads_cnt: u32,
     trigger: Trigger,
-    // TODO: Report below two line via Api in the future.
-    // supervisor: Option<OsString>,
-    // id: Option<String>,
+    pub supervisor: Option<String>,
+    pub id: Option<String>,
 }
 
 /// Fusedev daemon work flow is controlled by state machine.
@@ -311,6 +310,14 @@ impl NydusDaemon for FusedevDaemon {
             .map(|_| ())
     }
 
+    fn id(&self) -> Option<String> {
+        self.id.clone()
+    }
+
+    fn supervisor(&self) -> Option<String> {
+        self.supervisor.clone()
+    }
+
     fn interrupt(&self) {
         self.event_fd.write(1).expect("Stop fuse service loop");
     }
@@ -343,7 +350,7 @@ impl NydusDaemon for FusedevDaemon {
 pub fn create_nydus_daemon(
     mountpoint: &str,
     fs: Arc<Vfs>,
-    supervisor: Option<OsString>,
+    supervisor: Option<String>,
     id: Option<String>,
     threads_cnt: u32,
     upgrade: bool,
@@ -358,8 +365,8 @@ pub fn create_nydus_daemon(
         state: AtomicI32::new(DaemonState::INIT as i32),
         threads_cnt,
         trigger,
-        // supervisor: supervisor.clone(),
-        // id: id.clone(),
+        supervisor: supervisor.clone(),
+        id: id.clone(),
     }));
 
     let machine = FusedevDaemonSM::new(daemon.clone(), rx);

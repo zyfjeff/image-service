@@ -65,8 +65,9 @@ pub enum ApiRequest {
 
 #[derive(Clone, Deserialize, Serialize)]
 pub struct DaemonInfo {
-    pub id: String,
+    pub id: Option<String>,
     pub version: String,
+    pub supervisor: Option<String>,
     pub state: String,
 }
 
@@ -92,7 +93,6 @@ pub fn daemon_info(
     to_api: Sender<ApiRequest>,
     from_api: &Receiver<ApiResponse>,
 ) -> ApiResult<DaemonInfo> {
-    // Send the VM request.
     to_api
         .send(ApiRequest::DaemonInfo)
         .map_err(ApiError::RequestSend)?;
@@ -279,7 +279,7 @@ fn error_response(error: HttpError, status: StatusCode) -> Response {
     response
 }
 
-// /api/v1/info handler
+// /api/v1/daemon handler
 pub struct InfoHandler {}
 
 impl EndpointHandler for InfoHandler {
@@ -296,7 +296,6 @@ impl EndpointHandler for InfoHandler {
                     Ok(info) => {
                         let mut response = Response::new(Version::Http11, StatusCode::OK);
                         let info_serialized = serde_json::to_string(&info).unwrap();
-
                         response.set_body(Body::new(info_serialized));
                         response
                     }

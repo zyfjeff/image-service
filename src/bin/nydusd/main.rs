@@ -15,8 +15,6 @@ extern crate stderrlog;
 
 use nix::sys::signal;
 use rlimit::{rlim, Resource};
-#[cfg(feature = "fusedev")]
-use std::ffi::OsString;
 use std::fs::File;
 use std::io::{Read, Result};
 use std::ops::{Deref, DerefMut};
@@ -349,7 +347,7 @@ fn main() -> Result<()> {
     let daemon = create_nydus_daemon(vu_sock, vfs.clone())?;
     #[cfg(feature = "fusedev")]
     let daemon = {
-        let supervisor = cmd_arguments.value_of("supervisor").map(OsString::from);
+        let supervisor = cmd_arguments.value_of("supervisor").map(|s| s.to_string());
         let daemon_id = cmd_arguments.value_of("id").map(|id| id.to_string());
         // threads means number of fuse service threads
         let threads: u32 = cmd_arguments
@@ -374,7 +372,6 @@ fn main() -> Result<()> {
         let (to_http, from_api) = channel();
 
         let api_server = ApiServer::new(
-            "nydusd".to_string(),
             env!("CARGO_PKG_VERSION").to_string(),
             to_http,
             daemon.clone(),

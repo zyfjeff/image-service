@@ -21,11 +21,12 @@ use std::sync::{Arc, Mutex};
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
 use crate::daemon::{DaemonError, NydusDaemon};
+#[cfg(fusedev)]
+use crate::fusedev::FusedevDaemon;
 use crate::upgrade_manager::{ResourceType, UPGRADE_MGR};
 use crate::SubscriberWrapper;
 
 pub struct ApiServer {
-    id: String,
     version: String,
     to_http: Sender<ApiResponse>,
     daemon: Arc<Mutex<dyn NydusDaemon>>,
@@ -35,13 +36,11 @@ type Result<T> = ApiResult<T>;
 
 impl ApiServer {
     pub fn new(
-        id: String,
         version: String,
         to_http: Sender<ApiResponse>,
         daemon: Arc<Mutex<dyn NydusDaemon>>,
     ) -> std::io::Result<Self> {
         Ok(ApiServer {
-            id,
             version,
             to_http,
             daemon,
@@ -82,10 +81,13 @@ impl ApiServer {
     }
 
     fn daemon_info(&self) -> ApiResponse {
+        let d = self.daemon.lock().expect("Not expect poisoned lock");
+
         let response = DaemonInfo {
-            id: self.id.to_string(),
             version: self.version.to_string(),
-            state: "Running".to_string(),
+            id: d.id(),
+            supervisor: d.supervisor(),
+            state: d.get_state().to_string(),
         };
 
         Ok(ApiResponsePayload::DaemonInfo(response))
