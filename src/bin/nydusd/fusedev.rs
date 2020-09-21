@@ -19,35 +19,35 @@ use std::sync::{
     atomic::{AtomicI32, Ordering},
     Arc, Mutex,
 };
-use std::thread;
+// use std::thread;
+
+use std::{thread, time};
 
 use serde::{Deserialize, Serialize};
 
-use fuse_rs::api::{server::Server, Vfs};
+use fuse_rs::api::{server::Server, Vfs, VfsOptions};
 use nydus_utils::{einval, eio, FuseChannel, FuseSession};
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::daemon;
 use daemon::{DaemonState, Error, NydusDaemon};
 
-use crate::upgrade_manager::{Resource, ResourceType, UPGRADE_MRG};
-use crate::EVENT_MANAGER_RUN;
+use crate::upgrade_manager::{Resource, ResourceType, UPGRADE_MGR};
+use crate::{EVENT_MANAGER_RUN, EXIT_EVTFD};
 
 struct FuseServer {
     server: Arc<Server<Arc<Vfs>>>,
     ch: FuseChannel,
     // read buffer for fuse requests
     buf: Vec<u8>,
-    evtfd: EventFd,
 }
 
 impl FuseServer {
     fn new(server: Arc<Server<Arc<Vfs>>>, se: &FuseSession, evtfd: EventFd) -> Result<FuseServer> {
         Ok(FuseServer {
             server,
-            ch: se.new_channel(evtfd.try_clone().unwrap())?,
+            ch: se.new_channel(evtfd)?,
             buf: Vec::with_capacity(se.bufsize()),
-            evtfd,
         })
     }
 
@@ -110,7 +110,17 @@ impl FusedevDaemon {
             .spawn(move || {
                 let _ = s.svc_loop();
                 EVENT_MANAGER_RUN.store(false, Ordering::Relaxed);
-                s.evtfd.write(1)
+                EXIT_EVTFD
+                    .lock()
+                    .unwrap()
+                    .deref()
+                    .as_ref()
+                    .unwrap()
+                    .write(1)
+                    .map_err(|e| {
+                        error!("Write event fd failed, {}", e);
+                        e
+                    })
             })
             .map_err(Error::ThreadSpawn)?;
         self.threads.push(Some(thread));
@@ -169,6 +179,7 @@ pub fn create_nydus_daemon(
     fs: Arc<Vfs>,
     supervisor: Option<OsString>,
     id: Option<String>,
+    thread_cnt: u32,
     upgrade: bool,
 ) -> Result<Arc<Mutex<dyn NydusDaemon + Send>>> {
     let mut se = FuseSession::new(Path::new(mountpoint), "rafs", "")?;
@@ -181,24 +192,42 @@ pub fn create_nydus_daemon(
 
     let daemon = Arc::new(Mutex::new(FusedevDaemon {
         session: se,
-        server: Arc::new(Server::new(fs)),
+        server: Arc::new(Server::new(fs.clone())),
         threads: Vec::new(),
         event_fd: EventFd::new(0).unwrap(),
         state: AtomicI32::new(DaemonState::INIT as i32),
     }));
 
+    let d = daemon.clone() as Arc<Mutex<dyn NydusDaemon + Send>>;
+    if !upgrade {
+        d.lock().unwrap().start(4).unwrap();
+    }
+
+    // FIXME: Must have a state machine to control flows.
+    let duration = time::Duration::from_millis(2000);
+
+    thread::sleep(duration);
+
     if let Some(id) = id {
         if let Some(supervisor) = supervisor {
-            let res = FuseDevFdRes::new(fuse_fd, supervisor.as_ref(), id, daemon.clone());
+            let opaque = ResOpaque {
+                version: 1,
+                daemon_id: id.clone(),
+                vfs_opts: fs.get_opts(),
+                thread_cnt,
+                opaque: Default::default(),
+            };
 
-            UPGRADE_MRG
+            let res = FuseDevFdRes::new(fuse_fd, supervisor.as_ref(), id, daemon, opaque, fs);
+
+            UPGRADE_MGR
                 .lock()
                 .expect("Not expect a poisoned Upgrade Manger lock!")
                 .add_resource(res, ResourceType::Fd);
         }
     }
 
-    Ok(daemon)
+    Ok(d)
 }
 
 #[derive(Default, Debug, Serialize, Deserialize)]
@@ -206,6 +235,9 @@ struct ResOpaque {
     version: u32,
     daemon_id: String,
     opaque: String,
+    thread_cnt: u32,
+    // Negotiate with kernel when do mount
+    vfs_opts: VfsOptions,
 }
 
 pub struct FuseDevFdRes {
@@ -214,6 +246,8 @@ pub struct FuseDevFdRes {
     stream: Arc<Mutex<Option<UnixStream>>>,
     daemon_id: String,
     daemon: Arc<Mutex<dyn NydusDaemon + Send>>,
+    opaque: ResOpaque,
+    vfs: Arc<Vfs>,
 }
 
 impl FuseDevFdRes {
@@ -222,6 +256,8 @@ impl FuseDevFdRes {
         uds: &OsStr,
         daemon_id: String,
         daemon: Arc<Mutex<dyn NydusDaemon + Send>>,
+        opaque: ResOpaque,
+        vfs: Arc<Vfs>,
     ) -> Self {
         FuseDevFdRes {
             fuse_fd: fd.map(AtomicI32::new).unwrap_or_else(|| AtomicI32::new(-1)),
@@ -229,6 +265,8 @@ impl FuseDevFdRes {
             stream: Default::default(),
             daemon_id,
             daemon,
+            opaque,
+            vfs,
         }
     }
 
@@ -250,13 +288,7 @@ impl FuseDevFdRes {
 
     fn send_fd(&self) -> Result<usize> {
         if let Some(ref sock) = self.stream.lock().unwrap().deref() {
-            let opaque = ResOpaque {
-                version: 1,
-                daemon_id: self.daemon_id.clone(),
-                ..Default::default()
-            };
-
-            let opaque_buf = serde_json::to_string(&opaque).unwrap().into_bytes();
+            let opaque_buf = serde_json::to_string(&self.opaque).unwrap().into_bytes();
             let mut fds: [RawFd; 8] = Default::default();
             fds[0] = self.fuse_fd.load(Ordering::Acquire);
             sock.send_with_fd(&opaque_buf, &fds)
@@ -317,14 +349,14 @@ impl Resource for FuseDevFdRes {
 
     fn load(&self) -> Result<()> {
         self.connect()?;
-        let _opaque = self.recv_fd()?;
+        let opaque = self.recv_fd()?;
         // TODO: Read config file again? or store config as opaque into backend?
         // FIXME:
         let mut d_guard = self.daemon.lock().unwrap();
         let d = d_guard.as_any().downcast_mut::<FusedevDaemon>().unwrap();
         d.session.file = unsafe { Some(File::from_raw_fd(self.fuse_fd.load(Ordering::Acquire))) };
-
-        d_guard.start(4)?;
+        self.vfs.swap_opts(opaque.vfs_opts);
+        d_guard.start(opaque.thread_cnt)?;
 
         Ok(())
     }

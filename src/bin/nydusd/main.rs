@@ -45,6 +45,7 @@ mod daemon;
 use daemon::{Error, NydusDaemonSubscriber};
 
 mod upgrade_manager;
+//use upgrade_manager::{Resource, ResourceType, UPGRADE_MGR};
 
 #[cfg(feature = "virtiofsd")]
 mod virtiofs;
@@ -274,11 +275,6 @@ fn main() -> Result<()> {
     let bootstrap = cmd_arguments.value_of("bootstrap").unwrap_or_default();
     // apisock means admin api socket support
     let apisock = cmd_arguments.value_of("apisock").unwrap_or_default();
-    // threads means number of fuse service threads
-    let threads: u32 = cmd_arguments
-        .value_of("threads")
-        .map(|n| n.parse().unwrap_or(1))
-        .unwrap_or(1);
     let rlimit_nofile_default = get_default_rlimit_nofile()?;
     let rlimit_nofile: rlim = cmd_arguments
         .value_of("rlimit-nofile")
@@ -340,7 +336,6 @@ fn main() -> Result<()> {
     let mut event_manager = EventManager::<Arc<dyn SubscriberWrapper>>::new().unwrap();
 
     let vfs = Arc::new(vfs);
-
     let daemon_subscriber = Arc::new(NydusDaemonSubscriber::new()?);
     let daemon_subscriber_id = event_manager.add_subscriber(daemon_subscriber);
 
@@ -356,11 +351,17 @@ fn main() -> Result<()> {
     let daemon = {
         let supervisor = cmd_arguments.value_of("supervisor").map(OsString::from);
         let daemon_id = cmd_arguments.value_of("id").map(|id| id.to_string());
+        // threads means number of fuse service threads
+        let threads: u32 = cmd_arguments
+            .value_of("threads")
+            .map(|n| n.parse().unwrap_or(1))
+            .unwrap_or(1);
         create_nydus_daemon(
             mountpoint,
             vfs.clone(),
             supervisor,
             daemon_id,
+            threads,
             cmd_arguments.is_present("upgrade"),
         )?
     };
@@ -392,16 +393,6 @@ fn main() -> Result<()> {
     *EXIT_EVTFD.lock().unwrap().deref_mut() = Some(exit_evtfd);
     nydus_utils::signal::register_signal_handler(signal::SIGINT, sig_exit);
     nydus_utils::signal::register_signal_handler(signal::SIGTERM, sig_exit);
-
-    // TODO: This is not a ideal solution, we'd better move nydus daemon event machine
-    // into Event Manager?
-
-    if !cmd_arguments.is_present("upgrade") {
-        if let Err(e) = daemon.lock().unwrap().start(threads) {
-            error!("Failed to start daemon: {:?}", e);
-            process::exit(1);
-        }
-    }
 
     while EVENT_MANAGER_RUN.load(Ordering::Relaxed) {
         // If event manager dies, so does nydusd

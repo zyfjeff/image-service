@@ -8,7 +8,7 @@ use std::io::Result;
 use std::sync::{Arc, Mutex};
 
 lazy_static! {
-    pub static ref UPGRADE_MRG: Mutex<UpgradeManager> = Mutex::new(UpgradeManager::new());
+    pub static ref UPGRADE_MGR: Mutex<UpgradeManager> = Mutex::new(UpgradeManager::new());
 }
 #[derive(Default)]
 pub struct UpgradeManager {

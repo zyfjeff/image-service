@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
 use crate::daemon::{DaemonState, NydusDaemon};
-use crate::upgrade_manager::{ResourceType, UPGRADE_MRG};
+use crate::upgrade_manager::{ResourceType, UPGRADE_MGR};
 use crate::SubscriberWrapper;
 
 pub struct ApiServer {
@@ -130,7 +130,7 @@ impl ApiServer {
     }
 
     fn send_fuse_fd() -> ApiResponse {
-        let mgr = UPGRADE_MRG.lock().expect("Lock is not poisoned");
+        let mgr = UPGRADE_MGR.lock().expect("Lock is not poisoned");
         if let Some(fuse_fd_res) = mgr.get_resource(ResourceType::Fd) {
             fuse_fd_res
                 .store()
@@ -142,7 +142,7 @@ impl ApiServer {
     }
 
     fn do_takeover() -> ApiResponse {
-        let mgr = UPGRADE_MRG.lock().expect("Lock is not poisoned");
+        let mgr = UPGRADE_MGR.lock().expect("Lock is not poisoned");
         if let Some(res) = mgr.get_resource(ResourceType::Fd) {
             res.load()
                 .map(|_| ApiResponsePayload::Empty)
