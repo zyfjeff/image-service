@@ -153,12 +153,18 @@ state_machine! {
     derive(Debug, Clone)
     FusedevStateMachine(Init)
 
-    Init(Mount) => Ready [StartService],
-    Init(Takeover) => Upgrade [Restore],
-    Ready(Stop) => Die [Umount],
+    Init => {
+        Mount => Ready [StartService],
+        Takeover => Upgrade [Restore],
+    },
+    Ready => {
+        Stop => Die [Umount],
+        InitMsg => Running [Persist],
+        Successful => Running,
+    },
     Upgrade(Successful) => Ready[StartService],
-    Ready(InitMsg) => Running [Persist],
     Running => {
+        InitMsg => Running,
         Exit => Interrupt [TerminateFuseService],
         Stop =>  Die [Umount],
     },
@@ -352,6 +358,7 @@ impl NydusDaemon for FusedevDaemon {
         // Daemon won't reach `Running` state until the first fuse message arrives.
         // So we don't try to send InitMsg event from here.
         self.on_event(FusedevStateMachineInput::Takeover)?;
+        self.on_event(FusedevStateMachineInput::Successful)?;
         self.on_event(FusedevStateMachineInput::Successful)?;
 
         Ok(())

@@ -186,6 +186,7 @@ impl ApiServer {
             .map_err(|e| ApiError::DaemonAbnormal(e.into()))?;
 
         // Should be reliable since this Api server works under event manager.
+        // TODO: http thread may be dead before any response back to supervisor.
         kill(Pid::this(), SIGTERM).unwrap_or_else(|e| error!("Send signal error. {}", e));
 
         Ok(ApiResponsePayload::Empty)
