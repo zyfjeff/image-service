@@ -396,10 +396,6 @@ pub fn create_nydus_daemon(
     *daemon.session.lock().unwrap() = Some(se);
 
     let d = daemon.clone() as Arc<dyn NydusDaemon + Send>;
-    if !upgrade {
-        d.start(threads_cnt)?;
-    }
-
     if let Some(id) = id {
         if let Some(supervisor) = supervisor {
             let opaque = ResOpaque {
