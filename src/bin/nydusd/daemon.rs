@@ -62,7 +62,6 @@ pub enum DaemonError {
 
 impl Display for DaemonError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        //use self::DaemonError::*;
         write!(f, "{:?}", self)
     }
 }

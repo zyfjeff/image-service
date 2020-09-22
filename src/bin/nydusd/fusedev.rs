@@ -36,7 +36,9 @@ use vmm_sys_util::eventfd::EventFd;
 use crate::daemon;
 use daemon::{DaemonError, DaemonResult, DaemonState, Error, NydusDaemon};
 
-use crate::upgrade_manager::{Resource, ResourceType, UPGRADE_MGR};
+use crate::upgrade_manager::{
+    Resource, ResourceType, UpgradeManagerError, UpgradeManagerResult, UPGRADE_MGR,
+};
 use crate::{EVENT_MANAGER_RUN, EXIT_EVTFD};
 
 struct FuseServer {
@@ -482,6 +484,7 @@ impl FuseDevFdRes {
             s.shutdown(Shutdown::Both)?;
             *guard = None;
         }
+
         Ok(())
     }
 
@@ -539,15 +542,23 @@ impl FuseDevFdRes {
 }
 
 impl Resource for FuseDevFdRes {
-    fn store(&self) -> Result<()> {
-        self.connect()?;
-        self.send_fd()?;
-        self.disconnect()
+    fn store(&self) -> UpgradeManagerResult<()> {
+        let d = self.daemon.lock().unwrap();
+
+        if d.get_state() != DaemonState::RUNNING {
+            return Err(UpgradeManagerError::NotReady);
+        }
+
+        self.connect().map_err(UpgradeManagerError::Connect)?;
+        self.send_fd().map_err(|_| UpgradeManagerError::SendFd)?;
+        self.disconnect().map_err(UpgradeManagerError::Disconnect)?;
+
+        Ok(())
     }
 
-    fn load(&self) -> Result<()> {
-        self.connect()?;
-        let opaque = self.recv_fd()?;
+    fn load(&self) -> UpgradeManagerResult<()> {
+        self.connect().map_err(UpgradeManagerError::Connect)?;
+        let opaque = self.recv_fd().map_err(|_| UpgradeManagerError::RecvFd)?;
         // TODO: Read config file again? or store config as opaque into backend?
         // FIXME:
         let mut d_guard = self.daemon.lock().unwrap();
@@ -555,7 +566,8 @@ impl Resource for FuseDevFdRes {
         d.session.as_mut().unwrap().file =
             unsafe { Some(File::from_raw_fd(self.fuse_fd.load(Ordering::Acquire))) };
         self.vfs.swap_opts(opaque.vfs_opts);
-        self.disconnect()
+        self.disconnect().map_err(UpgradeManagerError::Disconnect)?;
+        Ok(())
     }
 
     fn as_any(&self) -> &dyn Any {

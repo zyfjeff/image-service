@@ -5,7 +5,8 @@
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::io::Result;
+use std::fmt::{Display, Formatter};
+use std::io;
 use std::sync::{Arc, Mutex};
 
 lazy_static! {
@@ -22,6 +23,25 @@ pub enum ResourceType {
     Fd,
     Binary,
 }
+
+#[derive(Debug)]
+#[allow(dead_code)]
+pub enum UpgradeManagerError {
+    NoResource,
+    NotReady,
+    Connect(io::Error),
+    SendFd,
+    RecvFd,
+    Disconnect(io::Error),
+}
+
+impl Display for UpgradeManagerError {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+pub type UpgradeManagerResult<T> = std::result::Result<T, UpgradeManagerError>;
 
 #[allow(dead_code)]
 impl UpgradeManager {
@@ -45,7 +65,7 @@ impl UpgradeManager {
 }
 
 pub trait Resource {
-    fn load(&self) -> Result<()>;
-    fn store(&self) -> Result<()>;
+    fn load(&self) -> UpgradeManagerResult<()>;
+    fn store(&self) -> UpgradeManagerResult<()>;
     fn as_any(&self) -> &dyn Any;
 }

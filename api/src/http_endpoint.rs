@@ -12,6 +12,18 @@ use vmm_sys_util::eventfd::EventFd;
 
 use crate::http::{extract_query_part, EndpointHandler};
 
+#[derive(Debug)]
+pub enum DaemonErrorKind {
+    NotReady,
+    NoResource,
+    Connect(io::Error),
+    SendFd,
+    RecvFd,
+    Disconnect(io::Error),
+    Channel,
+    Other,
+}
+
 /// API errors are sent back from the VMM API server through the ApiResponse.
 #[derive(Debug)]
 pub enum ApiError {
@@ -30,7 +42,7 @@ pub enum ApiError {
     /// API response receive error
     ResponseRecv(RecvError),
 
-    DaemonAbnormal(String),
+    DaemonAbnormal(DaemonErrorKind),
 }
 pub type ApiResult<T> = std::result::Result<T, ApiError>;
 
@@ -202,7 +214,7 @@ pub fn export_files_patterns(
     }
 }
 
-pub fn send_fuse_fd(
+fn send_fuse_fd(
     api_evt: EventFd,
     to_api: Sender<ApiRequest>,
     from_api: &Receiver<ApiResponse>,
@@ -464,12 +476,15 @@ impl EndpointHandler for SendFuseFdHandler {
         from_api: &Receiver<ApiResponse>,
     ) -> Response {
         match req.method() {
-            Method::Put => {
-                match send_fuse_fd(api_notifier, to_api, from_api).map_err(HttpError::Upgrade) {
-                    Ok(_) => Response::new(Version::Http11, StatusCode::NoContent),
-                    Err(e) => error_response(e, StatusCode::InternalServerError),
-                }
-            }
+            Method::Put => match send_fuse_fd(api_notifier, to_api, from_api) {
+                Ok(_) => Response::new(Version::Http11, StatusCode::NoContent),
+                Err(e) => match e {
+                    ApiError::DaemonAbnormal(DaemonErrorKind::NotReady) => {
+                        error_response(HttpError::Upgrade(e), StatusCode::BadRequest)
+                    }
+                    _ => error_response(HttpError::Upgrade(e), StatusCode::InternalServerError),
+                },
+            },
             _ => Response::new(Version::Http11, StatusCode::BadRequest),
         }
     }

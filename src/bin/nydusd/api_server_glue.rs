@@ -8,12 +8,13 @@ use fuse_rs::api::Vfs;
 use nix::sys::signal::{kill, SIGTERM};
 use nix::unistd::Pid;
 use nydus_api::http_endpoint::{
-    ApiError, ApiRequest, ApiResponse, ApiResponsePayload, ApiResult, DaemonConf, DaemonInfo,
-    MountInfo,
+    ApiError, ApiRequest, ApiResponse, ApiResponsePayload, ApiResult, DaemonConf, DaemonErrorKind,
+    DaemonInfo, MountInfo,
 };
 use nydus_utils::{einval, enoent, eother, epipe, last_error};
 use rafs::fs::{Rafs, RafsConfig};
 use rafs::io_stats;
+use std::convert::From;
 use std::fs::File;
 use std::ops::Deref;
 use std::sync::mpsc::{Receiver, Sender};
@@ -23,7 +24,7 @@ use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 use crate::daemon::{DaemonError, NydusDaemon};
 #[cfg(fusedev)]
 use crate::fusedev::FusedevDaemon;
-use crate::upgrade_manager::{ResourceType, UPGRADE_MGR};
+use crate::upgrade_manager::{ResourceType, UpgradeManagerError, UPGRADE_MGR};
 use crate::SubscriberWrapper;
 
 pub struct ApiServer {
@@ -33,6 +34,30 @@ pub struct ApiServer {
 }
 
 type Result<T> = ApiResult<T>;
+
+impl From<UpgradeManagerError> for DaemonErrorKind {
+    fn from(e: UpgradeManagerError) -> Self {
+        use UpgradeManagerError::*;
+        match e {
+            NoResource => DaemonErrorKind::NoResource,
+            NotReady => DaemonErrorKind::NotReady,
+            Connect(e) => DaemonErrorKind::Connect(e),
+            SendFd => DaemonErrorKind::SendFd,
+            RecvFd => DaemonErrorKind::RecvFd,
+            Disconnect(e) => DaemonErrorKind::Disconnect(e),
+        }
+    }
+}
+
+impl From<DaemonError> for DaemonErrorKind {
+    fn from(e: DaemonError) -> Self {
+        use DaemonError::*;
+        match e {
+            NoResource => DaemonErrorKind::NoResource,
+            _ => DaemonErrorKind::Other,
+        }
+    }
+}
 
 impl ApiServer {
     pub fn new(
@@ -137,11 +162,11 @@ impl ApiServer {
         // Let Api error carry string rather than daemon error code.
         mgr.get_resource(ResourceType::Fd).map_or(
             Err(ApiError::DaemonAbnormal(
-                DaemonError::NoResource.to_string(),
+                UpgradeManagerError::NoResource.into(),
             )),
             |r| {
                 r.store()
-                    .map_err(|e| ApiError::DaemonAbnormal(e.to_string()))
+                    .map_err(|e| ApiError::DaemonAbnormal(e.into()))
                     .map(|_| ApiResponsePayload::Empty)
             },
         )
@@ -151,14 +176,14 @@ impl ApiServer {
         let d = self.daemon.lock().expect("Not expect poisoned lock");
         d.trigger_takeover()
             .map(|_| ApiResponsePayload::Empty)
-            .map_err(|e| ApiError::DaemonAbnormal(e.to_string()))
+            .map_err(|e| ApiError::DaemonAbnormal(e.into()))
     }
 
     fn do_exit(&self) -> ApiResponse {
         let d = self.daemon.lock().unwrap();
         d.trigger_exit()
             .map(|_| ApiResponsePayload::Empty)
-            .map_err(|e| ApiError::DaemonAbnormal(e.to_string()))?;
+            .map_err(|e| ApiError::DaemonAbnormal(e.into()))?;
 
         // Should be reliable since this Api server works under event manager.
         kill(Pid::this(), SIGTERM).unwrap_or_else(|e| error!("Send signal error. {}", e));
