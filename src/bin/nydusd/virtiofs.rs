@@ -174,21 +174,25 @@ impl VhostUserBackend for VhostUserFsBackendHandler {
 }
 
 struct VirtiofsDaemon<S: VhostUserBackend> {
-    daemon: VhostUserDaemon<S>,
+    daemon: Mutex<VhostUserDaemon<S>>,
     id: Option<String>,
     supervisor: Option<String>,
 }
 
 impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
-    fn start(&mut self, _: u32) -> Result<()> {
-        self.daemon.start().map_err(|e| einval!(e))
+    fn start(&self, _: u32) -> Result<()> {
+        self.daemon
+            .lock()
+            .unwrap()
+            .start()
+            .map_err(|e| einval!(e))
     }
 
-    fn wait(&mut self) -> Result<()> {
-        self.daemon.wait().map_err(|e| einval!(e))
+    fn wait(&self) -> Result<()> {
+        self.daemon.lock().unwrap().wait().map_err(|e| einval!(e))
     }
 
-    fn stop(&mut self) -> Result<()> {
+    fn stop(&self) -> Result<()> {
         /* TODO: find a way to kill backend
         let kill_evt = &backend.read().unwrap().kill_evt;
         if let Err(e) = kill_evt.write(1) {}
@@ -204,7 +208,7 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
         self.supervisor.clone()
     }
 
-    fn as_any(&mut self) -> &mut dyn Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
@@ -212,22 +216,22 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
         DaemonState::INIT
     }
 
-    fn set_state(&mut self, _state: DaemonState) -> DaemonState {
+    fn set_state(&self, _state: DaemonState) -> DaemonState {
         DaemonState::INIT
     }
 }
 
-pub fn create_nydus_daemon(sock: &str, fs: Arc<Vfs>) -> Result<Arc<Mutex<dyn NydusDaemon + Send>>> {
+pub fn create_nydus_daemon(sock: &str, fs: Arc<Vfs>) -> Result<Arc<dyn NydusDaemon + Send>> {
     let daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),
         sock.to_owned(),
         Arc::new(RwLock::new(VhostUserFsBackendHandler::new(fs)?)),
     )
     .map_err(|e| Error::DaemonFailure(format!("{:?}", e)))?;
-    Ok(Arc::new(Mutex::new(VirtiofsDaemon {
+    Ok(Arc::new(VirtiofsDaemon {
         sock: sock.to_owned(),
-        daemon,
+        daemon: Mutex::new(daemon),
         id: None,
         supervisor: None,
-    })))
+    }))
 }

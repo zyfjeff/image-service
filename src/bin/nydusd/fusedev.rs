@@ -9,7 +9,7 @@ use std::any::Any;
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io::Result;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -44,7 +44,7 @@ struct FuseServer {
     ch: FuseChannel,
     // read buffer for fuse requests
     buf: Vec<u8>,
-    trigger: Sender<FusedevStateMachineInput>,
+    trigger: Arc<Mutex<Sender<FusedevStateMachineInput>>>,
 }
 
 type Trigger = Sender<FusedevStateMachineInput>;
@@ -54,7 +54,7 @@ impl FuseServer {
         server: Arc<Server<Arc<Vfs>>>,
         se: &FuseSession,
         evtfd: EventFd,
-        trigger: Sender<FusedevStateMachineInput>,
+        trigger: Arc<Mutex<Sender<FusedevStateMachineInput>>>,
     ) -> Result<FuseServer> {
         Ok(FuseServer {
             server,
@@ -102,6 +102,8 @@ impl FuseServer {
             // negotiated capabilities. Then we can store those capabilities.
             FUSE_INIT.call_once(|| {
                 self.trigger
+                    .lock()
+                    .unwrap()
                     .send(FusedevStateMachineInput::InitMsg)
                     .unwrap()
             });
@@ -114,12 +116,12 @@ impl FuseServer {
 pub struct FusedevDaemon {
     server: Arc<Server<Arc<Vfs>>>,
     vfs: Arc<Vfs>,
-    pub session: Option<FuseSession>,
-    threads: Vec<Option<thread::JoinHandle<Result<()>>>>,
+    pub session: Mutex<Option<FuseSession>>,
+    threads: Mutex<Vec<Option<thread::JoinHandle<Result<()>>>>>,
     event_fd: EventFd,
     state: AtomicI32,
     pub threads_cnt: u32,
-    trigger: Trigger,
+    trigger: Arc<Mutex<Trigger>>,
     pub supervisor: Option<String>,
     pub id: Option<String>,
 }
@@ -143,7 +145,7 @@ pub struct FusedevDaemon {
 /// `Die` state means the whole nydusd process is going to die.
 struct FusedevDaemonSM {
     sm: StateMachine<FusedevStateMachine>,
-    daemon: Arc<Mutex<FusedevDaemon>>,
+    daemon: Arc<FusedevDaemon>,
     event_collector: Receiver<FusedevStateMachineInput>,
 }
 
@@ -164,7 +166,7 @@ state_machine! {
 }
 
 impl FusedevDaemonSM {
-    fn new(d: Arc<Mutex<FusedevDaemon>>, rx: Receiver<FusedevStateMachineInput>) -> Self {
+    fn new(d: Arc<FusedevDaemon>, rx: Receiver<FusedevStateMachineInput>) -> Self {
         Self {
             sm: StateMachine::new(),
             daemon: d,
@@ -187,7 +189,7 @@ impl FusedevDaemonSM {
                     .consume(&event)
                     .expect("Daemon state machine goes insane, this is critical error!");
 
-                let mut d = self.daemon.lock().unwrap();
+                let d = self.daemon.as_ref();
                 let cnt = d.threads_cnt;
                 let cur = self.sm.state();
                 info!(
@@ -202,16 +204,17 @@ impl FusedevDaemonSM {
                         }
                         FusedevStateMachineOutput::Persist => d.persist(),
                         // A proper state machine can ensure that `session` must be contained!
-                        FusedevStateMachineOutput::Umount => d.session.as_mut().unwrap().umount(),
+                        FusedevStateMachineOutput::Umount => {
+                            d.session.lock().unwrap().as_mut().unwrap().umount()
+                        }
                         FusedevStateMachineOutput::TerminateFuseService => {
                             d.set_state(DaemonState::INTERRUPT);
                             d.interrupt();
-                            d.wait()
+                            Ok(())
                         }
                         FusedevStateMachineOutput::Restore => {
                             d.set_state(DaemonState::UPGRADE);
                             // Drop lock here as restore also needs daemon lock
-                            drop(d);
                             let mgr = UPGRADE_MGR.lock().expect("Lock is not poisoned");
                             mgr.get_resource(ResourceType::Fd)
                                 .map_or(Err(DaemonError::NoResource), |r| {
@@ -231,10 +234,10 @@ impl FusedevDaemonSM {
 }
 
 impl FusedevDaemon {
-    fn kick_one_server(&mut self, t: Trigger) -> Result<()> {
+    fn kick_one_server(&self, t: Arc<Mutex<Trigger>>) -> Result<()> {
         let mut s = FuseServer::new(
             self.server.clone(),
-            self.session.as_ref().unwrap(),
+            self.session.lock().unwrap().as_ref().unwrap(),
             // Clone event fd must succeed, otherwise fusedev daemon should not work.
             self.event_fd.try_clone().unwrap(),
             t,
@@ -258,7 +261,7 @@ impl FusedevDaemon {
                     })
             })
             .map_err(Error::ThreadSpawn)?;
-        self.threads.push(Some(thread));
+        self.threads.lock().unwrap().push(Some(thread));
         Ok(())
     }
 
@@ -278,24 +281,29 @@ impl FusedevDaemon {
     }
 
     fn on_event(&self, event: FusedevStateMachineInput) -> DaemonResult<()> {
-        self.trigger.send(event).map_err(|_| DaemonError::Channel)
+        self.trigger
+            .lock()
+            .unwrap()
+            .send(event)
+            .map_err(|_| DaemonError::Channel)
     }
 }
 
 impl NydusDaemon for FusedevDaemon {
-    fn as_any(&mut self) -> &mut dyn Any {
+    fn as_any(&self) -> &dyn Any {
         self
     }
 
-    fn start(&mut self, cnt: u32) -> Result<()> {
+    fn start(&self, cnt: u32) -> Result<()> {
         for _ in 0..cnt {
             self.kick_one_server(self.trigger.clone())?;
         }
         Ok(())
     }
 
-    fn wait(&mut self) -> Result<()> {
-        for t in &mut self.threads {
+    fn wait(&self) -> Result<()> {
+        let mut threads = self.threads.lock().unwrap();
+        for t in threads.deref_mut() {
             if let Some(handle) = t.take() {
                 handle.join().map_err(|_| Error::WaitDaemon)??;
             }
@@ -303,7 +311,7 @@ impl NydusDaemon for FusedevDaemon {
         Ok(())
     }
 
-    fn stop(&mut self) -> Result<()> {
+    fn stop(&self) -> Result<()> {
         self.interrupt();
         self.on_event(FusedevStateMachineInput::Stop)
             .map_err(|e| eother!(e))
@@ -322,7 +330,7 @@ impl NydusDaemon for FusedevDaemon {
         self.event_fd.write(1).expect("Stop fuse service loop");
     }
 
-    fn set_state(&mut self, state: DaemonState) -> DaemonState {
+    fn set_state(&self, state: DaemonState) -> DaemonState {
         let old = self.get_state();
         self.state.store(state as i32, Ordering::Relaxed);
         old
@@ -334,6 +342,9 @@ impl NydusDaemon for FusedevDaemon {
 
     fn trigger_exit(&self) -> DaemonResult<()> {
         self.on_event(FusedevStateMachineInput::Exit)?;
+        // Ensure all fuse threads have be terminated thus this nydusd won't
+        // race fuse messages when upgrading.
+        self.wait().map_err(|_| DaemonError::ServiceStop)?;
         Ok(())
     }
 
@@ -354,20 +365,20 @@ pub fn create_nydus_daemon(
     id: Option<String>,
     threads_cnt: u32,
     upgrade: bool,
-) -> Result<Arc<Mutex<dyn NydusDaemon + Send>>> {
+) -> Result<Arc<dyn NydusDaemon + Send>> {
     let (trigger, rx) = channel::<FusedevStateMachineInput>();
-    let daemon = Arc::new(Mutex::new(FusedevDaemon {
-        session: None,
+    let daemon = Arc::new(FusedevDaemon {
+        session: Mutex::new(None),
         server: Arc::new(Server::new(fs.clone())),
         vfs: fs.clone(),
-        threads: Vec::new(),
+        threads: Mutex::new(Vec::new()),
         event_fd: EventFd::new(0).unwrap(),
         state: AtomicI32::new(DaemonState::INIT as i32),
         threads_cnt,
-        trigger,
+        trigger: Arc::new(Mutex::new(trigger)),
         supervisor: supervisor.clone(),
         id: id.clone(),
-    }));
+    });
 
     let machine = FusedevDaemonSM::new(daemon.clone(), rx);
     machine.kick_state_machine()?;
@@ -378,17 +389,15 @@ pub fn create_nydus_daemon(
         se.mount()?;
         fuse_fd = Some(se.expose_fuse_fd());
         daemon
-            .lock()
-            .unwrap()
             .on_event(FusedevStateMachineInput::Mount)
             .map_err(|e| eother!(e))?
     }
 
-    daemon.lock().unwrap().session = Some(se);
+    *daemon.session.lock().unwrap() = Some(se);
 
-    let d = daemon.clone() as Arc<Mutex<dyn NydusDaemon + Send>>;
+    let d = daemon.clone() as Arc<dyn NydusDaemon + Send>;
     if !upgrade {
-        d.lock().expect("Not poisoned").start(threads_cnt)?;
+        d.start(threads_cnt)?;
     }
 
     if let Some(id) = id {
@@ -427,7 +436,7 @@ pub struct FuseDevFdRes {
     fuse_fd: AtomicI32,
     uds_path: OsString,
     daemon_id: String,
-    daemon: Arc<Mutex<dyn NydusDaemon + Send>>,
+    daemon: Arc<dyn NydusDaemon + Send + Sync>,
     opaque: ResOpaque,
     vfs: Arc<Vfs>,
 }
@@ -450,7 +459,7 @@ impl FuseDevFdRes {
         fd: Option<RawFd>,
         uds: &OsStr,
         daemon_id: String,
-        daemon: Arc<Mutex<dyn NydusDaemon + Send>>,
+        daemon: Arc<dyn NydusDaemon + Send + Sync>,
         opaque: ResOpaque,
         vfs: Arc<Vfs>,
     ) -> Self {
@@ -509,8 +518,12 @@ impl FuseDevFdRes {
 }
 
 impl Resource for FuseDevFdRes {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn store(&self) -> UpgradeManagerResult<()> {
-        let d = self.daemon.lock().unwrap();
+        let d = self.daemon.as_ref();
 
         if d.get_state() != DaemonState::RUNNING {
             return Err(UpgradeManagerError::NotReady);
@@ -532,18 +545,17 @@ impl Resource for FuseDevFdRes {
             .map_err(|_| UpgradeManagerError::RecvFd)?;
         // TODO: Read config file again? or store config as opaque into backend?
         // FIXME:
-        let mut d_guard = self.daemon.lock().unwrap();
-        let d = d_guard.as_any().downcast_mut::<FusedevDaemon>().unwrap();
-        d.session.as_mut().unwrap().file =
+        let d = self
+            .daemon
+            .as_any()
+            .downcast_ref::<FusedevDaemon>()
+            .unwrap();
+        d.session.lock().unwrap().as_mut().unwrap().file =
             unsafe { Some(File::from_raw_fd(self.fuse_fd.load(Ordering::Acquire))) };
         self.vfs.swap_opts(opaque.vfs_opts);
 
         // TODO: Ensure stream can be disconnected when being destroyed.
 
         Ok(())
-    }
-
-    fn as_any(&self) -> &dyn Any {
-        self
     }
 }

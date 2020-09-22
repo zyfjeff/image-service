@@ -18,7 +18,7 @@ use std::convert::From;
 use std::fs::File;
 use std::ops::Deref;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
 use crate::daemon::{DaemonError, NydusDaemon};
@@ -30,7 +30,7 @@ use crate::SubscriberWrapper;
 pub struct ApiServer {
     version: String,
     to_http: Sender<ApiResponse>,
-    daemon: Arc<Mutex<dyn NydusDaemon>>,
+    daemon: Arc<dyn NydusDaemon>,
 }
 
 type Result<T> = ApiResult<T>;
@@ -63,7 +63,7 @@ impl ApiServer {
     pub fn new(
         version: String,
         to_http: Sender<ApiResponse>,
-        daemon: Arc<Mutex<dyn NydusDaemon>>,
+        daemon: Arc<dyn NydusDaemon>,
     ) -> std::io::Result<Self> {
         Ok(ApiServer {
             version,
@@ -106,7 +106,7 @@ impl ApiServer {
     }
 
     fn daemon_info(&self) -> ApiResponse {
-        let d = self.daemon.lock().expect("Not expect poisoned lock");
+        let d = self.daemon.as_ref();
 
         let response = DaemonInfo {
             version: self.version.to_string(),
@@ -173,14 +173,14 @@ impl ApiServer {
     }
 
     fn do_takeover(&self) -> ApiResponse {
-        let d = self.daemon.lock().expect("Not expect poisoned lock");
+        let d = self.daemon.as_ref();
         d.trigger_takeover()
             .map(|_| ApiResponsePayload::Empty)
             .map_err(|e| ApiError::DaemonAbnormal(e.into()))
     }
 
     fn do_exit(&self) -> ApiResponse {
-        let d = self.daemon.lock().unwrap();
+        let d = self.daemon.as_ref();
         d.trigger_exit()
             .map(|_| ApiResponsePayload::Empty)
             .map_err(|e| ApiError::DaemonAbnormal(e.into()))?;

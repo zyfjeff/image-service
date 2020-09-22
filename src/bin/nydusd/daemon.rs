@@ -58,6 +58,7 @@ pub enum DaemonError {
     NoResource,
     RestoreState,
     Channel,
+    ServiceStop,
 }
 
 impl Display for DaemonError {
@@ -69,13 +70,13 @@ impl Display for DaemonError {
 pub type DaemonResult<T> = std::result::Result<T, DaemonError>;
 
 pub trait NydusDaemon {
-    fn start(&mut self, cnt: u32) -> Result<()>;
-    fn wait(&mut self) -> Result<()>;
-    fn stop(&mut self) -> Result<()>;
-    fn as_any(&mut self) -> &mut dyn Any;
+    fn start(&self, cnt: u32) -> Result<()>;
+    fn wait(&self) -> Result<()>;
+    fn stop(&self) -> Result<()>;
+    fn as_any(&self) -> &dyn Any;
     fn interrupt(&self) {}
     fn get_state(&self) -> DaemonState;
-    fn set_state(&mut self, s: DaemonState) -> DaemonState;
+    fn set_state(&self, s: DaemonState) -> DaemonState;
     fn trigger_exit(&self) -> DaemonResult<()> {
         Ok(())
     }

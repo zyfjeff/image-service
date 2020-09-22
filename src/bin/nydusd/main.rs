@@ -396,11 +396,11 @@ fn main() -> Result<()> {
         event_manager.run().unwrap();
     }
 
-    if let Err(e) = daemon.lock().unwrap().stop() {
+    if let Err(e) = daemon.stop() {
         error!("Error shutting down worker thread: {:?}", e)
     }
 
-    if let Err(e) = daemon.lock().unwrap().wait() {
+    if let Err(e) = daemon.wait() {
         error!("Waiting for daemon failed: {:?}", e);
     }
 
