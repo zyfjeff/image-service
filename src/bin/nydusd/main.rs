@@ -24,6 +24,7 @@ use std::sync::{
     mpsc::channel,
     Arc, Mutex,
 };
+use std::thread;
 use std::{io, process};
 
 use clap::{App, Arg};
@@ -365,6 +366,8 @@ fn main() -> Result<()> {
     };
     info!("starting fuse daemon");
 
+    let mut http_thread: Option<thread::JoinHandle<Result<()>>> = None;
+    let http_exit_evtfd = EventFd::new(0).unwrap();
     if apisock != "" {
         let vfs = Arc::clone(&vfs);
 
@@ -383,7 +386,14 @@ fn main() -> Result<()> {
             .subscriber_mut(api_server_id)
             .unwrap()
             .get_event_fd()?;
-        start_http_thread(apisock, evtfd, to_api, from_api)?;
+        let ret = start_http_thread(
+            apisock,
+            evtfd,
+            to_api,
+            from_api,
+            http_exit_evtfd.try_clone().unwrap(),
+        )?;
+        http_thread = Some(ret);
         info!("api server running at {}", apisock);
     }
 
@@ -394,6 +404,16 @@ fn main() -> Result<()> {
     while EVENT_MANAGER_RUN.load(Ordering::Relaxed) {
         // If event manager dies, so does nydusd
         event_manager.run().unwrap();
+    }
+
+    if let Some(t) = http_thread {
+        http_exit_evtfd.write(1).unwrap();
+        if t.join()
+            .map(|r| r.map_err(|e| error!("Thread execution error. {:?}", e)))
+            .is_err()
+        {
+            error!("Join http thread failed.");
+        }
     }
 
     if let Err(e) = daemon.stop() {

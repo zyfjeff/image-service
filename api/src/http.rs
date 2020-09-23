@@ -3,11 +3,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::clone::Clone;
 use std::collections::HashMap;
 use std::io::Result;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
+
+use std::os::unix::io::AsRawFd;
 
 use http::uri::Uri;
 use url::Url;
@@ -120,42 +123,80 @@ pub fn extract_query_part(req: &Request, key: &str) -> Option<String> {
     v
 }
 
+const EVENT_UNIX_SOCKET: u64 = 1;
+const EVENT_HTTP_DIE: u64 = 2;
+
 pub fn start_http_thread(
     path: &str,
     evt_fd: EventFd,
     to_api: Sender<ApiRequest>,
     from_api: Receiver<ApiResponse>,
+    exit_evtfd: EventFd,
 ) -> Result<thread::JoinHandle<Result<()>>> {
     std::fs::remove_file(path).unwrap_or_default();
     let socket_path = PathBuf::from(path);
 
-    thread::Builder::new()
+    let thread = thread::Builder::new()
         .name("http-server".to_string())
         .spawn(move || {
+            let epoll_fd = epoll::create(true).unwrap();
+
             let mut server = HttpServer::new(socket_path).unwrap();
             server.start_server().unwrap();
+            epoll::ctl(
+                epoll_fd,
+                epoll::ControlOptions::EPOLL_CTL_ADD,
+                server.epoll_fd(),
+                epoll::Event::new(epoll::Events::EPOLLIN, EVENT_UNIX_SOCKET),
+            )?;
+
+            epoll::ctl(
+                epoll_fd,
+                epoll::ControlOptions::EPOLL_CTL_ADD,
+                exit_evtfd.as_raw_fd(),
+                epoll::Event::new(epoll::Events::EPOLLIN, EVENT_HTTP_DIE),
+            )?;
+
+            let mut events = vec![epoll::Event::new(epoll::Events::empty(), 0); 100];
+
             info!("http server started");
-            loop {
-                match server.requests() {
-                    Ok(request_vec) => {
-                        for server_request in request_vec {
-                            server
-                                .respond(server_request.process(|request| {
-                                    handle_http_request(request, &evt_fd, &to_api, &from_api)
-                                }))
-                                .or_else(|e| -> Result<()> {
-                                    error!("HTTP server error on response: {}", e);
-                                    Ok(())
-                                })?;
-                        }
-                    }
-                    Err(e) => {
-                        error!(
-                            "HTTP server error on retrieving incoming request. Error: {}",
-                            e
-                        );
+
+            'wait: loop {
+                let num = epoll::wait(epoll_fd, -1, events.as_mut_slice()).map_err(|e| {
+                    error!("Wait event error. {:?}", e);
+                    e
+                })?;
+
+                for event in &events[..num] {
+                    match event.data {
+                        EVENT_UNIX_SOCKET => match server.requests() {
+                            Ok(request_vec) => {
+                                for server_request in request_vec {
+                                    server
+                                        .respond(server_request.process(|request| {
+                                            handle_http_request(
+                                                request, &evt_fd, &to_api, &from_api,
+                                            )
+                                        }))
+                                        .or_else(|e| -> Result<()> {
+                                            error!("HTTP server error on response: {}", e);
+                                            Ok(())
+                                        })?;
+                                }
+                            }
+                            Err(e) => {
+                                error!(
+                                    "HTTP server error on retrieving incoming request. Error: {}",
+                                    e
+                                );
+                            }
+                        },
+                        EVENT_HTTP_DIE => break 'wait Ok(()),
+                        _ => error!("Invalid event"),
                     }
                 }
             }
-        })
+        })?;
+
+    Ok(thread)
 }

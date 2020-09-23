@@ -767,6 +767,7 @@ checksum = "b8f8bdf33df195859076e54ab11ee78a1b208382d3a26ec40d142ffc1ecc49ef"
 name = "nydus-api"
 version = "0.1.0"
 dependencies = [
+ "epoll",
  "http",
  "lazy_static 1.4.0",
  "log",
