@@ -172,6 +172,12 @@ impl ApiServer {
         )
     }
 
+    /// External supervisor wants this instance to fetch `/dev/fuse` fd. Before
+    /// invoking this method, supervisor should already listens on a Unix socket and
+    /// waits for connection from this instance. Then supervisor should send the *fd*
+    /// back. Note, the http response does not mean this process already finish Takeover
+    /// procedure. Supervisor has to continuously query the state of Nydusd until it gets
+    /// to *RUNNING*, which means new Nydusd has successfully serve as a fuse server.
     fn do_takeover(&self) -> ApiResponse {
         let d = self.daemon.as_ref();
         d.trigger_takeover()
@@ -179,6 +185,12 @@ impl ApiServer {
             .map_err(|e| ApiError::DaemonAbnormal(e.into()))
     }
 
+    /// External supervisor wants this instance to exit. But it can't just die leave
+    /// some pending or in-flight fuse messages un-handled. So this method guarantees
+    /// all fuse messages read from kernel are handled and replies are sent back.
+    /// Before http response are sent back, this must can ensure that current process
+    /// has absolutely stopped. Otherwise, multiple processes might read from single
+    /// fuse session simultaneously.
     fn do_exit(&self) -> ApiResponse {
         let d = self.daemon.as_ref();
         d.trigger_exit()
@@ -186,7 +198,6 @@ impl ApiServer {
             .map_err(|e| ApiError::DaemonAbnormal(e.into()))?;
 
         // Should be reliable since this Api server works under event manager.
-        // TODO: http thread may be dead before any response back to supervisor.
         kill(Pid::this(), SIGTERM).unwrap_or_else(|e| error!("Send signal error. {}", e));
 
         Ok(ApiResponsePayload::Empty)

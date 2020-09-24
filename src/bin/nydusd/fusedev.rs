@@ -136,9 +136,9 @@ pub struct FusedevDaemon {
 /// Nydusd can as well transit to `Upgrade` state from `Init` when getting started, which
 /// only happens during live upgrade progress. Then we don't have to do kernel mount again
 /// to set up a session but try to reuse a fuse fd from somewhere else. In this state, we
-/// don't have in hand event to send to state machine to trigger state transition. But
-/// a real fuse message except `init` will transit the state in nature, which means the
-/// session also begin to serve from the new nydusd process.
+/// try to push `Successful` event to state machine to trigger state transition. But
+/// a real fuse message except `init` may already transit the state in nature, which means the
+/// session already begin to serve within the new nydusd process.
 /// `Interrupt` state means nydusd has shutdown fuse server, which means no more message will
 /// be read from kernel and handled and no pending and in-flight fuse message exists. But the
 /// nydusd daemon should be alive and wait for coming events.
@@ -161,6 +161,9 @@ state_machine! {
         Stop => Die [Umount],
         InitMsg => Running [Persist],
         Successful => Running,
+        // This should rarely happen because if supervisor does not already obtain
+        // internal upgrade related stuff, why should it try to kill me?
+        Exit => Interrupt [TerminateFuseService],
     },
     Upgrade(Successful) => Ready[StartService],
     Running => {
@@ -220,7 +223,6 @@ impl FusedevDaemonSM {
                         }
                         FusedevStateMachineOutput::Restore => {
                             d.set_state(DaemonState::UPGRADE);
-                            // Drop lock here as restore also needs daemon lock
                             let mgr = UPGRADE_MGR.lock().expect("Lock is not poisoned");
                             mgr.get_resource(ResourceType::Fd)
                                 .map_or(Err(DaemonError::NoResource), |r| {
@@ -536,8 +538,6 @@ impl Resource for FuseDevFdRes {
         self.send_fd(&stream)
             .map_err(|_| UpgradeManagerError::SendFd)?;
 
-        // TODO: Ensure stream can be disconnected when being destroyed.
-
         Ok(())
     }
 
@@ -547,7 +547,6 @@ impl Resource for FuseDevFdRes {
             .recv_fd(&stream)
             .map_err(|_| UpgradeManagerError::RecvFd)?;
         // TODO: Read config file again? or store config as opaque into backend?
-        // FIXME:
         let d = self
             .daemon
             .as_any()
@@ -556,8 +555,6 @@ impl Resource for FuseDevFdRes {
         d.session.lock().unwrap().as_mut().unwrap().file =
             unsafe { Some(File::from_raw_fd(self.fuse_fd.load(Ordering::Acquire))) };
         self.vfs.swap_opts(opaque.vfs_opts);
-
-        // TODO: Ensure stream can be disconnected when being destroyed.
 
         Ok(())
     }
