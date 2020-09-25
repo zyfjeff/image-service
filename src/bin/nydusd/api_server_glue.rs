@@ -3,10 +3,18 @@
 //
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
+use std::convert::From;
+use std::fs::File;
+use std::ops::Deref;
+use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
+
 use event_manager::{EventOps, EventSubscriber, Events};
 use fuse_rs::api::Vfs;
 use nix::sys::signal::{kill, SIGTERM};
 use nix::unistd::Pid;
+use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
+
 use nydus_api::http_endpoint::{
     ApiError, ApiRequest, ApiResponse, ApiResponsePayload, ApiResult, DaemonConf, DaemonErrorKind,
     DaemonInfo, MountInfo,
@@ -14,17 +22,10 @@ use nydus_api::http_endpoint::{
 use nydus_utils::{einval, enoent, eother, epipe, last_error};
 use rafs::fs::{Rafs, RafsConfig};
 use rafs::io_stats;
-use std::convert::From;
-use std::fs::File;
-use std::ops::Deref;
-use std::sync::mpsc::{Receiver, Sender};
-use std::sync::Arc;
-use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
 use crate::daemon::{DaemonError, NydusDaemon};
 #[cfg(fusedev)]
 use crate::fusedev::FusedevDaemon;
-use crate::upgrade_manager::{ResourceType, UpgradeManagerError, UPGRADE_MGR};
 use crate::SubscriberWrapper;
 
 pub struct ApiServer {
@@ -35,25 +36,14 @@ pub struct ApiServer {
 
 type Result<T> = ApiResult<T>;
 
-impl From<UpgradeManagerError> for DaemonErrorKind {
-    fn from(e: UpgradeManagerError) -> Self {
-        use UpgradeManagerError::*;
-        match e {
-            NoResource => DaemonErrorKind::NoResource,
-            NotReady => DaemonErrorKind::NotReady,
-            Connect(e) => DaemonErrorKind::Connect(e),
-            SendFd => DaemonErrorKind::SendFd,
-            RecvFd => DaemonErrorKind::RecvFd,
-            Disconnect(e) => DaemonErrorKind::Disconnect(e),
-        }
-    }
-}
-
 impl From<DaemonError> for DaemonErrorKind {
     fn from(e: DaemonError) -> Self {
         use DaemonError::*;
         match e {
             NoResource => DaemonErrorKind::NoResource,
+            NotReady => DaemonErrorKind::NotReady,
+            SendFd => DaemonErrorKind::SendFd,
+            RecvFd => DaemonErrorKind::RecvFd,
             _ => DaemonErrorKind::Other,
         }
     }
@@ -89,7 +79,7 @@ impl ApiServer {
             ApiRequest::ExportGlobalMetrics(id) => Self::export_global_metrics(id),
             ApiRequest::ExportFilesMetrics(id) => Self::export_files_metrics(id),
             ApiRequest::ExportAccessPatterns(id) => Self::export_access_patterns(id),
-            ApiRequest::SendFuseFd => Self::send_fuse_fd(),
+            ApiRequest::SendFuseFd => self.send_fuse_fd(),
             ApiRequest::Takeover => self.do_takeover(),
             ApiRequest::Exit => self.do_exit(),
         };
@@ -156,20 +146,12 @@ impl ApiServer {
             .map_err(|_| ApiError::ResponsePayloadType)
     }
 
-    fn send_fuse_fd() -> ApiResponse {
-        let mgr = UPGRADE_MGR.lock().expect("Lock is not poisoned");
+    fn send_fuse_fd(&self) -> ApiResponse {
+        let d = self.daemon.as_ref();
 
-        // Let Api error carry string rather than daemon error code.
-        mgr.get_resource(ResourceType::Fd).map_or(
-            Err(ApiError::DaemonAbnormal(
-                UpgradeManagerError::NoResource.into(),
-            )),
-            |r| {
-                r.store()
-                    .map_err(|e| ApiError::DaemonAbnormal(e.into()))
-                    .map(|_| ApiResponsePayload::Empty)
-            },
-        )
+        d.save()
+            .map(|_| ApiResponsePayload::Empty)
+            .map_err(|e| ApiError::DaemonAbnormal(e.into()))
     }
 
     /// External supervisor wants this instance to fetch `/dev/fuse` fd. Before

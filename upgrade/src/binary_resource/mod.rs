@@ -6,7 +6,6 @@
 pub mod backend;
 
 use std::io::Result;
-use std::sync::{Arc, Mutex};
 
 use snapshot::{Persist, Snapshot};
 use versionize::Versionize;
@@ -17,23 +16,19 @@ use backend::{Backend, BackendType};
 use nydus_utils::einval;
 
 pub struct BinaryResource {
-    backend: Arc<Mutex<dyn Backend>>,
+    backend: Box<dyn Backend>,
 }
 
 impl BinaryResource {
-    pub fn new(name: &str, backend_type: Option<BackendType>) -> Result<Self> {
+    pub fn new(name: &str, backend_type: BackendType) -> Result<Self> {
         let backend = match backend_type {
-            x if (x == Some(BackendType::SharedMemory) || x == None) => {
-                Arc::new(Mutex::new(SharedMemoryBackend::new(name)?))
-            }
-            _ => unimplemented!(),
+            BackendType::SharedMemory => Box::new(SharedMemoryBackend::new(name)?),
         };
         Ok(Self { backend })
     }
 
     pub fn destroy(&mut self) -> Result<()> {
-        let mut backend = self.backend.lock().unwrap();
-        backend.destroy()
+        self.backend.destroy()
     }
 }
 
@@ -50,13 +45,12 @@ impl Resource for BinaryResource {
         let mut snapshot = Snapshot::new(vm, latest_version);
 
         let state = obj.save();
-        let mut backend = self.backend.lock().unwrap();
 
         snapshot
-            .save_with_crc64(&mut backend.writer()?, &state)
+            .save_with_crc64(&mut self.backend.writer()?, &state)
             .map_err(|e| einval!(e))?;
 
-        backend.reset()
+        self.backend.reset()
     }
 
     fn restore<'a, O, V, A, D>(&mut self, args: A) -> Result<O>
@@ -66,14 +60,11 @@ impl Resource for BinaryResource {
         D: std::fmt::Debug,
     {
         let vm = V::version_map();
-        let mut backend = self.backend.lock().unwrap();
 
-        let restored = Snapshot::load_with_crc64(&mut backend.reader()?, vm).map_err(|e| {
+        let restored = Snapshot::load_with_crc64(&mut self.backend.reader()?, vm).map_err(|e| {
             warn!("binary resource: failed to restore from backend: {}", e);
             einval!(e)
         })?;
-
-        drop(backend);
 
         O::restore(args, &restored).map_err(|e| einval!(e))
     }
@@ -163,7 +154,8 @@ pub mod tests {
             baz: 100,
         };
 
-        let mut binary_resource = BinaryResource::new("nydus-binary-resource-test", None).unwrap();
+        let mut binary_resource =
+            BinaryResource::new("nydus-binary-resource-test", BackendType::default()).unwrap();
 
         // Clean shared memory file first
         binary_resource.destroy().unwrap();

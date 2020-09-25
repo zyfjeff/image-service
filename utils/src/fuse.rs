@@ -75,8 +75,8 @@ impl FuseSession {
         Ok(())
     }
 
-    pub fn expose_fuse_fd(&self) -> RawFd {
-        self.fuse_fd.unwrap()
+    pub fn expose_fuse_fd(&self) -> Option<RawFd> {
+        self.fuse_fd
     }
 
     /// destroy a fuse session

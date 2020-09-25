@@ -18,3 +18,9 @@ pub trait Backend: Sync + Send {
 pub enum BackendType {
     SharedMemory,
 }
+
+impl Default for BackendType {
+    fn default() -> Self {
+        Self::SharedMemory
+    }
+}

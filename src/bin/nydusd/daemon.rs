@@ -55,8 +55,10 @@ impl From<i32> for DaemonState {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum DaemonError {
+    NotReady,
     NoResource,
-    RestoreState,
+    SendFd,
+    RecvFd,
     Channel,
     ServiceStop,
 }
@@ -85,6 +87,8 @@ pub trait NydusDaemon {
     }
     fn id(&self) -> Option<String>;
     fn supervisor(&self) -> Option<String>;
+    fn save(&self) -> DaemonResult<()>;
+    fn restore(&self) -> DaemonResult<()>;
 }
 
 #[allow(dead_code)]

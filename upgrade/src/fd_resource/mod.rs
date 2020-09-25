@@ -17,15 +17,19 @@ use nydus_utils::{einval, last_error};
 
 pub struct FdResource {
     uds_path: PathBuf,
-    fds: Vec<RawFd>,
+    pub fds: Vec<RawFd>,
 }
 
 impl FdResource {
-    fn new(uds_path: PathBuf, fds: Vec<RawFd>) -> Self {
+    pub fn new(uds_path: PathBuf, fds: Vec<RawFd>) -> Self {
         Self { uds_path, fds }
     }
 
     fn send_fd(&mut self, opaque: &[u8]) -> Result<usize> {
+        if self.fds.is_empty() {
+            return Err(einval!("fd haven't be added to resource"));
+        }
+
         let stream = UnixStream::connect(&self.uds_path).map_err(|err| {
             error!("connect to {:?} failed: {:?}", &self.uds_path, err);
             err

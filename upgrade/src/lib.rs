@@ -64,6 +64,7 @@ mod tests {
 
     use super::*;
 
+    use binary_resource::backend::BackendType;
     use binary_resource::tests::{Test, TestArgs};
     use binary_resource::BinaryResource;
     use resource::Resource;
@@ -74,7 +75,7 @@ mod tests {
         let mut mgr = UPGRADE_MGR.lock().unwrap();
 
         let key = "nydus-upgrade-manager-with-binary-resource-with-empty-data-test";
-        let binary_resource = BinaryResource::new(key, None).unwrap();
+        let binary_resource = BinaryResource::new(key, BackendType::default()).unwrap();
 
         mgr.add_resource(ResourceType::RafsBinary, binary_resource);
 
@@ -97,8 +98,11 @@ mod tests {
         // Save a binary resource to upgrade manager
         let mut mgr = UPGRADE_MGR.lock().unwrap();
 
-        let mut binary_resource =
-            BinaryResource::new("nydus-upgrade-manager-with-binary-resource-test", None).unwrap();
+        let mut binary_resource = BinaryResource::new(
+            "nydus-upgrade-manager-with-binary-resource-test",
+            BackendType::default(),
+        )
+        .unwrap();
 
         binary_resource.destroy().unwrap();
 

@@ -31,7 +31,6 @@ impl SharedMemoryBackend {
         )
         .map_err(|_| last_error!())?;
 
-        // TODO: check fd leak?
         let file = unsafe { File::from_raw_fd(fd) };
 
         Ok(Self {

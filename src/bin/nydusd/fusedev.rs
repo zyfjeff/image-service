@@ -3,30 +3,37 @@
 //
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
-use nydus_utils::last_error;
-use sendfd::{RecvWithFd, SendWithFd};
-use std::ffi::{OsStr, OsString};
-use std::io;
+use std::any::Any;
+use std::fs::File;
 use std::io::Result;
-use std::net::Shutdown;
-use std::ops::Deref;
-use std::os::unix::io::RawFd;
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::Path;
-use std::sync::{atomic::Ordering, Arc, Mutex};
+use std::ops::{Deref, DerefMut};
+use std::os::unix::io::FromRawFd;
+use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicI32, Ordering},
+    mpsc::{channel, Receiver, Sender},
+    Arc, Mutex, Once,
+};
 use std::thread;
 
+use fuse_rs::api::{server::Server, Vfs, VfsOptions};
+use rust_fsm::*;
 use serde::{Deserialize, Serialize};
-
-use fuse_rs::api::{server::Server, Vfs};
-use nydus_utils::{eio, FuseChannel, FuseSession};
+use snapshot::Persist;
+use versionize::VersionMap;
+use versionize::{Versionize, VersionizeResult};
+use versionize_derive::Versionize;
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::daemon;
+use crate::{EVENT_MANAGER_RUN, EXIT_EVTFD};
 use daemon::{DaemonError, DaemonResult, DaemonState, Error, NydusDaemon};
+use nydus_utils::{eio, eother, FuseChannel, FuseSession};
+use upgrade_manager::fd_resource::FdResource;
+use upgrade_manager::resource::{Resource, ResourceType, VersionMapGetter};
+use upgrade_manager::UPGRADE_MGR;
 
-use crate::upgrade_manager::{Resource, ResourceType, UPGRADE_MRG};
-use crate::EVENT_MANAGER_RUN;
+static FUSE_INIT: Once = Once::new();
 
 struct FuseServer {
     server: Arc<Server<Arc<Vfs>>>,
@@ -105,7 +112,7 @@ impl FuseServer {
 pub struct FusedevDaemon {
     server: Arc<Server<Arc<Vfs>>>,
     vfs: Arc<Vfs>,
-    pub session: Mutex<Option<FuseSession>>,
+    pub session: Mutex<FuseSession>,
     threads: Mutex<Vec<Option<thread::JoinHandle<Result<()>>>>>,
     event_fd: EventFd,
     state: AtomicI32,
@@ -202,9 +209,7 @@ impl FusedevDaemonSM {
                         }
                         FusedevStateMachineOutput::Persist => d.persist(),
                         // A proper state machine can ensure that `session` must be contained!
-                        FusedevStateMachineOutput::Umount => {
-                            d.session.lock().unwrap().as_mut().unwrap().umount()
-                        }
+                        FusedevStateMachineOutput::Umount => d.session.lock().unwrap().umount(),
                         FusedevStateMachineOutput::TerminateFuseService => {
                             d.set_state(DaemonState::INTERRUPT);
                             d.interrupt();
@@ -212,14 +217,7 @@ impl FusedevDaemonSM {
                         }
                         FusedevStateMachineOutput::Restore => {
                             d.set_state(DaemonState::UPGRADE);
-                            let mgr = UPGRADE_MGR.lock().expect("Lock is not poisoned");
-                            mgr.get_resource(ResourceType::Fd)
-                                .map_or(Err(DaemonError::NoResource), |r| {
-                                    r.load().map_err(|_| DaemonError::RestoreState)
-                                })
-                                .unwrap_or_else(|e| error!("{}", e));
-                            info!("restore");
-                            Ok(())
+                            d.restore().map_err(|e| eother!(e))
                         }
                     },
                     _ => continue,
@@ -234,7 +232,7 @@ impl FusedevDaemon {
     fn kick_one_server(&self, t: Arc<Mutex<Trigger>>) -> Result<()> {
         let mut s = FuseServer::new(
             self.server.clone(),
-            self.session.lock().unwrap().as_ref().unwrap(),
+            self.session.lock().unwrap().deref(),
             // Clone event fd must succeed, otherwise fusedev daemon should not work.
             self.event_fd.try_clone().unwrap(),
             t,
@@ -269,15 +267,16 @@ impl FusedevDaemon {
     }
 
     fn persist(&self) -> Result<()> {
-        let vfs = self.vfs.as_ref();
         let mut mgr = UPGRADE_MGR.lock().unwrap();
 
-        if let Some(res) = mgr.get_resource(ResourceType::Fd) {
-            let fd_res = res.as_any().downcast_ref::<FuseDevFdRes>().unwrap();
-            let mut new_fd_res = fd_res.clone();
-            new_fd_res.opaque.vfs_opts = vfs.get_opts();
-
-            mgr.add_resource(new_fd_res, ResourceType::Fd);
+        if let Some(supervisor) = self.supervisor() {
+            let fds = if let Some(fuse_fd) = self.session.lock().unwrap().expose_fuse_fd() {
+                vec![fuse_fd]
+            } else {
+                vec![]
+            };
+            let res = FdResource::new(PathBuf::from(supervisor), fds);
+            mgr.add_resource(ResourceType::FuseDevFd, res);
         }
 
         Ok(())
@@ -360,78 +359,104 @@ impl NydusDaemon for FusedevDaemon {
 
         Ok(())
     }
+
+    fn save(&self) -> DaemonResult<()> {
+        if self.get_state() != DaemonState::RUNNING {
+            return Err(DaemonError::NotReady);
+        }
+
+        let mut mgr = UPGRADE_MGR.lock().expect("Lock is not poisoned");
+
+        if let Some(res) = mgr.get_resource(ResourceType::FuseDevFd) {
+            // Save fuse fd and daemon opaque data to remote uds server
+            return (res as &mut FdResource)
+                .save(&self)
+                .map_err(|_| DaemonError::SendFd);
+        }
+
+        Err(DaemonError::NoResource)
+    }
+
+    fn restore(&self) -> DaemonResult<()> {
+        let mut mgr = UPGRADE_MGR.lock().expect("Lock is not poisoned");
+
+        if let Some(res) = mgr.get_resource(ResourceType::FuseDevFd) {
+            let res = res as &mut FdResource;
+            // Restore daemon opaque data from remote uds server (implemented by Persist)
+            let _: &Self = res.restore(self).map_err(|_| DaemonError::RecvFd)?;
+            // Restore fuse fd from remote uds server
+            self.session.lock().unwrap().file = unsafe { Some(File::from_raw_fd(res.fds[0])) };
+            return Ok(());
+        }
+
+        Err(DaemonError::NoResource)
+    }
+}
+
+impl<'a> Persist<'a> for &'a FusedevDaemon {
+    type State = DaemonOpaque;
+    type ConstructorArgs = &'a FusedevDaemon;
+    type Error = Error;
+
+    fn save(&self) -> Self::State {
+        DaemonOpaque {
+            vfs_opts: self.vfs.get_opts(),
+        }
+    }
+
+    fn restore(
+        daemon: Self::ConstructorArgs,
+        opaque: &Self::State,
+    ) -> std::result::Result<Self, Self::Error> {
+        daemon.vfs.set_opts(opaque.vfs_opts);
+        Ok(daemon)
+    }
 }
 
 pub fn create_nydus_daemon(
     mountpoint: &str,
-    fs: Arc<Vfs>,
+    vfs: Arc<Vfs>,
     supervisor: Option<String>,
     id: Option<String>,
     threads_cnt: u32,
     upgrade: bool,
 ) -> Result<Arc<dyn NydusDaemon + Send>> {
     let (trigger, rx) = channel::<FusedevStateMachineInput>();
+    let session = FuseSession::new(Path::new(mountpoint), "rafs", "")?;
+
     let daemon = Arc::new(FusedevDaemon {
-        session: Mutex::new(None),
-        server: Arc::new(Server::new(fs.clone())),
-        vfs: fs.clone(),
+        session: Mutex::new(session),
+        server: Arc::new(Server::new(vfs.clone())),
+        vfs,
         threads: Mutex::new(Vec::new()),
         event_fd: EventFd::new(0).unwrap(),
         state: AtomicI32::new(DaemonState::INIT as i32),
         threads_cnt,
         trigger: Arc::new(Mutex::new(trigger)),
-        supervisor: supervisor.clone(),
-        id: id.clone(),
+        supervisor,
+        id,
     });
 
     let machine = FusedevDaemonSM::new(daemon.clone(), rx);
     machine.kick_state_machine()?;
 
-    let mut se = FuseSession::new(Path::new(mountpoint), "rafs", "")?;
-    let mut fuse_fd = None;
     if !upgrade {
-        se.mount()?;
-        fuse_fd = Some(se.expose_fuse_fd());
+        daemon.session.lock().unwrap().mount()?;
         daemon
             .on_event(FusedevStateMachineInput::Mount)
             .map_err(|e| eother!(e))?
     }
 
-    *daemon.session.lock().unwrap() = Some(se);
-
-    let d = daemon.clone() as Arc<dyn NydusDaemon + Send>;
-    if let Some(id) = id {
-        if let Some(supervisor) = supervisor {
-            let opaque = ResOpaque {
-                version: 1,
-                daemon_id: id.clone(),
-                vfs_opts: fs.get_opts(),
-                threads_cnt,
-                opaque: Default::default(),
-            };
-
-            let res = FuseDevFdRes::new(fuse_fd, supervisor.as_ref(), id, daemon, opaque, fs);
-
-            UPGRADE_MGR
-                .lock()
-                .expect("Not expect a poisoned Upgrade Manger lock!")
-                .add_resource(res, ResourceType::Fd);
-        }
-    }
-
-    Ok(d)
+    Ok(daemon)
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone)]
-struct ResOpaque {
-    version: u32,
-    daemon_id: String,
-    opaque: String,
-    threads_cnt: u32,
+#[derive(Default, Debug, Serialize, Deserialize, Clone, Versionize)]
+pub struct DaemonOpaque {
     // Negotiate with kernel when do mount
     vfs_opts: VfsOptions,
 }
 
+<<<<<<< HEAD
 pub struct FuseDevFdRes {
     fuse_fd: AtomicI32,
     uds_path: OsString,
@@ -649,3 +674,6 @@ impl Resource for FuseDevFdRes {
         Ok(())
     }
 }
+=======
+impl VersionMapGetter for DaemonOpaque {}
+>>>>>>> upgrade manager: support FuseDevFd for live upgrade

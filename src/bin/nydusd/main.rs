@@ -43,9 +43,6 @@ use rafs::fs::{Rafs, RafsConfig};
 mod daemon;
 use daemon::{Error, NydusDaemonSubscriber};
 
-mod upgrade_manager;
-//use upgrade_manager::{Resource, ResourceType, UPGRADE_MGR};
-
 #[cfg(feature = "virtiofsd")]
 mod virtiofs;
 #[cfg(feature = "virtiofsd")]

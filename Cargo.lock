@@ -332,6 +332,7 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 [[package]]
 name = "fuse-rs"
 version = "0.1.0"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=nydus#474d7282ea71c9b559b3c4fc88bddf4c05e79951"
 dependencies = [
  "arc-swap",
  "bimap",
@@ -340,6 +341,9 @@ dependencies = [
  "log",
  "nix",
  "serde",
+ "snapshot",
+ "versionize",
+ "versionize_derive 0.1.1 (git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize_derive.git?branch=v5)",
  "vhost",
  "vm-memory",
  "vm-virtio",
@@ -818,9 +822,12 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "snapshot",
  "stderrlog",
  "upgrade-manager",
  "uuid",
+ "versionize",
+ "versionize_derive 0.1.1 (git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize_derive.git?branch=v5)",
  "vhost",
  "vhost-user-backend",
  "vm-memory",
