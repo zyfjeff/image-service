@@ -110,7 +110,6 @@ impl Resource for FdResource {
 
 #[cfg(test)]
 pub mod tests {
-    use sendfd::{RecvWithFd, SendWithFd};
     use std::collections::HashMap;
     use std::fs::File;
     use std::io::{Seek, SeekFrom};
@@ -119,6 +118,7 @@ pub mod tests {
     use std::path::PathBuf;
     use std::thread;
 
+    use sendfd::{RecvWithFd, SendWithFd};
     use vmm_sys_util::tempfile::TempFile;
 
     use crate::binary_resource::tests::{Test, TestArgs};

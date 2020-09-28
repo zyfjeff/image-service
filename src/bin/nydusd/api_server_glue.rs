@@ -150,7 +150,10 @@ impl ApiServer {
         let d = self.daemon.as_ref();
 
         d.save()
-            .map(|_| ApiResponsePayload::Empty)
+            .map(|_| {
+                info!("save fuse fd to uds server");
+                ApiResponsePayload::Empty
+            })
             .map_err(|e| ApiError::DaemonAbnormal(e.into()))
     }
 
@@ -163,7 +166,10 @@ impl ApiServer {
     fn do_takeover(&self) -> ApiResponse {
         let d = self.daemon.as_ref();
         d.trigger_takeover()
-            .map(|_| ApiResponsePayload::Empty)
+            .map(|_| {
+                info!("restore fuse fd from uds server");
+                ApiResponsePayload::Empty
+            })
             .map_err(|e| ApiError::DaemonAbnormal(e.into()))
     }
 
@@ -176,7 +182,10 @@ impl ApiServer {
     fn do_exit(&self) -> ApiResponse {
         let d = self.daemon.as_ref();
         d.trigger_exit()
-            .map(|_| ApiResponsePayload::Empty)
+            .map(|_| {
+                info!("exit daemon by http request");
+                ApiResponsePayload::Empty
+            })
             .map_err(|e| ApiError::DaemonAbnormal(e.into()))?;
 
         // Should be reliable since this Api server works under event manager.

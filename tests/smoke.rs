@@ -2,18 +2,21 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::io::Result;
-use std::path::PathBuf;
-
 #[macro_use]
 extern crate log;
 extern crate stderrlog;
 
-use nydus_utils::{eother, exec};
-use vmm_sys_util::tempdir::TempDir;
-
 mod builder;
 mod nydusd;
+mod snapshotter;
+
+use std::io::Result;
+use std::path::PathBuf;
+
+use vmm_sys_util::tempdir::TempDir;
+
+use nydus_utils::{eother, exec};
+use snapshotter::Snapshotter;
 
 fn test(
     compressor: &str,
@@ -44,7 +47,8 @@ fn test(
             enable_cache,
             cache_compressed,
             rafs_mode.parse()?,
-            "bootstrap-lower".to_string(),
+            "bootstrap-lower".into(),
+            "api.sock".into(),
             true,
         )?;
         nydusd.start()?;
@@ -64,7 +68,8 @@ fn test(
             enable_cache,
             cache_compressed,
             rafs_mode.parse()?,
-            "bootstrap-overlay".to_string(),
+            "bootstrap-overlay".into(),
+            "api.sock".into(),
             true,
         )?;
         nydusd.start()?;
@@ -79,7 +84,8 @@ fn test(
             enable_cache,
             cache_compressed,
             rafs_mode.parse()?,
-            "bootstrap-overlay".to_string(),
+            "bootstrap-overlay".into(),
+            "api.sock".into(),
             true,
         )?;
         nydusd.start()?;
@@ -151,7 +157,8 @@ fn check_compact<'a>(work_dir: &'a PathBuf, bootstrap_name: &str, rafs_mode: &st
         false,
         false,
         rafs_mode.parse()?,
-        bootstrap_name.to_string(),
+        bootstrap_name.into(),
+        "api.sock".into(),
         true,
     )?;
 
@@ -205,13 +212,82 @@ fn integration_test_stargz() -> Result<()> {
         true,
         true,
         "direct".parse()?,
-        "bootstrap-overlay".to_string(),
+        "bootstrap-overlay".into(),
+        "api.sock".into(),
         false,
     )?;
 
     nydusd.start()?;
     nydusd.check("directory/overlay.result")?;
     nydusd.stop();
+
+    Ok(())
+}
+
+#[test]
+fn integration_test_hot_upgrade() -> Result<()> {
+    info!("\n\n==================== testing run: hot upgrade");
+
+    let tmp_dir = TempDir::new().map_err(|e| eother!(e))?;
+    let work_dir = tmp_dir.as_path().to_path_buf();
+    let _ = exec(
+        format!("cp -a tests/texture/repeatable/* {:?}", work_dir).as_str(),
+        false,
+    )
+    .unwrap();
+
+    let old_nydusd = nydusd::new(
+        &work_dir,
+        false,
+        false,
+        "direct".parse()?,
+        COMPAT_BOOTSTRAPS[0].into(),
+        "api.sock".into(),
+        true,
+    )?;
+
+    let new_nydusd = nydusd::new(
+        &work_dir,
+        false,
+        false,
+        "direct".parse()?,
+        COMPAT_BOOTSTRAPS[0].into(),
+        "new-api.sock".into(),
+        true,
+    )?;
+
+    let snapshotter = Snapshotter::new(work_dir);
+
+    // Start old nydusd to mount
+    old_nydusd.start()?;
+
+    // Old nydusd's state should be RUNNING
+    assert_eq!(snapshotter.get_status(&old_nydusd.api_sock), "RUNNING");
+
+    // Snapshotter receive fuse fd from old nydusd
+    snapshotter.request_sendfd(&old_nydusd.api_sock);
+
+    // Start new nydusd but don't mount
+    new_nydusd.start_with_upgrade()?;
+
+    // New nydusd's state should be INIT
+    assert_eq!(snapshotter.get_status(&new_nydusd.api_sock), "INIT");
+
+    // Snapshotter tells old nydusd to exit
+    snapshotter.kill_nydusd(&old_nydusd.api_sock);
+
+    // Snapshotter send fuse fd to new nydusd
+    snapshotter.take_over(&new_nydusd.api_sock);
+
+    // New nydusd's state should be RUNNING
+    assert_eq!(snapshotter.get_status(&new_nydusd.api_sock), "RUNNING");
+
+    // Check files in mount point
+    let result_path = format!("repeatable/{}.result", COMPAT_BOOTSTRAPS[0]);
+    new_nydusd.check(result_path.as_str())?;
+
+    // Stop new nydusd
+    new_nydusd.stop();
 
     Ok(())
 }

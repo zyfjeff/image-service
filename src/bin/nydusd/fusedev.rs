@@ -198,7 +198,7 @@ impl FusedevDaemonSM {
                 let cnt = d.threads_cnt;
                 let cur = self.sm.state();
                 info!(
-                    "From {:?} to {:?}, input {:?} output {:?}",
+                    "from {:?} to {:?}, input {:?} output {:?}",
                     last, cur, input, &action
                 );
                 match action {
@@ -238,12 +238,6 @@ impl FusedevDaemon {
             t,
         )?;
 
-        let res = FuseDevFdRes::new(self.session.expose_fuse_fd(), &OsString::from("fixme"));
-        UPGRADE_MRG
-            .lock()
-            .unwrap()
-            .add_resource(res, ResourceType::Fd);
-
         let thread = thread::Builder::new()
             .name("fuse_server".to_string())
             .spawn(move || {
@@ -267,18 +261,6 @@ impl FusedevDaemon {
     }
 
     fn persist(&self) -> Result<()> {
-        let mut mgr = UPGRADE_MGR.lock().unwrap();
-
-        if let Some(supervisor) = self.supervisor() {
-            let fds = if let Some(fuse_fd) = self.session.lock().unwrap().expose_fuse_fd() {
-                vec![fuse_fd]
-            } else {
-                vec![]
-            };
-            let res = FdResource::new(PathBuf::from(supervisor), fds);
-            mgr.add_resource(ResourceType::FuseDevFd, res);
-        }
-
         Ok(())
     }
 
@@ -433,7 +415,7 @@ pub fn create_nydus_daemon(
         state: AtomicI32::new(DaemonState::INIT as i32),
         threads_cnt,
         trigger: Arc::new(Mutex::new(trigger)),
-        supervisor,
+        supervisor: supervisor.clone(),
         id,
     });
 
@@ -447,6 +429,17 @@ pub fn create_nydus_daemon(
             .map_err(|e| eother!(e))?
     }
 
+    if let Some(supervisor) = supervisor {
+        let mut mgr = UPGRADE_MGR.lock().unwrap();
+        let fds = if let Some(fd) = daemon.session.lock().unwrap().expose_fuse_fd() {
+            vec![fd]
+        } else {
+            vec![]
+        };
+        let res = FdResource::new(PathBuf::from(supervisor), fds);
+        mgr.add_resource(ResourceType::FuseDevFd, res);
+    }
+
     Ok(daemon)
 }
 
@@ -456,224 +449,4 @@ pub struct DaemonOpaque {
     vfs_opts: VfsOptions,
 }
 
-<<<<<<< HEAD
-pub struct FuseDevFdRes {
-    fuse_fd: AtomicI32,
-    uds_path: OsString,
-    daemon_id: String,
-    daemon: Arc<dyn NydusDaemon + Send + Sync>,
-    opaque: ResOpaque,
-    vfs: Arc<Vfs>,
-}
-
-impl Clone for FuseDevFdRes {
-    fn clone(&self) -> Self {
-        FuseDevFdRes {
-            fuse_fd: AtomicI32::new(self.fuse_fd.load(Ordering::Relaxed)),
-            uds_path: self.uds_path.clone(),
-            daemon_id: self.daemon_id.clone(),
-            daemon: self.daemon.clone(),
-            opaque: self.opaque.clone(),
-            vfs: self.vfs.clone(),
-        }
-    }
-}
-
-impl FuseDevFdRes {
-    fn new(
-        fd: Option<RawFd>,
-        uds: &OsStr,
-        daemon_id: String,
-        daemon: Arc<dyn NydusDaemon + Send + Sync>,
-        opaque: ResOpaque,
-        vfs: Arc<Vfs>,
-    ) -> Self {
-        FuseDevFdRes {
-            fuse_fd: fd.map(AtomicI32::new).unwrap_or_else(|| AtomicI32::new(-1)),
-            uds_path: uds.to_os_string(),
-            daemon_id,
-            daemon,
-            opaque,
-            vfs,
-        }
-    }
-
-    pub fn connect(&self) -> Result<UnixStream> {
-        let stream = UnixStream::connect(&self.uds_path).map_err(|e| {
-            error!("Connect to {:?} failed, {:?}", &self.uds_path, e);
-            e
-        })?;
-        Ok(stream)
-    }
-
-    fn send_fd(&self, stream: &UnixStream) -> Result<usize> {
-        let opaque_buf = serde_json::to_string(&self.opaque).unwrap().into_bytes();
-        let mut fds: [RawFd; 8] = Default::default();
-        fds[0] = self.fuse_fd.load(Ordering::Acquire);
-        stream
-            .send_with_fd(&opaque_buf, &fds)
-            .map_err(|e| last_error!(e))
-    }
-
-    fn recv_fd(&self, stream: &UnixStream) -> Result<ResOpaque> {
-        // TODO: Is 8K buffer large enough?
-        let mut opaque = vec![0u8; 8192];
-        let mut fds: [RawFd; 8] = Default::default();
-        let (opaque_size, fds_count) = stream.recv_with_fd(&mut opaque, &mut fds).map_err(|e| {
-            error!("Failed in receiving fd");
-            e
-        })?;
-
-        if fds_count != 1 {
-            warn!("There should be only one fd sent, but {} comes", fds_count);
-        }
-
-        info!("daemon id is {}, receiving fd {}", self.daemon_id, fds[0]);
-
-        self.fuse_fd.store(fds[0], Ordering::Release);
-
-        serde_json::from_str::<ResOpaque>(
-            std::str::from_utf8(&opaque[..opaque_size]).map_err(|e| einval!(e))?,
-        )
-        .map_err(|e| {
-            error!(" Opaque can't ba parsed, {} ", e);
-            einval!(e)
-        })
-    }
-}
-
-impl Resource for FuseDevFdRes {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn store(&self) -> UpgradeManagerResult<()> {
-        let d = self.daemon.as_ref();
-
-        if d.get_state() != DaemonState::RUNNING {
-            return Err(UpgradeManagerError::NotReady);
-        }
-
-        let stream = self.connect().map_err(UpgradeManagerError::Connect)?;
-        self.send_fd(&stream)
-            .map_err(|_| UpgradeManagerError::SendFd)?;
-
-        Ok(())
-    }
-
-    fn load(&self) -> UpgradeManagerResult<()> {
-        let stream = self.connect().map_err(UpgradeManagerError::Connect)?;
-        let opaque = self
-            .recv_fd(&stream)
-            .map_err(|_| UpgradeManagerError::RecvFd)?;
-        // TODO: Read config file again? or store config as opaque into backend?
-        let d = self
-            .daemon
-            .as_any()
-            .downcast_ref::<FusedevDaemon>()
-            .unwrap();
-        d.session.lock().unwrap().as_mut().unwrap().file =
-            unsafe { Some(File::from_raw_fd(self.fuse_fd.load(Ordering::Acquire))) };
-        self.vfs.swap_opts(opaque.vfs_opts);
-
-        Ok(())
-    }
-}
-
-#[derive(Default, Debug, Serialize, Deserialize)]
-struct ResOpaque {
-    version: u32,
-    daemon_id: String,
-    opaque: String,
-}
-
-#[derive(Default)]
-pub struct FuseDevFdRes {
-    fuse_fd: RawFd,
-    uds_path: OsString,
-    stream: Arc<Mutex<Option<UnixStream>>>,
-}
-
-impl FuseDevFdRes {
-    fn new(fd: RawFd, uds: &OsStr) -> Self {
-        FuseDevFdRes {
-            fuse_fd: fd,
-            uds_path: uds.to_os_string(),
-            ..Default::default()
-        }
-    }
-
-    // TODO: unlink unix domain socket when drop such resource.
-    pub fn connect(&self) -> Result<()> {
-        let stream = UnixStream::connect(&self.uds_path).map_err(|e| {
-            error!("Connect to {:?} failed, {:?}", &self.uds_path, e);
-            e
-        })?;
-        *self.stream.lock().unwrap() = Some(stream);
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn listen(&self, path: &OsStr) -> Result<UnixListener> {
-        std::fs::remove_file(path).unwrap_or_default();
-        UnixListener::bind(path).map_err(|e| last_error!(e))
-    }
-
-    fn send_fd(&self) -> Result<usize> {
-        if let Some(ref sock) = self.stream.lock().unwrap().deref() {
-            let opaque = ResOpaque {
-                version: 1,
-                daemon_id: self.daemon_id.clone(),
-                ..Default::default()
-            };
-
-            let opaque_buf = serde_json::to_string(&opaque).unwrap().into_bytes();
-            let mut fds: [RawFd; 8] = Default::default();
-            fds[0] = self.fuse_fd;
-            sock.send_with_fd(&opaque_buf, &fds)
-                .map_err(|_| last_error!())
-        } else {
-            error!("Send fd error!");
-            Err(io::Error::from_raw_os_error(libc::ENOTCONN))
-        }
-    }
-
-    fn recv_fd(&self) -> Result<()> {
-        let mut opaque = vec![0u8; 8192];
-        let mut fds: [RawFd; 8] = Default::default();
-        self.stream
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .recv_with_fd(&mut opaque, &mut fds)?;
-        Ok(())
-    }
-}
-
-impl Resource for FuseDevFdRes {
-    fn store(&self) -> Result<()> {
-        self.connect()?;
-        self.send_fd()?;
-        self.stream
-            .lock()
-            .unwrap()
-            .as_ref()
-            .unwrap()
-            .shutdown(Shutdown::Both)?;
-
-        Ok(())
-    }
-
-    fn load(&self) -> Result<()> {
-        self.connect()?;
-        let _opaque = self.recv_fd()?;
-        // TODO: Read config file again? or store config as opaque into backend?
-        // FIXME:
-        self.daemon.lock().unwrap().start(4)?;
-        Ok(())
-    }
-}
-=======
 impl VersionMapGetter for DaemonOpaque {}
->>>>>>> upgrade manager: support FuseDevFd for live upgrade
