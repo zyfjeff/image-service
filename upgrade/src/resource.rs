@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
 use std::any::Any;
+use std::fmt;
 use std::io::Result;
 
 use snapshot::Persist;
@@ -13,9 +14,18 @@ use super::binary_resource::BinaryResource;
 use super::fd_resource::FdResource;
 
 #[derive(Hash, PartialEq, Eq)]
-pub enum ResourceType {
+pub enum ResourceName {
     FuseDevFd,
-    RafsBinary,
+    RafsConf,
+}
+
+impl fmt::Display for ResourceName {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::FuseDevFd => write!(f, "fuse_dev_fd"),
+            Self::RafsConf => write!(f, "rafs_conf"),
+        }
+    }
 }
 
 pub trait Resource {

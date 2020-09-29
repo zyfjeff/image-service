@@ -6,55 +6,56 @@
 #[macro_use]
 extern crate log;
 
-#[allow(dead_code)]
 pub mod binary_resource;
-#[allow(dead_code)]
 pub mod fd_resource;
 pub mod resource;
 
-#[macro_use]
-extern crate lazy_static;
-
-use resource::{ResourceType, ResourceWrapper};
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::os::unix::io::RawFd;
+use std::path::PathBuf;
 
-lazy_static! {
-    pub static ref UPGRADE_MGR: Mutex<UpgradeManager> = Mutex::new(UpgradeManager::new());
-}
+use binary_resource::backend::BackendType;
+use binary_resource::BinaryResource;
+use fd_resource::FdResource;
+use resource::{ResourceName, ResourceWrapper};
 
 #[derive(Default)]
 pub struct UpgradeManager {
-    resources: HashMap<ResourceType, Box<dyn ResourceWrapper + Sync + Send + 'static>>,
+    id: String,
+    resources: HashMap<ResourceName, Box<dyn ResourceWrapper + Sync + Send + 'static>>,
 }
 
 impl UpgradeManager {
-    fn new() -> Self {
+    pub fn new(id: String) -> Self {
         UpgradeManager {
+            id,
             ..Default::default()
         }
     }
 
-    pub fn add_resource<R: ResourceWrapper + Sync + Send + 'static>(
-        &mut self,
-        res_type: ResourceType,
-        res: R,
-    ) {
-        self.resources.insert(res_type, Box::new(res));
+    pub fn add_binary_resource(&mut self, res_name: ResourceName) {
+        let key = format!("{}_{}_{}", self.id, "resource", res_name);
+        let res = BinaryResource::new(key.as_str(), BackendType::default()).unwrap();
+        self.resources.insert(res_name, Box::new(res));
     }
 
-    pub fn get_resource<R>(&mut self, res_type: ResourceType) -> Option<&mut R>
+    pub fn add_fd_resource(&mut self, res_name: ResourceName, supervisor: String, fds: Vec<RawFd>) {
+        let res = FdResource::new(PathBuf::from(supervisor), fds);
+        self.resources.insert(res_name, Box::new(res));
+    }
+
+    pub fn get_resource<R>(&mut self, res_name: ResourceName) -> Option<&mut R>
     where
         R: ResourceWrapper + Sync + Send + 'static,
     {
-        if let Some(res) = self.resources.get_mut(&res_type).map(|r| r.as_mut()) {
+        if let Some(res) = self.resources.get_mut(&res_name).map(|r| r.as_mut()) {
             return res.as_any().downcast_mut::<R>();
         }
         None
     }
 
-    pub fn del_resource(&mut self, res_type: ResourceType) {
-        self.resources.remove(&res_type);
+    pub fn del_resource(&mut self, res_name: ResourceName) {
+        self.resources.remove(&res_name);
     }
 }
 
@@ -64,25 +65,21 @@ mod tests {
 
     use super::*;
 
-    use binary_resource::backend::BackendType;
     use binary_resource::tests::{Test, TestArgs};
     use binary_resource::BinaryResource;
     use resource::Resource;
 
     #[test]
     fn test_upgrade_manager_with_binary_resource_with_empty_data() {
-        // Save a binary resource to upgrade manager
-        let mut mgr = UPGRADE_MGR.lock().unwrap();
+        // Save the binary resource to upgrade manager
+        let mut mgr = UpgradeManager::new("nydus-smoke-test-1".to_string());
 
-        let key = "nydus-upgrade-manager-with-binary-resource-with-empty-data-test";
-        let binary_resource = BinaryResource::new(key, BackendType::default()).unwrap();
-
-        mgr.add_resource(ResourceType::RafsBinary, binary_resource);
+        mgr.add_binary_resource(ResourceName::RafsConf);
 
         // Get the binary resource from upgrade manager
-        let resource: &mut BinaryResource = mgr.get_resource(ResourceType::RafsBinary).unwrap();
+        let resource: &mut BinaryResource = mgr.get_resource(ResourceName::RafsConf).unwrap();
 
-        // Should be restore failed for the backend has no data
+        // Restore should be failed for the backend has no data
         assert!((resource.restore(TestArgs { baz: 10 }) as Result<Test>).is_err());
     }
 
@@ -95,21 +92,13 @@ mod tests {
             baz: 100,
         };
 
-        // Save a binary resource to upgrade manager
-        let mut mgr = UPGRADE_MGR.lock().unwrap();
+        // Save the binary resource to upgrade manager
+        let mut mgr = UpgradeManager::new("nydus-smoke-test-2".to_string());
 
-        let mut binary_resource = BinaryResource::new(
-            "nydus-upgrade-manager-with-binary-resource-test",
-            BackendType::default(),
-        )
-        .unwrap();
-
-        binary_resource.destroy().unwrap();
-
-        mgr.add_resource(ResourceType::RafsBinary, binary_resource);
+        mgr.add_binary_resource(ResourceName::RafsConf);
 
         // Get the binary resource from upgrade manager
-        let resource: &mut BinaryResource = mgr.get_resource(ResourceType::RafsBinary).unwrap();
+        let resource: &mut BinaryResource = mgr.get_resource(ResourceName::RafsConf).unwrap();
 
         // Save an object to binary resource
         resource.save(&test).unwrap();
