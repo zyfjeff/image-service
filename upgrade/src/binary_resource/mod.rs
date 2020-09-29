@@ -15,6 +15,8 @@ use backend::shared_memory::SharedMemoryBackend;
 use backend::{Backend, BackendType};
 use nydus_utils::einval;
 
+// BinaryResource is responsible for saving (serialized to binary data) to storage backend
+// and restoring state (deserialized from binary data) from storage backend.
 pub struct BinaryResource {
     backend: Box<dyn Backend>,
 }

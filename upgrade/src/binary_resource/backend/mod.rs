@@ -11,6 +11,9 @@ pub trait Backend: Sync + Send {
     fn reset(&mut self) -> Result<()>;
     fn reader(&mut self) -> Result<&mut dyn Read>;
     fn writer(&mut self) -> Result<&mut dyn Write>;
+    // This method will not be used in real scenarios, the Backend is
+    // only responsible for read/write data, garage collection
+    // for storage will be done on nydus control panel.
     fn destroy(&mut self) -> Result<()>;
 }
 

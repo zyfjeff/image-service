@@ -13,6 +13,8 @@ use versionize::{VersionMap, Versionize};
 use super::binary_resource::BinaryResource;
 use super::fd_resource::FdResource;
 
+// Use ResourceName to distinguish resource instances in
+// UpgradeManager, you can add more as you need.
 #[derive(Hash, PartialEq, Eq)]
 pub enum ResourceName {
     FuseDevFd,
@@ -58,6 +60,10 @@ impl ResourceWrapper for BinaryResource {
     }
 }
 
+// Use version map to mange resource version during serializing/deserializing,
+// here is a default implementation, returns the version map with only one version,
+// If you need to add a version 2 for resource, need to do like this:
+// `VersionMap::new().new_version().set_type_version(Self::type_id(), 2).clone()`
 pub trait VersionMapGetter {
     fn version_map() -> VersionMap {
         VersionMap::new()

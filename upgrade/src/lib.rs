@@ -3,6 +3,9 @@
 //
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
+//! UpgradeManager manages all resources that need to be saved (persist to storage backend) and
+//! restored (reconstruct from storage backend), includes BinaryResource and FdResource.
+
 #[macro_use]
 extern crate log;
 
@@ -21,7 +24,9 @@ use resource::{ResourceName, ResourceWrapper};
 
 #[derive(Default)]
 pub struct UpgradeManager {
+    // Identify resource between multi nydusd instances
     id: String,
+    // BinaryResource and FdResource can be added in, use `ResourceName` to distinguish
     resources: HashMap<ResourceName, Box<dyn ResourceWrapper + Sync + Send + 'static>>,
 }
 
@@ -34,16 +39,22 @@ impl UpgradeManager {
     }
 
     pub fn add_binary_resource(&mut self, res_name: ResourceName) {
+        // Use this key as shared memory file name, manager id and resource name will
+        // distinguish shared memory file between multi nydusd instances.
         let key = format!("{}_{}_{}", self.id, "resource", res_name);
         let res = BinaryResource::new(key.as_str(), BackendType::default()).unwrap();
         self.resources.insert(res_name, Box::new(res));
     }
 
     pub fn add_fd_resource(&mut self, res_name: ResourceName, supervisor: String, fds: Vec<RawFd>) {
+        // Supervisor should be unix domain socket (uds) server path. fds vector allow to
+        // be empty if we only need to restore fds from the uds server instead of saving.
         let res = FdResource::new(PathBuf::from(supervisor), fds);
         self.resources.insert(res_name, Box::new(res));
     }
 
+    // Need return ResourceWrapper instead of Resource trait object,
+    // see `https://users.rust-lang.org/t/trait-object-with-generic-parameter/34101/4`.
     pub fn get_resource<R>(&mut self, res_name: ResourceName) -> Option<&mut R>
     where
         R: ResourceWrapper + Sync + Send + 'static,

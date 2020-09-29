@@ -15,6 +15,9 @@ use versionize::Versionize;
 use super::resource::{Resource, VersionMapGetter};
 use nydus_utils::{einval, last_error};
 
+// FdResource is responsible for sending fd to a remote server, or receiving fd
+// from a remote server to save and restore fd via the unix domain socket (uds) server path.
+// It is also allowed to carry opaque data when sending fd or receiving fd.
 pub struct FdResource {
     uds_path: PathBuf,
     pub fds: Vec<RawFd>,
