@@ -208,7 +208,7 @@ impl FusedevDaemonSM {
                             d.set_state(DaemonState::RUNNING);
                             d.start(cnt)
                         }
-                        FusedevStateMachineOutput::Persist => d.persist(),
+                        FusedevStateMachineOutput::Persist => d.persist().map_err(|e| eother!(e)),
                         // A proper state machine can ensure that `session` must be contained!
                         FusedevStateMachineOutput::Umount => d.session.lock().unwrap().umount(),
                         FusedevStateMachineOutput::TerminateFuseService => {
@@ -261,7 +261,18 @@ impl FusedevDaemon {
         Ok(())
     }
 
-    fn persist(&self) -> Result<()> {
+    fn persist(&self) -> DaemonResult<()> {
+        if self.supervisor().is_none() {
+            return Err(DaemonError::NoResource);
+        }
+
+        let mut mgr_guard = self.upgrade_mgr.lock().unwrap();
+
+        // There must be a fuse device fd as Mount has to be done.
+        let fds = vec![self.session.lock().unwrap().expose_fuse_fd().unwrap()];
+
+        mgr_guard.add_fd_resource(ResourceName::FuseDevFd, self.supervisor().unwrap(), fds);
+
         Ok(())
     }
 
@@ -344,10 +355,6 @@ impl NydusDaemon for FusedevDaemon {
     }
 
     fn save(&self) -> DaemonResult<()> {
-        if self.get_state() != DaemonState::RUNNING {
-            return Err(DaemonError::NotReady);
-        }
-
         if let Some(res) = self
             .upgrade_mgr
             .lock()
@@ -364,21 +371,21 @@ impl NydusDaemon for FusedevDaemon {
     }
 
     fn restore(&self) -> DaemonResult<()> {
-        if let Some(res) = self
-            .upgrade_mgr
-            .lock()
-            .unwrap()
-            .get_resource(ResourceName::FuseDevFd)
-        {
-            let res = res as &mut FdResource;
-            // Restore daemon opaque data from remote uds server
-            let _: &Self = res.restore(self).map_err(|_| DaemonError::RecvFd)?;
-            // Restore fuse fd from remote uds server
-            self.session.lock().unwrap().file = unsafe { Some(File::from_raw_fd(res.fds[0])) };
-            return Ok(());
+        if self.supervisor().is_none() {
+            return Err(DaemonError::NoResource);
         }
 
-        Err(DaemonError::NoResource)
+        let mut mgr_guard = self.upgrade_mgr.lock().unwrap();
+
+        mgr_guard.add_fd_resource(ResourceName::FuseDevFd, self.supervisor().unwrap(), vec![]);
+
+        // Must succeed as it is just added.
+        let res = mgr_guard.get_resource(ResourceName::FuseDevFd).unwrap() as &mut FdResource;
+        // Restore daemon opaque data from remote uds server
+        let _: &Self = res.restore(self).map_err(|_| DaemonError::RecvFd)?;
+        // Restore fuse fd from remote uds server
+        self.session.lock().unwrap().file = unsafe { Some(File::from_raw_fd(res.fds[0])) };
+        Ok(())
     }
 }
 
@@ -427,7 +434,7 @@ pub fn create_nydus_daemon(
         state: AtomicI32::new(DaemonState::INIT as i32),
         threads_cnt,
         trigger: Arc::new(Mutex::new(trigger)),
-        supervisor: supervisor.clone(),
+        supervisor,
         id,
         upgrade_mgr: Mutex::new(UpgradeManager::new(upgrade_mgr_id)),
     });
@@ -440,19 +447,6 @@ pub fn create_nydus_daemon(
         daemon
             .on_event(FusedevStateMachineInput::Mount)
             .map_err(|e| eother!(e))?
-    }
-
-    if let Some(supervisor) = supervisor {
-        let fds = if let Some(fd) = daemon.session.lock().unwrap().expose_fuse_fd() {
-            vec![fd]
-        } else {
-            vec![]
-        };
-        daemon.upgrade_mgr.lock().unwrap().add_fd_resource(
-            ResourceName::FuseDevFd,
-            supervisor,
-            fds,
-        );
     }
 
     Ok(daemon)
