@@ -4,9 +4,11 @@
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
 use std::any::Any;
+use std::ffi::{CStr, CString};
 use std::fs::File;
 use std::io::Result;
 use std::ops::{Deref, DerefMut};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::FromRawFd;
 use std::path::Path;
 use std::sync::{
@@ -407,6 +409,40 @@ impl<'a> Persist<'a> for &'a FusedevDaemon {
     }
 }
 
+fn is_mounted(mp: impl AsRef<Path>) -> Result<bool> {
+    let mounts = CString::new("/proc/self/mounts").unwrap();
+    let ty = CString::new("r").unwrap();
+
+    let mounts_stream = unsafe {
+        libc::setmntent(
+            mounts.as_ptr() as *const libc::c_char,
+            ty.as_ptr() as *const libc::c_char,
+        )
+    };
+
+    loop {
+        let mnt = unsafe { libc::getmntent(mounts_stream) };
+        if mnt as u32 == libc::PT_NULL {
+            break;
+        }
+
+        // Mount point path
+        if unsafe { CStr::from_ptr((*mnt).mnt_dir) }
+            == CString::new(mp.as_ref().as_os_str().as_bytes())?.as_c_str()
+        {
+            unsafe { libc::endmntent(mounts_stream) };
+            return Ok(true);
+        }
+    }
+
+    unsafe { libc::endmntent(mounts_stream) };
+
+    Ok(false)
+}
+fn is_crashed(path: impl AsRef<Path>) -> Result<bool> {
+    is_mounted(path)
+}
+
 pub fn create_nydus_daemon(
     mountpoint: &str,
     vfs: Arc<Vfs>,
@@ -440,7 +476,7 @@ pub fn create_nydus_daemon(
     let machine = FusedevDaemonSM::new(daemon.clone(), rx);
     machine.kick_state_machine()?;
 
-    if !upgrade {
+    if !upgrade && !is_crashed(mountpoint)? {
         daemon.session.lock().unwrap().mount()?;
         daemon
             .on_event(FusedevStateMachineInput::Mount)
