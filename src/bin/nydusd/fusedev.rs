@@ -5,8 +5,8 @@
 
 use std::any::Any;
 use std::ffi::{CStr, CString};
-use std::fs::{metadata, File};
-use std::io::Result;
+use std::fs::{metadata, File, OpenOptions};
+use std::io::{Result, Write};
 use std::ops::{Deref, DerefMut};
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::ffi::OsStrExt;
@@ -388,6 +388,9 @@ impl NydusDaemon for FusedevDaemon {
         // Restore daemon opaque data from remote uds server
         let _: &Self = res.restore(self).map_err(|_| DaemonError::RecvFd)?;
         // Restore fuse fd from remote uds server
+
+        flush_fuse_connection(self.conn.load(Ordering::Acquire));
+
         self.session.lock().unwrap().file = unsafe { Some(File::from_raw_fd(res.fds[0])) };
         Ok(())
     }
@@ -468,8 +471,27 @@ fn is_crashed(path: impl AsRef<Path>, sock: impl AsRef<Path>) -> Result<bool> {
 
 fn calc_fuse_conn(mp: impl AsRef<Path>) -> Result<u64> {
     let st = metadata(mp)?;
-
     Ok(st.st_dev())
+}
+
+/// There might be some in-flight fuse requests when nydusd terminates out of sudden.
+/// According to FLUSH policy, those requests will be abandoned which means kernel
+/// no longer waits for their responses.
+fn flush_fuse_connection(conn: u64) {
+    info!("Flushing fuse connection {}", conn);
+    let control_fs_path = format!("/sys/fs/fuse/connections/{}/flush", conn);
+
+    // TODO: If `flush` file does not exists, we continue the failover progress but
+    // should throw alarm out.
+
+    OpenOptions::new()
+        .write(true)
+        .open(control_fs_path)
+        .map(|mut f| {
+            f.write_all(b"1")
+                .unwrap_or_else(|e| error!("Flush failed. {:?}", e))
+        })
+        .unwrap_or_else(|e| error!("Open `flush` file failed. {:?}", e));
 }
 
 pub fn create_nydus_daemon(
