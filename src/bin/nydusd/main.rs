@@ -13,8 +13,8 @@ extern crate rafs;
 extern crate serde_json;
 extern crate stderrlog;
 
-use nix::sys::signal;
-use rlimit::{rlim, Resource};
+#[cfg(feature = "fusedev")]
+use std::convert::TryInto;
 use std::fs::File;
 use std::io::{Read, Result};
 use std::ops::{Deref, DerefMut};
@@ -26,6 +26,9 @@ use std::sync::{
 };
 use std::thread;
 use std::{io, process};
+
+use nix::sys::signal;
+use rlimit::{rlim, Resource};
 
 use clap::{App, Arg};
 use fuse_rs::{
@@ -221,6 +224,15 @@ fn main() -> Result<()> {
                 .required(false)
                 .global(true),
         )
+        .arg(
+            Arg::with_name("failover-policy")
+                .long("failover-policy")
+                .default_value("flush")
+                .help("`flush` or `resend`")
+                .takes_value(true)
+                .required(false)
+                .global(true),
+        )
         .get_matches();
 
     let v = cmd_arguments
@@ -335,7 +347,7 @@ fn main() -> Result<()> {
     let daemon_subscriber = Arc::new(NydusDaemonSubscriber::new()?);
     let daemon_subscriber_id = event_manager.add_subscriber(daemon_subscriber);
 
-    // Send a event to exit from Event Manager so sa to exit from nydusd
+    // Send an event to exit from Event Manager so as to exit from nydusd
     let exit_evtfd = event_manager
         .subscriber_mut(daemon_subscriber_id)
         .unwrap()
@@ -352,6 +364,16 @@ fn main() -> Result<()> {
             .value_of("threads")
             .map(|n| n.parse().unwrap_or(1))
             .unwrap_or(1);
+
+        let p = cmd_arguments
+            .value_of("failover-policy")
+            .unwrap_or("flush")
+            .try_into()
+            .map_err(|e| {
+                error!("Invalid failover policy");
+                e
+            })?;
+
         create_nydus_daemon(
             mountpoint,
             vfs.clone(),
@@ -360,6 +382,7 @@ fn main() -> Result<()> {
             threads,
             apisock,
             cmd_arguments.is_present("upgrade"),
+            p,
         )?
     };
     info!("starting fuse daemon");

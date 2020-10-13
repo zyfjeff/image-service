@@ -31,7 +31,7 @@ use vmm_sys_util::eventfd::EventFd;
 use crate::daemon;
 use crate::{EVENT_MANAGER_RUN, EXIT_EVTFD};
 use daemon::{DaemonError, DaemonResult, DaemonState, Error, NydusDaemon};
-use nydus_utils::{eio, eother, FuseChannel, FuseSession};
+use nydus_utils::{einval, eio, eother, FuseChannel, FuseSession};
 use upgrade_manager::fd_resource::FdResource;
 use upgrade_manager::resource::{Resource, ResourceName, VersionMapGetter};
 use upgrade_manager::UpgradeManager;
@@ -125,6 +125,7 @@ pub struct FusedevDaemon {
     pub id: Option<String>,
     /// Fuse connection ID which usually equals to `st_dev`
     conn: AtomicU64,
+    failover_policy: FailoverPolicy,
     upgrade_mgr: Mutex<UpgradeManager>,
 }
 
@@ -389,8 +390,11 @@ impl NydusDaemon for FusedevDaemon {
         let _: &Self = res.restore(self).map_err(|_| DaemonError::RecvFd)?;
         // Restore fuse fd from remote uds server
 
-        flush_fuse_connection(self.conn.load(Ordering::Acquire));
-        resend_fuse_requests(self.conn.load(Ordering::Acquire));
+        let conn = self.conn.load(Ordering::Acquire);
+        match self.failover_policy {
+            FailoverPolicy::Flush => flush_fuse_connection(conn),
+            FailoverPolicy::Resend => resend_fuse_requests(conn),
+        }
 
         self.session.lock().unwrap().file = unsafe { Some(File::from_raw_fd(res.fds[0])) };
         Ok(())
@@ -512,6 +516,25 @@ fn resend_fuse_requests(conn: u64) {
         .unwrap_or_else(|e| error!("Open `resend` file failed. {:?}", e));
 }
 
+use std::convert::TryFrom;
+pub enum FailoverPolicy {
+    Flush,
+    Resend,
+}
+
+impl TryFrom<&str> for FailoverPolicy {
+    type Error = std::io::Error;
+
+    fn try_from(p: &str) -> std::result::Result<Self, Self::Error> {
+        match p {
+            "flush" => Ok(FailoverPolicy::Flush),
+            "resend" => Ok(FailoverPolicy::Resend),
+            x => Err(einval!(x)),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn create_nydus_daemon(
     mountpoint: &str,
     vfs: Arc<Vfs>,
@@ -520,6 +543,7 @@ pub fn create_nydus_daemon(
     threads_cnt: u32,
     api_sock: impl AsRef<Path>,
     upgrade: bool,
+    fp: FailoverPolicy,
 ) -> Result<Arc<dyn NydusDaemon + Send>> {
     let (trigger, rx) = channel::<FusedevStateMachineInput>();
     let session = FuseSession::new(Path::new(mountpoint), "rafs", "")?;
@@ -541,6 +565,7 @@ pub fn create_nydus_daemon(
         supervisor,
         id,
         conn: AtomicU64::new(0),
+        failover_policy: fp,
         upgrade_mgr: Mutex::new(UpgradeManager::new(upgrade_mgr_id)),
     });
 
