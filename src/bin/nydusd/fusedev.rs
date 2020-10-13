@@ -5,11 +5,12 @@
 
 use std::any::Any;
 use std::ffi::{CStr, CString};
-use std::fs::File;
+use std::fs::{metadata, File};
 use std::io::Result;
 use std::ops::{Deref, DerefMut};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::FromRawFd;
+use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::{
     atomic::{AtomicI32, Ordering},
@@ -439,8 +440,25 @@ fn is_mounted(mp: impl AsRef<Path>) -> Result<bool> {
 
     Ok(false)
 }
-fn is_crashed(path: impl AsRef<Path>) -> Result<bool> {
-    is_mounted(path)
+
+fn is_sock_residual(sock: impl AsRef<Path>) -> bool {
+    if metadata(&sock).is_ok() {
+        return UnixStream::connect(&sock).is_err();
+    }
+
+    false
+}
+
+/// When a nydusd starts, it checks the environment to see if a previous nydusd dies beyond expect.
+///     1. See if the mount point is residual by retrieving `/proc/self/mounts`.
+///     2. See if the API socket exists and the connection can established or not.
+fn is_crashed(path: impl AsRef<Path>, sock: impl AsRef<Path>) -> Result<bool> {
+    if is_mounted(path)? && is_sock_residual(sock) {
+        warn!("A previous daemon crashed! Try to failover later.");
+        return Ok(true);
+    }
+
+    Ok(false)
 }
 
 pub fn create_nydus_daemon(
@@ -449,6 +467,7 @@ pub fn create_nydus_daemon(
     supervisor: Option<String>,
     id: Option<String>,
     threads_cnt: u32,
+    api_sock: impl AsRef<Path>,
     upgrade: bool,
 ) -> Result<Arc<dyn NydusDaemon + Send>> {
     let (trigger, rx) = channel::<FusedevStateMachineInput>();
@@ -476,7 +495,7 @@ pub fn create_nydus_daemon(
     let machine = FusedevDaemonSM::new(daemon.clone(), rx);
     machine.kick_state_machine()?;
 
-    if !upgrade && !is_crashed(mountpoint)? {
+    if !upgrade && !is_crashed(mountpoint, api_sock)? {
         daemon.session.lock().unwrap().mount()?;
         daemon
             .on_event(FusedevStateMachineInput::Mount)

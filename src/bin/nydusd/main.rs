@@ -358,6 +358,7 @@ fn main() -> Result<()> {
             supervisor,
             daemon_id,
             threads,
+            apisock,
             cmd_arguments.is_present("upgrade"),
         )?
     };
