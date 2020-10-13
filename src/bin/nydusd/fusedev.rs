@@ -8,12 +8,13 @@ use std::ffi::{CStr, CString};
 use std::fs::{metadata, File};
 use std::io::Result;
 use std::ops::{Deref, DerefMut};
+use std::os::linux::fs::MetadataExt;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::FromRawFd;
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::{
-    atomic::{AtomicI32, Ordering},
+    atomic::{AtomicI32, AtomicU64, Ordering},
     mpsc::{channel, Receiver, Sender},
     Arc, Mutex, Once,
 };
@@ -122,6 +123,8 @@ pub struct FusedevDaemon {
     trigger: Arc<Mutex<Trigger>>,
     pub supervisor: Option<String>,
     pub id: Option<String>,
+    /// Fuse connection ID which usually equals to `st_dev`
+    conn: AtomicU64,
     upgrade_mgr: Mutex<UpgradeManager>,
 }
 
@@ -398,6 +401,7 @@ impl<'a> Persist<'a> for &'a FusedevDaemon {
     fn save(&self) -> Self::State {
         DaemonOpaque {
             vfs_opts: self.vfs.get_opts(),
+            conn: self.conn.load(Ordering::Acquire),
         }
     }
 
@@ -406,6 +410,7 @@ impl<'a> Persist<'a> for &'a FusedevDaemon {
         opaque: &Self::State,
     ) -> std::result::Result<Self, Self::Error> {
         daemon.vfs.set_opts(opaque.vfs_opts);
+        daemon.conn.store(opaque.conn, Ordering::Relaxed);
         Ok(daemon)
     }
 }
@@ -461,6 +466,12 @@ fn is_crashed(path: impl AsRef<Path>, sock: impl AsRef<Path>) -> Result<bool> {
     Ok(false)
 }
 
+fn calc_fuse_conn(mp: impl AsRef<Path>) -> Result<u64> {
+    let st = metadata(mp)?;
+
+    Ok(st.st_dev())
+}
+
 pub fn create_nydus_daemon(
     mountpoint: &str,
     vfs: Arc<Vfs>,
@@ -489,6 +500,7 @@ pub fn create_nydus_daemon(
         trigger: Arc::new(Mutex::new(trigger)),
         supervisor,
         id,
+        conn: AtomicU64::new(0),
         upgrade_mgr: Mutex::new(UpgradeManager::new(upgrade_mgr_id)),
     });
 
@@ -499,7 +511,10 @@ pub fn create_nydus_daemon(
         daemon.session.lock().unwrap().mount()?;
         daemon
             .on_event(FusedevStateMachineInput::Mount)
-            .map_err(|e| eother!(e))?
+            .map_err(|e| eother!(e))?;
+        daemon
+            .conn
+            .store(calc_fuse_conn(mountpoint)?, Ordering::Relaxed);
     }
 
     Ok(daemon)
@@ -509,6 +524,7 @@ pub fn create_nydus_daemon(
 pub struct DaemonOpaque {
     // Negotiate with kernel when do mount
     vfs_opts: VfsOptions,
+    conn: u64,
 }
 
 impl VersionMapGetter for DaemonOpaque {}
