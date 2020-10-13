@@ -390,6 +390,7 @@ impl NydusDaemon for FusedevDaemon {
         // Restore fuse fd from remote uds server
 
         flush_fuse_connection(self.conn.load(Ordering::Acquire));
+        resend_fuse_requests(self.conn.load(Ordering::Acquire));
 
         self.session.lock().unwrap().file = unsafe { Some(File::from_raw_fd(res.fds[0])) };
         Ok(())
@@ -492,6 +493,23 @@ fn flush_fuse_connection(conn: u64) {
                 .unwrap_or_else(|e| error!("Flush failed. {:?}", e))
         })
         .unwrap_or_else(|e| error!("Open `flush` file failed. {:?}", e));
+}
+
+fn resend_fuse_requests(conn: u64) {
+    info!("Resending fuse connection {}", conn);
+    let control_fs_path = format!("/sys/fs/fuse/connections/{}/reset", conn);
+
+    // TODO: If `resend` file does not exists, we continue the failover progress but
+    // should throw alarm out.
+
+    OpenOptions::new()
+        .write(true)
+        .open(control_fs_path)
+        .map(|mut f| {
+            f.write_all(b"1")
+                .unwrap_or_else(|e| error!("Resend failed. {:?}", e))
+        })
+        .unwrap_or_else(|e| error!("Open `resend` file failed. {:?}", e));
 }
 
 pub fn create_nydus_daemon(
