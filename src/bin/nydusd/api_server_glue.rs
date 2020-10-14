@@ -6,6 +6,7 @@
 use std::convert::From;
 use std::fs::File;
 use std::ops::Deref;
+use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
@@ -195,6 +196,15 @@ impl ApiServer {
     }
 }
 
+fn parse_rafs_config(p: impl AsRef<Path>) -> Option<RafsConfig> {
+    if let Ok(content) = std::fs::read_to_string(p) {
+        if let Ok(rafs_conf) = serde_json::from_str::<RafsConfig>(&content) {
+            return Some(rafs_conf);
+        }
+    }
+    None
+}
+
 /// Mount Rafs per as to provided mount-info.
 pub fn rafs_mount(
     info: MountInfo,
@@ -203,73 +213,63 @@ pub fn rafs_mount(
 ) -> std::io::Result<()> {
     match info.ops.as_str() {
         "mount" => {
-            let mut rafs;
+            // As `umount` op has nothing to do with `source`, the body can have no `source`.
+            let source = info
+                .source
+                .ok_or_else(|| enoent!("No source file is provided!"))?;
 
-            if let Some(source) = info.source.as_ref() {
-                let mut file = Box::new(File::open(source).map_err(|e| eother!(e))?)
-                    as Box<dyn rafs::RafsIoRead>;
-
-                rafs = match info.config.as_ref() {
-                    Some(config) => {
-                        let content = std::fs::read_to_string(config).map_err(|e| einval!(e))?;
-                        let rafs_conf: RafsConfig =
-                            serde_json::from_str(&content).map_err(|e| einval!(e))?;
-                        Rafs::new(rafs_conf, &info.mountpoint, &mut file)?
-                    }
-                    None => Rafs::new(default_rafs_conf.clone(), &info.mountpoint, &mut file)?,
-                };
-
-                rafs.import(&mut file, None)?;
-
-                match vfs.mount(Box::new(rafs), &info.mountpoint) {
-                    Ok(()) => {
-                        info!("rafs mounted");
-                        Ok(())
-                    }
-                    Err(e) => Err(eother!(e)),
+            let rafs_config = match info.config.as_ref() {
+                Some(config) => {
+                    parse_rafs_config(config).ok_or_else(|| einval!("Fail in parsing config"))?
                 }
-            } else {
-                Err(eother!("No source was provided!"))
-            }
-        }
+                None => default_rafs_conf.clone(),
+            };
 
-        "umount" => match vfs.umount(&info.mountpoint) {
-            Ok(()) => Ok(()),
-            Err(e) => Err(e),
-        },
+            let mut file =
+                Box::new(File::open(source).map_err(|e| eother!(e))?) as Box<dyn rafs::RafsIoRead>;
+            let mut rafs = Rafs::new(rafs_config, &info.mountpoint, &mut file)?;
+            rafs.import(&mut file, None)?;
+
+            vfs.mount(Box::new(rafs), &info.mountpoint).map_err(|e| {
+                eother!(e);
+                e
+            })?;
+
+            info!("rafs mounted");
+            Ok(())
+        }
         "update" => {
             info!("switch backend");
-            let rafs_conf = match info.config.as_ref() {
-                Some(config) => {
-                    let content = std::fs::read_to_string(config).map_err(|e| einval!(e))?;
-                    let rafs_conf: RafsConfig =
-                        serde_json::from_str(&content).map_err(|e| einval!(e))?;
-                    rafs_conf
-                }
-                None => {
-                    return Err(enoent!("No rafs configuration was provided!"));
-                }
-            };
+
+            // As `umount` op has nothing to do with `source`, the body can have no `source`.
+            let source = info
+                .source
+                .ok_or_else(|| enoent!("No source file is provided!"))?;
+
+            let config = info
+                .config
+                .as_ref()
+                .ok_or_else(|| enoent!("No rafs configuration was provided!"))?;
+
+            // Safe to unwrap since we already checked if `config` is None or not above.
+            let rafs_conf =
+                parse_rafs_config(config).ok_or_else(|| einval!("Fail in parsing config"))?;
 
             let rootfs = vfs.get_rootfs(&info.mountpoint).map_err(|e| enoent!(e))?;
             let any_fs = rootfs.deref().as_any();
-            if let Some(fs_swap) = any_fs.downcast_ref::<Rafs>() {
-                if let Some(source) = info.source.as_ref() {
-                    let mut file = Box::new(File::open(source).map_err(|e| last_error!(e))?)
-                        as Box<dyn rafs::RafsIoRead>;
+            let fs_swap = any_fs.downcast_ref::<Rafs>().ok_or_else(|| {
+                error!("Can't downcast!");
+                einval!()
+            })?;
+            let mut file = Box::new(File::open(source).map_err(|e| last_error!(e))?)
+                as Box<dyn rafs::RafsIoRead>;
 
-                    fs_swap
-                        .update(&mut file, rafs_conf)
-                        .map_err(|e| eother!(e))?;
-                    Ok(())
-                } else {
-                    error!("no info.source is found, invalid mount info {:?}", info);
-                    Err(enoent!("No source file was provided!"))
-                }
-            } else {
-                Err(eother!("Can't swap fs"))
-            }
+            fs_swap
+                .update(&mut file, rafs_conf)
+                .map_err(|e| eother!(e))?;
+            Ok(())
         }
+        "umount" => vfs.umount(&info.mountpoint),
         _ => Err(einval!("Invalid op")),
     }
 }

@@ -86,6 +86,7 @@ pub struct DaemonInfo {
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct MountInfo {
+    /// Bootstrap path by which to import rafs
     #[serde(default)]
     pub source: Option<String>,
     #[serde(default)]
