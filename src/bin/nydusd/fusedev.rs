@@ -267,8 +267,9 @@ impl FusedevDaemon {
     }
 
     fn persist(&self) -> DaemonResult<()> {
+        // With supervisor, we can persist state nowhere.
         if self.supervisor().is_none() {
-            return Err(DaemonError::NoResource);
+            return Ok(());
         }
 
         let mut mgr_guard = self.upgrade_mgr.lock().unwrap();
