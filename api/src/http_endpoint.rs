@@ -141,9 +141,12 @@ fn success_response(body: Option<String>) -> Response {
     r
 }
 
-fn error_response(error: HttpError, status: StatusCode) -> Response {
+fn error_response(error: Option<HttpError>, status: StatusCode) -> Response {
     let mut response = Response::new(Version::Http11, status);
-    response.set_body(Body::new(format!("{:?}", error)));
+
+    if let Some(e) = error {
+        response.set_body(Body::new(format!("{:?}", e)));
+    }
     response
 }
 
@@ -164,7 +167,7 @@ fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(api_resp: ApiResponse, 
                 success_response(Some(serde_json::to_string(&d).unwrap()))
             }
         },
-        Err(e) => error_response(op(e), StatusCode::InternalServerError),
+        Err(e) => error_response(Some(op(e)), StatusCode::InternalServerError),
     }
 }
 
@@ -200,7 +203,7 @@ impl EndpointHandler for InfoHandler {
                 );
                 convert_to_response(r, HttpError::Configure)
             }
-            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+            _ => error_response(None, StatusCode::BadRequest),
         }
     }
 }
@@ -220,13 +223,12 @@ impl EndpointHandler for MountHandler {
                 let r = kick_api_server(api_notifier, to_api, from_api, ApiRequest::Mount(info));
                 convert_to_response(r, HttpError::Mount)
             }
-            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+            _ => error_response(None, StatusCode::BadRequest),
         }
     }
 }
 
 pub struct MetricsHandler {}
-
 impl EndpointHandler for MetricsHandler {
     fn handle_request(
         &self,
@@ -246,13 +248,12 @@ impl EndpointHandler for MetricsHandler {
                 );
                 convert_to_response(r, HttpError::GlobalMetrics)
             }
-            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+            _ => error_response(None, StatusCode::BadRequest),
         }
     }
 }
 
 pub struct MetricsFilesHandler {}
-
 impl EndpointHandler for MetricsFilesHandler {
     fn handle_request(
         &self,
@@ -272,13 +273,12 @@ impl EndpointHandler for MetricsFilesHandler {
                 );
                 convert_to_response(r, HttpError::FsFilesMetrics)
             }
-            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+            _ => error_response(None, StatusCode::BadRequest),
         }
     }
 }
 
 pub struct MetricsPatternHandler {}
-
 impl EndpointHandler for MetricsPatternHandler {
     fn handle_request(
         &self,
@@ -298,13 +298,12 @@ impl EndpointHandler for MetricsPatternHandler {
                 );
                 convert_to_response(r, HttpError::Pattern)
             }
-            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+            _ => error_response(None, StatusCode::BadRequest),
         }
     }
 }
 
 pub struct SendFuseFdHandler {}
-
 impl EndpointHandler for SendFuseFdHandler {
     fn handle_request(
         &self,
@@ -318,7 +317,7 @@ impl EndpointHandler for SendFuseFdHandler {
                 let r = kick_api_server(api_notifier, to_api, from_api, ApiRequest::SendFuseFd);
                 convert_to_response(r, HttpError::Upgrade)
             }
-            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+            _ => error_response(None, StatusCode::BadRequest),
         }
     }
 }
@@ -337,7 +336,7 @@ impl EndpointHandler for TakeoverHandler {
                 let r = kick_api_server(api_notifier, to_api, from_api, ApiRequest::Takeover);
                 convert_to_response(r, HttpError::Upgrade)
             }
-            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+            _ => error_response(None, StatusCode::BadRequest),
         }
     }
 }
@@ -356,7 +355,7 @@ impl EndpointHandler for ExitHandler {
                 let r = kick_api_server(api_notifier, to_api, from_api, ApiRequest::Exit);
                 convert_to_response(r, HttpError::Upgrade)
             }
-            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+            _ => error_response(None, StatusCode::BadRequest),
         }
     }
 }
