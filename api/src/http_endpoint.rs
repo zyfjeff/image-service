@@ -100,175 +100,7 @@ pub struct DaemonConf {
     pub log_level: String,
 }
 
-pub fn daemon_info(
-    api_evt: EventFd,
-    to_api: Sender<ApiRequest>,
-    from_api: &Receiver<ApiResponse>,
-) -> ApiResult<DaemonInfo> {
-    to_api
-        .send(ApiRequest::DaemonInfo)
-        .map_err(ApiError::RequestSend)?;
-    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
-
-    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
-
-    match info {
-        ApiResponsePayload::DaemonInfo(info) => Ok(info),
-        _ => Err(ApiError::ResponsePayloadType),
-    }
-}
-
-pub fn daemon_configure(
-    api_evt: EventFd,
-    to_api: Sender<ApiRequest>,
-    conf: DaemonConf,
-    from_api: &Receiver<ApiResponse>,
-) -> ApiResult<()> {
-    to_api
-        .send(ApiRequest::ConfigureDaemon(conf))
-        .map_err(ApiError::RequestSend)?;
-    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
-
-    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
-
-    match info {
-        ApiResponsePayload::Empty => Ok(()),
-        _ => Err(ApiError::ResponsePayloadType),
-    }
-}
-
-pub fn mount_info(
-    api_evt: EventFd,
-    to_api: Sender<ApiRequest>,
-    info: MountInfo,
-    from_api: &Receiver<ApiResponse>,
-) -> ApiResult<()> {
-    // Send the VM request.
-    to_api
-        .send(ApiRequest::Mount(info))
-        .map_err(ApiError::RequestSend)?;
-    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
-
-    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
-
-    match info {
-        ApiResponsePayload::Empty => Ok(()),
-        _ => Err(ApiError::ResponsePayloadType),
-    }
-}
-
-pub fn export_global_stats(
-    api_evt: EventFd,
-    to_api: Sender<ApiRequest>,
-    id: Option<String>,
-    from_api: &Receiver<ApiResponse>,
-) -> ApiResult<String> {
-    to_api
-        .send(ApiRequest::ExportGlobalMetrics(id))
-        .map_err(ApiError::RequestSend)?;
-    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
-
-    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
-
-    match info {
-        ApiResponsePayload::FsGlobalMetrics(info) => Ok(info),
-        _ => Err(ApiError::ResponsePayloadType),
-    }
-}
-
-pub fn export_files_stats(
-    api_evt: EventFd,
-    to_api: Sender<ApiRequest>,
-    id: Option<String>,
-    from_api: &Receiver<ApiResponse>,
-) -> ApiResult<String> {
-    to_api
-        .send(ApiRequest::ExportFilesMetrics(id))
-        .map_err(ApiError::RequestSend)?;
-    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
-
-    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
-
-    match info {
-        ApiResponsePayload::FsFilesMetrics(info) => Ok(info),
-        _ => Err(ApiError::ResponsePayloadType),
-    }
-}
-
-pub fn export_files_patterns(
-    api_evt: EventFd,
-    to_api: Sender<ApiRequest>,
-    id: Option<String>,
-    from_api: &Receiver<ApiResponse>,
-) -> ApiResult<String> {
-    to_api
-        .send(ApiRequest::ExportAccessPatterns(id))
-        .map_err(ApiError::RequestSend)?;
-    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
-
-    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
-
-    match info {
-        ApiResponsePayload::FsFilesPatterns(info) => Ok(info),
-        _ => Err(ApiError::ResponsePayloadType),
-    }
-}
-
-fn send_fuse_fd(
-    api_evt: EventFd,
-    to_api: Sender<ApiRequest>,
-    from_api: &Receiver<ApiResponse>,
-) -> ApiResult<()> {
-    to_api
-        .send(ApiRequest::SendFuseFd)
-        .map_err(ApiError::RequestSend)?;
-    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
-
-    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
-
-    match info {
-        ApiResponsePayload::Empty => Ok(()),
-        _ => Err(ApiError::ResponsePayloadType),
-    }
-}
-
-pub fn do_takeover(
-    api_evt: EventFd,
-    to_api: Sender<ApiRequest>,
-    from_api: &Receiver<ApiResponse>,
-) -> ApiResult<()> {
-    to_api
-        .send(ApiRequest::Takeover)
-        .map_err(ApiError::RequestSend)?;
-    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
-
-    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
-
-    match info {
-        ApiResponsePayload::Empty => Ok(()),
-        _ => Err(ApiError::ResponsePayloadType),
-    }
-}
-
-pub fn do_exit(
-    api_evt: EventFd,
-    to_api: Sender<ApiRequest>,
-    from_api: &Receiver<ApiResponse>,
-) -> ApiResult<()> {
-    to_api
-        .send(ApiRequest::Exit)
-        .map_err(ApiError::RequestSend)?;
-    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
-
-    let info = from_api.recv().map_err(ApiError::ResponseRecv)??;
-
-    match info {
-        ApiResponsePayload::Empty => Ok(()),
-        _ => Err(ApiError::ResponsePayloadType),
-    }
-}
-
-/// Errors associated with VMM management
+/// Errors associated with Nydus management
 #[derive(Debug)]
 pub enum HttpError {
     /// API request receive error
@@ -278,60 +110,11 @@ pub enum HttpError {
     Info(ApiError),
     /// Could not mount resource
     Mount(ApiError),
+    GlobalMetrics(ApiError),
+    FsFilesMetrics(ApiError),
+    Pattern(ApiError),
     Configure(ApiError),
     Upgrade(ApiError),
-}
-
-fn error_response(error: HttpError, status: StatusCode) -> Response {
-    let mut response = Response::new(Version::Http11, status);
-    response.set_body(Body::new(format!("{:?}", error)));
-    response
-}
-
-// /api/v1/daemon handler
-pub struct InfoHandler {}
-
-impl EndpointHandler for InfoHandler {
-    fn handle_request(
-        &self,
-        req: &Request,
-        api_notifier: EventFd,
-        to_api: Sender<ApiRequest>,
-        from_api: &Receiver<ApiResponse>,
-    ) -> Response {
-        match req.method() {
-            Method::Get => {
-                match daemon_info(api_notifier, to_api, from_api).map_err(HttpError::Info) {
-                    Ok(info) => {
-                        let mut response = Response::new(Version::Http11, StatusCode::OK);
-                        let info_serialized = serde_json::to_string(&info).unwrap();
-                        response.set_body(Body::new(info_serialized));
-                        response
-                    }
-                    Err(e) => error_response(e, StatusCode::InternalServerError),
-                }
-            }
-            Method::Put => match &req.body {
-                Some(body) => {
-                    let kv: DaemonConf = match serde_json::from_slice(body.raw())
-                        .map_err(HttpError::SerdeJsonDeserialize)
-                    {
-                        Ok(config) => config,
-                        Err(e) => return error_response(e, StatusCode::BadRequest),
-                    };
-
-                    match daemon_configure(api_notifier, to_api, kv, from_api)
-                        .map_err(HttpError::Configure)
-                    {
-                        Ok(()) => Response::new(Version::Http11, StatusCode::NoContent),
-                        Err(e) => error_response(e, StatusCode::InternalServerError),
-                    }
-                }
-                None => Response::new(Version::Http11, StatusCode::BadRequest),
-            },
-            _ => Response::new(Version::Http11, StatusCode::BadRequest),
-        }
-    }
 }
 
 fn kick_api_server(
@@ -345,16 +128,23 @@ fn kick_api_server(
     from_api.recv().map_err(ApiError::ResponseRecv)?
 }
 
-fn parse_mount_request(body: &Body) -> Result<MountInfo, HttpError> {
-    serde_json::from_slice::<MountInfo>(body.raw()).map_err(|_| HttpError::ParseBody)
-}
-
 fn success_response(body: Option<String>) -> Response {
-    let mut r = Response::new(Version::Http11, StatusCode::NoContent);
+    let status_code = if body.is_some() {
+        StatusCode::OK
+    } else {
+        StatusCode::NoContent
+    };
+    let mut r = Response::new(Version::Http11, status_code);
     if let Some(b) = body {
         r.set_body(Body::new(b));
     }
     r
+}
+
+fn error_response(error: HttpError, status: StatusCode) -> Response {
+    let mut response = Response::new(Version::Http11, status);
+    response.set_body(Body::new(format!("{:?}", error)));
+    response
 }
 
 fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(api_resp: ApiResponse, op: O) -> Response {
@@ -378,9 +168,44 @@ fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(api_resp: ApiResponse, 
     }
 }
 
-// /api/v1/mount handler
-pub struct MountHandler {}
+fn parse_mount_request(body: &Body) -> Result<MountInfo, HttpError> {
+    serde_json::from_slice::<MountInfo>(body.raw()).map_err(|_| HttpError::ParseBody)
+}
 
+fn parse_configure_daemon_request(body: &Body) -> Result<DaemonConf, HttpError> {
+    serde_json::from_slice::<DaemonConf>(body.raw()).map_err(|_| HttpError::ParseBody)
+}
+
+pub struct InfoHandler {}
+impl EndpointHandler for InfoHandler {
+    fn handle_request(
+        &self,
+        req: &Request,
+        api_notifier: EventFd,
+        to_api: Sender<ApiRequest>,
+        from_api: &Receiver<ApiResponse>,
+    ) -> Response {
+        match (req.method(), req.body.as_ref()) {
+            (Method::Get, None) => {
+                let r = kick_api_server(api_notifier, to_api, from_api, ApiRequest::DaemonInfo);
+                convert_to_response(r, HttpError::Info)
+            }
+            (Method::Put, Some(body)) => {
+                let conf = parse_configure_daemon_request(body).unwrap();
+                let r = kick_api_server(
+                    api_notifier,
+                    to_api,
+                    from_api,
+                    ApiRequest::ConfigureDaemon(conf),
+                );
+                convert_to_response(r, HttpError::Configure)
+            }
+            _ => Response::new(Version::Http11, StatusCode::BadRequest),
+        }
+    }
+}
+
+pub struct MountHandler {}
 impl EndpointHandler for MountHandler {
     fn handle_request(
         &self,
@@ -410,19 +235,16 @@ impl EndpointHandler for MetricsHandler {
         to_api: Sender<ApiRequest>,
         from_api: &Receiver<ApiResponse>,
     ) -> Response {
-        match req.method() {
-            Method::Get => {
+        match (req.method(), req.body.as_ref()) {
+            (Method::Get, None) => {
                 let id = extract_query_part(req, &"id");
-                match export_global_stats(api_notifier, to_api, id, from_api)
-                    .map_err(HttpError::Info)
-                {
-                    Ok(info) => {
-                        let mut response = Response::new(Version::Http11, StatusCode::OK);
-                        response.set_body(Body::new(info));
-                        response
-                    }
-                    Err(e) => error_response(e, StatusCode::InternalServerError),
-                }
+                let r = kick_api_server(
+                    api_notifier,
+                    to_api,
+                    from_api,
+                    ApiRequest::ExportGlobalMetrics(id),
+                );
+                convert_to_response(r, HttpError::GlobalMetrics)
             }
             _ => Response::new(Version::Http11, StatusCode::BadRequest),
         }
@@ -439,19 +261,16 @@ impl EndpointHandler for MetricsFilesHandler {
         to_api: Sender<ApiRequest>,
         from_api: &Receiver<ApiResponse>,
     ) -> Response {
-        match req.method() {
-            Method::Get => {
+        match (req.method(), req.body.as_ref()) {
+            (Method::Get, None) => {
                 let id = extract_query_part(req, &"id");
-                match export_files_stats(api_notifier, to_api, id, from_api)
-                    .map_err(HttpError::Info)
-                {
-                    Ok(info) => {
-                        let mut response = Response::new(Version::Http11, StatusCode::OK);
-                        response.set_body(Body::new(info));
-                        response
-                    }
-                    Err(e) => error_response(e, StatusCode::InternalServerError),
-                }
+                let r = kick_api_server(
+                    api_notifier,
+                    to_api,
+                    from_api,
+                    ApiRequest::ExportFilesMetrics(id),
+                );
+                convert_to_response(r, HttpError::FsFilesMetrics)
             }
             _ => Response::new(Version::Http11, StatusCode::BadRequest),
         }
@@ -468,19 +287,16 @@ impl EndpointHandler for MetricsPatternHandler {
         to_api: Sender<ApiRequest>,
         from_api: &Receiver<ApiResponse>,
     ) -> Response {
-        match req.method() {
-            Method::Get => {
+        match (req.method(), req.body.as_ref()) {
+            (Method::Get, None) => {
                 let id = extract_query_part(req, &"id");
-                match export_files_patterns(api_notifier, to_api, id, from_api)
-                    .map_err(HttpError::Info)
-                {
-                    Ok(info) => {
-                        let mut response = Response::new(Version::Http11, StatusCode::OK);
-                        response.set_body(Body::new(info));
-                        response
-                    }
-                    Err(e) => error_response(e, StatusCode::InternalServerError),
-                }
+                let r = kick_api_server(
+                    api_notifier,
+                    to_api,
+                    from_api,
+                    ApiRequest::ExportAccessPatterns(id),
+                );
+                convert_to_response(r, HttpError::Pattern)
             }
             _ => Response::new(Version::Http11, StatusCode::BadRequest),
         }
@@ -497,23 +313,17 @@ impl EndpointHandler for SendFuseFdHandler {
         to_api: Sender<ApiRequest>,
         from_api: &Receiver<ApiResponse>,
     ) -> Response {
-        match req.method() {
-            Method::Put => match send_fuse_fd(api_notifier, to_api, from_api) {
-                Ok(_) => Response::new(Version::Http11, StatusCode::NoContent),
-                Err(e) => match e {
-                    ApiError::DaemonAbnormal(DaemonErrorKind::NotReady) => {
-                        error_response(HttpError::Upgrade(e), StatusCode::BadRequest)
-                    }
-                    _ => error_response(HttpError::Upgrade(e), StatusCode::InternalServerError),
-                },
-            },
+        match (req.method(), req.body.as_ref()) {
+            (Method::Put, None) => {
+                let r = kick_api_server(api_notifier, to_api, from_api, ApiRequest::SendFuseFd);
+                convert_to_response(r, HttpError::Upgrade)
+            }
             _ => Response::new(Version::Http11, StatusCode::BadRequest),
         }
     }
 }
 
 pub struct TakeoverHandler {}
-
 impl EndpointHandler for TakeoverHandler {
     fn handle_request(
         &self,
@@ -522,12 +332,10 @@ impl EndpointHandler for TakeoverHandler {
         to_api: Sender<ApiRequest>,
         from_api: &Receiver<ApiResponse>,
     ) -> Response {
-        match req.method() {
-            Method::Put => {
-                match do_takeover(api_notifier, to_api, from_api).map_err(HttpError::Upgrade) {
-                    Ok(_) => Response::new(Version::Http11, StatusCode::NoContent),
-                    Err(e) => error_response(e, StatusCode::InternalServerError),
-                }
+        match (req.method(), req.body.as_ref()) {
+            (Method::Put, None) => {
+                let r = kick_api_server(api_notifier, to_api, from_api, ApiRequest::Takeover);
+                convert_to_response(r, HttpError::Upgrade)
             }
             _ => Response::new(Version::Http11, StatusCode::BadRequest),
         }
@@ -535,7 +343,6 @@ impl EndpointHandler for TakeoverHandler {
 }
 
 pub struct ExitHandler {}
-
 impl EndpointHandler for ExitHandler {
     fn handle_request(
         &self,
@@ -544,12 +351,10 @@ impl EndpointHandler for ExitHandler {
         to_api: Sender<ApiRequest>,
         from_api: &Receiver<ApiResponse>,
     ) -> Response {
-        match req.method() {
-            Method::Put => {
-                match do_exit(api_notifier, to_api, from_api).map_err(HttpError::Upgrade) {
-                    Ok(_) => Response::new(Version::Http11, StatusCode::NoContent),
-                    Err(e) => error_response(e, StatusCode::InternalServerError),
-                }
+        match (req.method(), req.body.as_ref()) {
+            (Method::Put, None) => {
+                let r = kick_api_server(api_notifier, to_api, from_api, ApiRequest::Exit);
+                convert_to_response(r, HttpError::Upgrade)
             }
             _ => Response::new(Version::Http11, StatusCode::BadRequest),
         }
