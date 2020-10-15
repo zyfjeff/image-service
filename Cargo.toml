@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["The Ant Financial Nydus Developers"]
 edition = "2018"
 
+[profile.release]
+panic = "abort"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
