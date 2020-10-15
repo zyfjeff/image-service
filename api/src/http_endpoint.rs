@@ -46,6 +46,7 @@ pub enum ApiError {
 }
 pub type ApiResult<T> = std::result::Result<T, ApiError>;
 
+#[derive(Serialize)]
 pub enum ApiResponsePayload {
     /// No data is sent on the channel.
     Empty,
@@ -119,6 +120,10 @@ pub enum HttpError {
     Upgrade(ApiError),
 }
 
+fn to_string(d: &impl serde::Serialize) -> Result<String, HttpError> {
+    serde_json::to_string(d).map_err(HttpError::SerdeJsonSerialize)
+}
+
 fn kick_api_server(
     api_evt: EventFd,
     to_api: Sender<ApiRequest>,
@@ -158,20 +163,13 @@ fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(
 ) -> Result<Response, HttpError> {
     match api_resp {
         Ok(r) => {
+            use ApiResponsePayload::*;
             let resp = match r {
-                ApiResponsePayload::Empty => success_response(None),
-                ApiResponsePayload::DaemonInfo(d) => success_response(Some(
-                    serde_json::to_string(&d).map_err(HttpError::SerdeJsonSerialize)?,
-                )),
-                ApiResponsePayload::FsFilesMetrics(d) => success_response(Some(
-                    serde_json::to_string(&d).map_err(HttpError::SerdeJsonSerialize)?,
-                )),
-                ApiResponsePayload::FsGlobalMetrics(d) => success_response(Some(
-                    serde_json::to_string(&d).map_err(HttpError::SerdeJsonSerialize)?,
-                )),
-                ApiResponsePayload::FsFilesPatterns(d) => success_response(Some(
-                    serde_json::to_string(&d).map_err(HttpError::SerdeJsonSerialize)?,
-                )),
+                Empty => success_response(None),
+                DaemonInfo(d) => success_response(Some(to_string(&d)?)),
+                FsFilesMetrics(d) => success_response(Some(to_string(&d)?)),
+                FsGlobalMetrics(d) => success_response(Some(to_string(&d)?)),
+                FsFilesPatterns(d) => success_response(Some(to_string(&d)?)),
             };
 
             Ok(resp)
