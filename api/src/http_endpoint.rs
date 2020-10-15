@@ -273,21 +273,18 @@ pub fn do_exit(
 pub enum HttpError {
     /// API request receive error
     SerdeJsonDeserialize(SerdeError),
-
+    ParseBody,
     /// Could not query daemon info
     Info(ApiError),
-
     /// Could not mount resource
     Mount(ApiError),
     Configure(ApiError),
-
     Upgrade(ApiError),
 }
 
 fn error_response(error: HttpError, status: StatusCode) -> Response {
     let mut response = Response::new(Version::Http11, status);
     response.set_body(Body::new(format!("{:?}", error)));
-
     response
 }
 
@@ -337,6 +334,50 @@ impl EndpointHandler for InfoHandler {
     }
 }
 
+fn kick_api_server(
+    api_evt: EventFd,
+    to_api: Sender<ApiRequest>,
+    from_api: &Receiver<ApiResponse>,
+    request: ApiRequest,
+) -> ApiResponse {
+    to_api.send(request).map_err(ApiError::RequestSend)?;
+    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
+    from_api.recv().map_err(ApiError::ResponseRecv)?
+}
+
+fn parse_mount_request(body: &Body) -> Result<MountInfo, HttpError> {
+    serde_json::from_slice::<MountInfo>(body.raw()).map_err(|_| HttpError::ParseBody)
+}
+
+fn success_response(body: Option<String>) -> Response {
+    let mut r = Response::new(Version::Http11, StatusCode::NoContent);
+    if let Some(b) = body {
+        r.set_body(Body::new(b));
+    }
+    r
+}
+
+fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(api_resp: ApiResponse, op: O) -> Response {
+    match api_resp {
+        Ok(r) => match r {
+            ApiResponsePayload::Empty => success_response(None),
+            ApiResponsePayload::DaemonInfo(d) => {
+                success_response(Some(serde_json::to_string(&d).unwrap()))
+            }
+            ApiResponsePayload::FsFilesMetrics(d) => {
+                success_response(Some(serde_json::to_string(&d).unwrap()))
+            }
+            ApiResponsePayload::FsGlobalMetrics(d) => {
+                success_response(Some(serde_json::to_string(&d).unwrap()))
+            }
+            ApiResponsePayload::FsFilesPatterns(d) => {
+                success_response(Some(serde_json::to_string(&d).unwrap()))
+            }
+        },
+        Err(e) => error_response(op(e), StatusCode::InternalServerError),
+    }
+}
+
 // /api/v1/mount handler
 pub struct MountHandler {}
 
@@ -348,31 +389,12 @@ impl EndpointHandler for MountHandler {
         to_api: Sender<ApiRequest>,
         from_api: &Receiver<ApiResponse>,
     ) -> Response {
-        match req.method() {
-            Method::Put => {
-                match &req.body {
-                    Some(body) => {
-                        // Deserialize into a MountInfo
-                        let info: MountInfo = match serde_json::from_slice(body.raw())
-                            .map_err(HttpError::SerdeJsonDeserialize)
-                        {
-                            Ok(config) => config,
-                            Err(e) => return error_response(e, StatusCode::BadRequest),
-                        };
-
-                        // Call mount_info()
-                        match mount_info(api_notifier, to_api, info, from_api)
-                            .map_err(HttpError::Mount)
-                        {
-                            Ok(_) => Response::new(Version::Http11, StatusCode::NoContent),
-                            Err(e) => error_response(e, StatusCode::InternalServerError),
-                        }
-                    }
-
-                    None => Response::new(Version::Http11, StatusCode::BadRequest),
-                }
+        match (req.method(), req.body.as_ref()) {
+            (Method::Put, Some(body)) => {
+                let info = parse_mount_request(body).unwrap();
+                let r = kick_api_server(api_notifier, to_api, from_api, ApiRequest::Mount(info));
+                convert_to_response(r, HttpError::Mount)
             }
-
             _ => Response::new(Version::Http11, StatusCode::BadRequest),
         }
     }
