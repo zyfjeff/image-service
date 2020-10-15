@@ -19,8 +19,8 @@ use micro_http::{Body, HttpServer, MediaType, Request, Response, StatusCode, Ver
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::http_endpoint::{
-    ApiRequest, ApiResponse, ExitHandler, InfoHandler, MetricsFilesHandler, MetricsHandler,
-    MetricsPatternHandler, MountHandler, SendFuseFdHandler, TakeoverHandler,
+    ApiRequest, ApiResponse, ExitHandler, HttpResult, InfoHandler, MetricsFilesHandler,
+    MetricsHandler, MetricsPatternHandler, MountHandler, SendFuseFdHandler, TakeoverHandler,
 };
 
 const HTTP_ROOT: &str = "/api/v1";
@@ -38,7 +38,7 @@ pub trait EndpointHandler: Sync + Send {
         api_notifier: EventFd,
         to_api: Sender<ApiRequest>,
         from_api: &Receiver<ApiResponse>,
-    ) -> Response;
+    ) -> HttpResult;
 }
 
 /// An HTTP routes structure.
@@ -82,7 +82,14 @@ fn handle_http_request(
     let uri = request.uri().get_abs_path().parse::<Uri>().unwrap();
     let mut response = match HTTP_ROUTES.routes.get(&uri.path().to_string()) {
         Some(route) => match api_notifier.try_clone() {
-            Ok(notifier) => route.handle_request(&request, notifier, to_api.clone(), from_api),
+            Ok(notifier) => route
+                .handle_request(&request, notifier, to_api.clone(), from_api)
+                .unwrap_or_else(|_| {
+                    let mut r = Response::new(Version::Http11, StatusCode::InternalServerError);
+                    r.set_body(Body::new("Internal error!"));
+                    r
+                }),
+
             Err(_) => {
                 let mut r = Response::new(Version::Http11, StatusCode::InternalServerError);
                 r.set_body(Body::new("Internal error!"));
