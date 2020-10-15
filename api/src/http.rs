@@ -3,7 +3,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::clone::Clone;
 use std::collections::HashMap;
 use std::io::Result;
 use std::path::PathBuf;
@@ -19,7 +18,7 @@ use micro_http::{Body, HttpServer, MediaType, Request, Response, StatusCode, Ver
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::http_endpoint::{
-    ApiRequest, ApiResponse, ExitHandler, HttpResult, InfoHandler, MetricsFilesHandler,
+    ApiError, ApiRequest, ApiResponse, ExitHandler, HttpResult, InfoHandler, MetricsFilesHandler,
     MetricsHandler, MetricsPatternHandler, MountHandler, SendFuseFdHandler, TakeoverHandler,
 };
 
@@ -35,9 +34,7 @@ pub trait EndpointHandler: Sync + Send {
     fn handle_request(
         &self,
         req: &Request,
-        api_notifier: EventFd,
-        to_api: Sender<ApiRequest>,
-        from_api: &Receiver<ApiResponse>,
+        kicker: &dyn Fn(ApiRequest) -> ApiResponse,
     ) -> HttpResult;
 }
 
@@ -72,6 +69,17 @@ lazy_static! {
     };
 }
 
+fn kick_api_server(
+    api_evt: &EventFd,
+    to_api: &Sender<ApiRequest>,
+    from_api: &Receiver<ApiResponse>,
+    request: ApiRequest,
+) -> ApiResponse {
+    to_api.send(request).map_err(ApiError::RequestSend)?;
+    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
+    from_api.recv().map_err(ApiError::ResponseRecv)?
+}
+
 fn handle_http_request(
     request: &Request,
     api_notifier: &EventFd,
@@ -81,21 +89,15 @@ fn handle_http_request(
     // Micro http should ensure that req path is legal.
     let uri = request.uri().get_abs_path().parse::<Uri>().unwrap();
     let mut response = match HTTP_ROUTES.routes.get(&uri.path().to_string()) {
-        Some(route) => match api_notifier.try_clone() {
-            Ok(notifier) => route
-                .handle_request(&request, notifier, to_api.clone(), from_api)
-                .unwrap_or_else(|_| {
-                    let mut r = Response::new(Version::Http11, StatusCode::InternalServerError);
-                    r.set_body(Body::new("Internal error!"));
-                    r
-                }),
-
-            Err(_) => {
+        Some(route) => route
+            .handle_request(&request, &|r| {
+                kick_api_server(api_notifier, to_api, from_api, r)
+            })
+            .unwrap_or_else(|_| {
                 let mut r = Response::new(Version::Http11, StatusCode::InternalServerError);
                 r.set_body(Body::new("Internal error!"));
                 r
-            }
-        },
+            }),
         None => {
             let mut r = Response::new(Version::Http11, StatusCode::NotFound);
             r.set_body(Body::new(format!(

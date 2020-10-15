@@ -4,11 +4,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::io;
-use std::sync::mpsc::{Receiver, RecvError, SendError, Sender};
+use std::sync::mpsc::{RecvError, SendError};
 
 use micro_http::{Body, Method, Request, Response, StatusCode, Version};
 use serde_json::Error as SerdeError;
-use vmm_sys_util::eventfd::EventFd;
 
 use crate::http::{extract_query_part, EndpointHandler};
 
@@ -124,17 +123,6 @@ fn to_string(d: &impl serde::Serialize) -> Result<String, HttpError> {
     serde_json::to_string(d).map_err(HttpError::SerdeJsonSerialize)
 }
 
-fn kick_api_server(
-    api_evt: EventFd,
-    to_api: Sender<ApiRequest>,
-    from_api: &Receiver<ApiResponse>,
-    request: ApiRequest,
-) -> ApiResponse {
-    to_api.send(request).map_err(ApiError::RequestSend)?;
-    api_evt.write(1).map_err(ApiError::EventFdWrite)?;
-    from_api.recv().map_err(ApiError::ResponseRecv)?
-}
-
 fn success_response(body: Option<String>) -> Response {
     let status_code = if body.is_some() {
         StatusCode::OK
@@ -191,23 +179,16 @@ impl EndpointHandler for InfoHandler {
     fn handle_request(
         &self,
         req: &Request,
-        api_notifier: EventFd,
-        to_api: Sender<ApiRequest>,
-        from_api: &Receiver<ApiResponse>,
+        kicker: &dyn Fn(ApiRequest) -> ApiResponse,
     ) -> HttpResult {
         match (req.method(), req.body.as_ref()) {
             (Method::Get, None) => {
-                let r = kick_api_server(api_notifier, to_api, from_api, ApiRequest::DaemonInfo);
+                let r = kicker(ApiRequest::DaemonInfo);
                 convert_to_response(r, HttpError::Info)
             }
             (Method::Put, Some(body)) => {
                 let conf = parse_configure_daemon_request(body)?;
-                let r = kick_api_server(
-                    api_notifier,
-                    to_api,
-                    from_api,
-                    ApiRequest::ConfigureDaemon(conf),
-                );
+                let r = kicker(ApiRequest::ConfigureDaemon(conf));
                 convert_to_response(r, HttpError::Configure)
             }
             _ => Ok(error_response(None, StatusCode::BadRequest)),
@@ -220,14 +201,12 @@ impl EndpointHandler for MountHandler {
     fn handle_request(
         &self,
         req: &Request,
-        api_notifier: EventFd,
-        to_api: Sender<ApiRequest>,
-        from_api: &Receiver<ApiResponse>,
+        kicker: &dyn Fn(ApiRequest) -> ApiResponse,
     ) -> HttpResult {
         match (req.method(), req.body.as_ref()) {
             (Method::Put, Some(body)) => {
                 let info = parse_mount_request(body)?;
-                let r = kick_api_server(api_notifier, to_api, from_api, ApiRequest::Mount(info));
+                let r = kicker(ApiRequest::Mount(info));
                 convert_to_response(r, HttpError::Mount)
             }
             _ => Ok(error_response(None, StatusCode::BadRequest)),
@@ -240,19 +219,12 @@ impl EndpointHandler for MetricsHandler {
     fn handle_request(
         &self,
         req: &Request,
-        api_notifier: EventFd,
-        to_api: Sender<ApiRequest>,
-        from_api: &Receiver<ApiResponse>,
+        kicker: &dyn Fn(ApiRequest) -> ApiResponse,
     ) -> HttpResult {
         match (req.method(), req.body.as_ref()) {
             (Method::Get, None) => {
                 let id = extract_query_part(req, &"id");
-                let r = kick_api_server(
-                    api_notifier,
-                    to_api,
-                    from_api,
-                    ApiRequest::ExportGlobalMetrics(id),
-                );
+                let r = kicker(ApiRequest::ExportGlobalMetrics(id));
                 convert_to_response(r, HttpError::GlobalMetrics)
             }
             _ => Ok(error_response(None, StatusCode::BadRequest)),
@@ -265,19 +237,12 @@ impl EndpointHandler for MetricsFilesHandler {
     fn handle_request(
         &self,
         req: &Request,
-        api_notifier: EventFd,
-        to_api: Sender<ApiRequest>,
-        from_api: &Receiver<ApiResponse>,
+        kicker: &dyn Fn(ApiRequest) -> ApiResponse,
     ) -> HttpResult {
         match (req.method(), req.body.as_ref()) {
             (Method::Get, None) => {
                 let id = extract_query_part(req, &"id");
-                let r = kick_api_server(
-                    api_notifier,
-                    to_api,
-                    from_api,
-                    ApiRequest::ExportFilesMetrics(id),
-                );
+                let r = kicker(ApiRequest::ExportFilesMetrics(id));
                 convert_to_response(r, HttpError::FsFilesMetrics)
             }
             _ => Ok(error_response(None, StatusCode::BadRequest)),
@@ -290,19 +255,12 @@ impl EndpointHandler for MetricsPatternHandler {
     fn handle_request(
         &self,
         req: &Request,
-        api_notifier: EventFd,
-        to_api: Sender<ApiRequest>,
-        from_api: &Receiver<ApiResponse>,
+        kicker: &dyn Fn(ApiRequest) -> ApiResponse,
     ) -> HttpResult {
         match (req.method(), req.body.as_ref()) {
             (Method::Get, None) => {
                 let id = extract_query_part(req, &"id");
-                let r = kick_api_server(
-                    api_notifier,
-                    to_api,
-                    from_api,
-                    ApiRequest::ExportAccessPatterns(id),
-                );
+                let r = kicker(ApiRequest::ExportAccessPatterns(id));
                 convert_to_response(r, HttpError::Pattern)
             }
             _ => Ok(error_response(None, StatusCode::BadRequest)),
@@ -315,13 +273,11 @@ impl EndpointHandler for SendFuseFdHandler {
     fn handle_request(
         &self,
         req: &Request,
-        api_notifier: EventFd,
-        to_api: Sender<ApiRequest>,
-        from_api: &Receiver<ApiResponse>,
+        kicker: &dyn Fn(ApiRequest) -> ApiResponse,
     ) -> HttpResult {
         match (req.method(), req.body.as_ref()) {
             (Method::Put, None) => {
-                let r = kick_api_server(api_notifier, to_api, from_api, ApiRequest::SendFuseFd);
+                let r = kicker(ApiRequest::SendFuseFd);
                 convert_to_response(r, HttpError::Upgrade)
             }
             _ => Ok(error_response(None, StatusCode::BadRequest)),
@@ -334,13 +290,11 @@ impl EndpointHandler for TakeoverHandler {
     fn handle_request(
         &self,
         req: &Request,
-        api_notifier: EventFd,
-        to_api: Sender<ApiRequest>,
-        from_api: &Receiver<ApiResponse>,
+        kicker: &dyn Fn(ApiRequest) -> ApiResponse,
     ) -> HttpResult {
         match (req.method(), req.body.as_ref()) {
             (Method::Put, None) => {
-                let r = kick_api_server(api_notifier, to_api, from_api, ApiRequest::Takeover);
+                let r = kicker(ApiRequest::Takeover);
                 convert_to_response(r, HttpError::Upgrade)
             }
             _ => Ok(error_response(None, StatusCode::BadRequest)),
@@ -353,13 +307,11 @@ impl EndpointHandler for ExitHandler {
     fn handle_request(
         &self,
         req: &Request,
-        api_notifier: EventFd,
-        to_api: Sender<ApiRequest>,
-        from_api: &Receiver<ApiResponse>,
+        kicker: &dyn Fn(ApiRequest) -> ApiResponse,
     ) -> HttpResult {
         match (req.method(), req.body.as_ref()) {
             (Method::Put, None) => {
-                let r = kick_api_server(api_notifier, to_api, from_api, ApiRequest::Exit);
+                let r = kicker(ApiRequest::Exit);
                 convert_to_response(r, HttpError::Upgrade)
             }
             _ => Ok(error_response(None, StatusCode::BadRequest)),
