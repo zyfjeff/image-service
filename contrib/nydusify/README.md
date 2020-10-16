@@ -1,10 +1,11 @@
 # Nydusify
 
-The nydusify tool converts a remote container image into a nydus image.
+The Nydusify CLI tool converts an OCI container image from source registry into a Nydus image using `nydus-image` CLI layer by layer, then pushes Nydus image to target registry.
 
 ## Dependencies
 
-Containerd service: Nydusify uses containerd to pull source image and push target image.
+- Golang 1.14 or above
+- Containerd: Nydusify uses containerd service to pull & push image.
 
 ## Build
 
@@ -18,7 +19,7 @@ make
 make build-release
 ```
 
-## Usage
+## Basic Usage
 
 ```
 cmd/nydusify convert \
@@ -27,3 +28,7 @@ cmd/nydusify convert \
   --source myregistry/repo:tag \
   --target myregistry/repo:tag-nydus
 ```
+
+## Nydusify Conversion Options
+
+See `cmd/nydusify convert --help`

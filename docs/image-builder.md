@@ -1,66 +1,66 @@
 # Nydus Image Builder
 
-Nydus image contains two parts, `bootstrap` and `blob`:
+`nydus-image` tool converts a directory tree (usually an image layer) into two parts: `bootstrap` and `blob`:
 
-- `bootstrap` records the file inode and the index of data chunk in rootfs;
-- `blob` packs all compressed file data chunk in rootfs;
+- `bootstrap` is a file presenting filesystem metadata information of the directory;
+- `blob` stores all files data in the directory;
 
-Nydus image builder is used to building the existing container rootfs directory into the `bootstrap` and `blob` file required by nydusd.
-
-[Buildkitd](https://gitlab.alibaba-inc.com/kata-containers/buildkit) provides a script tool to convert oci image to nydus format image using `bootstrap` and upload `blob` file to storage backend (for example aliyun OSS, docker registry).
-
-## Compile nydus image builder
+## Build Nydus Image From Directory Source
 
 ```shell
-cargo build --release
+nydus-image create \
+  --bootstrap /path/to/bootstrap
+  --backend-type localfs
+  --backend-config '{"dir":"/path/to/blobs"}'
+  /path/to/source/dir
 ```
 
-## Build nydus image from directory source
+## Use Different Storage Backend
 
-```shell
-# $BLOB_PATH: output blob file path, optional
-# $BLOB_ID: blob id for storage backend, optional
-# $BOOTSTRAP_PATH: output bootstrap file path
-# $PARENT_BOOTSTRAP_PATH: parent bootstrap file path, optional
-# $SOURCE: rootfs source directory path
-# $BACKEND_TYPE: oss | registry | localfs, optional
-# $BACKEND_CONFIG: JSON string of backend config, optional
+Some examples with backend config:
 
-./target/release/nydus-image create \
-            --blob $BLOB_PATH \
-            --blob-id $BLOB_ID \
-            --bootstrap $BOOTSTRAP_PATH \
-            --parent-bootstrap $PARENT_BOOTSTRAP_PATH \
-            --backend-type $BACKEND_TYPE \
-            --backend-config $BACKEND_CONFIG \
-            --repeatable \
-            $SOURCE
+Localfs Backend:
+
+``` shell
+# Build blob file to specified file path
+--backend_type localfs --backend_config '{"blob_file":"/path/to/blob"}'
+# Build blob file to specified directory path
+--backend_type localfs --backend_config '{"dir":"/path/to/blobs"}'
 ```
 
-For `localfs` backend, it's much simpler as below:
+OSS Backend:
 
-```shell
-./target/release/nydus-image create \
-            --bootstrap $BOOTSTRAP_PATH \
-            --backend-type localfs \
-            --backend-config "{\"dir\":\"/path/to/blobs/\"}" \
-            $SOURCE
+``` shell
+--backend_type localfs --backend_config '{"endpoint":"region.aliyuncs.com","access_key_id":"","access_key_secret":"","bucket_name":""}'
 ```
 
-An example of JSON string of $BACKEND_CONFIG,
+Container Image Registry Backend:
 
-oss backend,
-```shell
---backend_config '{"endpoint":"region.aliyuncs.com","access_key_id":"","access_key_secret":"","bucket_name":""}'
-```
-
-registry backend,
-
-```shell
+``` shell
 --backend_config '{"scheme":"https","host":"my-registry:5000","repo":"test/repo","auth":"<base64_encoded_auth>"}'
 ```
 
-## Build nydus image from stargz index
+## Layered Build Nydus Image
+
+`nydus-image` tool supports to build Nydus image from multiple layers of image:
+
+```shell
+# Build from lower layer
+nydus-image create \
+  --bootstrap /path/to/parent-bootstrap
+  --backend-type localfs
+  --backend-config '{"dir":"/path/to/blobs"}'
+  /path/to/lower/dir
+# Build from upper layer based on lower layer
+nydus-image create \
+  --parent-bootstrap /path/to/parent-bootstrap
+  --bootstrap /path/to/bootstrap
+  --backend-type localfs
+  --backend-config '{"dir":"/path/to/blobs"}'
+  /path/to/upper/dir
+```
+
+## Build Nydus Image From Stargz Index
 
 ### Convert image layer to stargz format
 
@@ -73,13 +73,22 @@ tar -xzvf layer.stargz stargz.index.json
 ### Stargz build
 
 ```shell
-nydus-image create --source-type stargz_index --bootstrap <parent-bootstrap-path> --blob-id <image-lower-layer-id> --log-level trace <stargz.index-lower.json>
+nydus-image create \
+  --source-type stargz_index \
+  --bootstrap /path/to/parent-bootstrap \
+  --blob-id <image-lower-layer-id> \
+  /path/to/stargz.index.lower.json
 ```
 
 ### Stargz layered build:
 
 ```shell
-nydus-image create --source-type stargz_index --parent-bootstrap <parent-bootstrap-path> --bootstrap <bootstrap-path> --blob-id <image-upper-layer-id> --log-level trace <stargz.index-upper.json>
+nydus-image create \
+  --source-type stargz_index \
+  --parent-bootstrap /path/to/parent-bootstrap \
+  --bootstrap /path/to/bootstrap \
+  --blob-id <image-upper-layer-id> \
+  /path/to/stargz.index.upper.json
 ```
 
 Note: the argument value of image layer id specified in nydus-image CLI should omit `sha256:` prefix.
