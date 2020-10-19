@@ -78,8 +78,7 @@ pub mod tests {
     use std::io::Error;
 
     use snapshot::Persist;
-    use versionize::VersionMap;
-    use versionize::{Versionize, VersionizeResult};
+    use versionize::{VersionMap, Versionize, VersionizeResult};
     use versionize_derive::Versionize;
 
     use super::*;

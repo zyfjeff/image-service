@@ -20,8 +20,7 @@ use fuse_rs::api::{server::Server, Vfs, VfsOptions};
 use rust_fsm::*;
 use serde::{Deserialize, Serialize};
 use snapshot::Persist;
-use versionize::VersionMap;
-use versionize::{Versionize, VersionizeResult};
+use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
 use vmm_sys_util::eventfd::EventFd;
 
@@ -209,7 +208,6 @@ impl FusedevDaemonSM {
                             d.start(cnt)
                         }
                         FusedevStateMachineOutput::Persist => d.persist().map_err(|e| eother!(e)),
-                        // A proper state machine can ensure that `session` must be contained!
                         FusedevStateMachineOutput::Umount => d.session.lock().unwrap().umount(),
                         FusedevStateMachineOutput::TerminateFuseService => {
                             d.set_state(DaemonState::INTERRUPT);
