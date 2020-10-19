@@ -94,8 +94,8 @@ fn handle_http_request(
                 kick_api_server(api_notifier, to_api, from_api, r)
             })
             .unwrap_or_else(|_| {
-                let mut r = Response::new(Version::Http11, StatusCode::InternalServerError);
-                r.set_body(Body::new("Internal error!"));
+                let mut r = Response::new(Version::Http11, StatusCode::BadRequest);
+                r.set_body(Body::new("Bad request!"));
                 r
             }),
         None => {
