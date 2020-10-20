@@ -392,10 +392,8 @@ impl NydusDaemon for FusedevDaemon {
         // Restore fuse fd from remote uds server
 
         let conn = self.conn.load(Ordering::Acquire);
-        match self.failover_policy {
-            FailoverPolicy::Flush => flush_fuse_connection(conn),
-            FailoverPolicy::Resend => resend_fuse_requests(conn),
-        }
+
+        drain_fuse_requests(conn, &self.failover_policy);
 
         self.session.lock().unwrap().file = unsafe { Some(File::from_raw_fd(res.fds[0])) };
         Ok(())
@@ -424,6 +422,7 @@ impl<'a> Persist<'a> for &'a FusedevDaemon {
     }
 }
 
+// TODO: Perhaps, we can't reply on `/proc/self/mounts` to tell if it is mounted.
 fn is_mounted(mp: impl AsRef<Path>) -> Result<bool> {
     let mounts = CString::new("/proc/self/mounts").unwrap();
     let ty = CString::new("r").unwrap();
@@ -483,29 +482,16 @@ fn calc_fuse_conn(mp: impl AsRef<Path>) -> Result<u64> {
 /// There might be some in-flight fuse requests when nydusd terminates out of sudden.
 /// According to FLUSH policy, those requests will be abandoned which means kernel
 /// no longer waits for their responses.
-fn flush_fuse_connection(conn: u64) {
-    info!("Flushing fuse connection {}", conn);
-    let control_fs_path = format!("/sys/fs/fuse/connections/{}/flush", conn);
+fn drain_fuse_requests(conn: u64, p: &FailoverPolicy) {
+    let f = match p {
+        FailoverPolicy::Flush => "flush",
+        FailoverPolicy::Resend => "reset",
+    };
 
-    // TODO: If `flush` file does not exists, we continue the failover progress but
+    // TODO: If `flush` or `reset` file does not exists, we continue the failover progress but
     // should throw alarm out.
 
-    OpenOptions::new()
-        .write(true)
-        .open(control_fs_path)
-        .map(|mut f| {
-            f.write_all(b"1")
-                .unwrap_or_else(|e| error!("Flush failed. {:?}", e))
-        })
-        .unwrap_or_else(|e| error!("Open `flush` file failed. {:?}", e));
-}
-
-fn resend_fuse_requests(conn: u64) {
-    info!("Resending fuse connection {}", conn);
-    let control_fs_path = format!("/sys/fs/fuse/connections/{}/reset", conn);
-
-    // TODO: If `resend` file does not exists, we continue the failover progress but
-    // should throw alarm out.
+    let control_fs_path = format!("/sys/fs/fuse/connections/{}/{}", conn, f);
 
     OpenOptions::new()
         .write(true)
@@ -514,7 +500,7 @@ fn resend_fuse_requests(conn: u64) {
             f.write_all(b"1")
                 .unwrap_or_else(|e| error!("Resend failed. {:?}", e))
         })
-        .unwrap_or_else(|e| error!("Open `resend` file failed. {:?}", e));
+        .unwrap_or_else(|e| error!("Open `{}` file failed. {:?}", e, f));
 }
 
 use std::convert::TryFrom;
