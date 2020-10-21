@@ -199,6 +199,7 @@ To mount a bootstrap via api, first launch nydusd without a bootstrap:
 sudo target-fusedev/debug/nydusd \
   --apisock /path/to/api.sock \
   --config /path/to/config.json \
+  --mountpoint /path/to/mountpoint
 ```
 
 Then use curl to call the mount api:
