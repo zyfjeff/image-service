@@ -196,10 +196,9 @@ mount -t virtiofs nydus /mnt
 To mount a bootstrap via api, first launch nydusd without a bootstrap:
 
 ``` shell
-sudo target-virtiofsd/debug/nydusd \
+sudo target-fusedev/debug/nydusd \
   --apisock /path/to/api.sock \
   --config /path/to/config.json \
-  --sock /path/to/vhost-user-fs.sock
 ```
 
 Then use curl to call the mount api:
