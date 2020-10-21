@@ -10,12 +10,14 @@ The Nydusify CLI tool converts an OCI container image from source registry into 
 ## Build
 
 ```
+cd contrib/nydusify
 make
 ```
 
 ## Release Build
 
 ```
+cd contrib/nydusify
 make build-release
 ```
 
