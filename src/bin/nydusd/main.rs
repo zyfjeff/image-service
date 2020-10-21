@@ -129,20 +129,6 @@ fn main() -> Result<()> {
                 .min_values(1),
         )
         .arg(
-            Arg::with_name("sock")
-                .long("sock")
-                .help("vhost-user socket path")
-                .takes_value(true)
-                .min_values(1),
-        )
-        .arg(
-            Arg::with_name("mountpoint")
-                .long("mountpoint")
-                .help("fuse mount point")
-                .takes_value(true)
-                .min_values(1),
-        )
-        .arg(
             Arg::with_name("config")
                 .long("config")
                 .help("config file")
@@ -169,15 +155,6 @@ fn main() -> Result<()> {
                 .long("log-level")
                 .default_value("warn")
                 .help("Specify log level: trace, debug, info, warn, error")
-                .takes_value(true)
-                .required(false)
-                .global(true),
-        )
-        .arg(
-            Arg::with_name("threads")
-                .long("thread-num")
-                .default_value("1")
-                .help("Specify the number of fuse service threads")
                 .takes_value(true)
                 .required(false)
                 .global(true),
@@ -232,10 +209,39 @@ fn main() -> Result<()> {
                 .takes_value(true)
                 .required(false)
                 .global(true),
-        )
-        .get_matches();
+        );
 
-    let v = cmd_arguments
+    #[cfg(feature = "fusedev")]
+    let cmd_arguments = cmd_arguments
+        .arg(
+            Arg::with_name("mountpoint")
+                .long("mountpoint")
+                .help("fuse mount point")
+                .takes_value(true)
+                .min_values(1),
+        )
+        .arg(
+            Arg::with_name("threads")
+                .long("thread-num")
+                .default_value("1")
+                .help("Specify the number of fuse service threads")
+                .takes_value(true)
+                .required(false)
+                .global(true),
+        );
+
+    #[cfg(feature = "virtiofs")]
+    let cmd_arguments = cmd_arguments.arg(
+        Arg::with_name("sock")
+            .long("sock")
+            .help("vhost-user socket path")
+            .takes_value(true)
+            .min_values(1),
+    );
+
+    let cmd_arguments_parsed = cmd_arguments.get_matches();
+
+    let v = cmd_arguments_parsed
         .value_of("log-level")
         .unwrap()
         .parse()
@@ -257,7 +263,7 @@ fn main() -> Result<()> {
     //      /foo1/bar1 /foo2/bar2
     // Specifying both regular file and directory are supported.
     let prefetch_files: Vec<&Path>;
-    if let Some(files) = cmd_arguments.values_of("prefetch-files") {
+    if let Some(files) = cmd_arguments_parsed.values_of("prefetch-files") {
         prefetch_files = files.map(|s| Path::new(s)).collect();
         // Sanity check
         for d in &prefetch_files {
@@ -270,21 +276,21 @@ fn main() -> Result<()> {
     }
 
     // Retrieve arguments
-    // sock means vhost-user-backend only
-    let vu_sock = cmd_arguments.value_of("sock").unwrap_or_default();
-    // mountpoint means fuse device only
-    let mountpoint = cmd_arguments.value_of("mountpoint").unwrap_or_default();
     // shared-dir means fs passthrough
-    let shared_dir = cmd_arguments.value_of("shared-dir").unwrap_or_default();
-    let config = cmd_arguments
+    let shared_dir = cmd_arguments_parsed
+        .value_of("shared-dir")
+        .unwrap_or_default();
+    let config = cmd_arguments_parsed
         .value_of("config")
         .ok_or_else(|| Error::InvalidArguments("config file is not provided".to_string()))?;
     // bootstrap means rafs only
-    let bootstrap = cmd_arguments.value_of("bootstrap").unwrap_or_default();
+    let bootstrap = cmd_arguments_parsed
+        .value_of("bootstrap")
+        .unwrap_or_default();
     // apisock means admin api socket support
-    let apisock = cmd_arguments.value_of("apisock").unwrap_or_default();
+    let apisock = cmd_arguments_parsed.value_of("apisock").unwrap_or_default();
     let rlimit_nofile_default = get_default_rlimit_nofile()?;
-    let rlimit_nofile: rlim = cmd_arguments
+    let rlimit_nofile: rlim = cmd_arguments_parsed
         .value_of("rlimit-nofile")
         .map(|n| n.parse().unwrap_or(rlimit_nofile_default))
         .unwrap_or(rlimit_nofile_default);
@@ -293,14 +299,6 @@ fn main() -> Result<()> {
     if !shared_dir.is_empty() && !bootstrap.is_empty() {
         return Err(einval!(
             "shared-dir and bootstrap cannot be set at the same time"
-        ));
-    }
-    if vu_sock.is_empty() && mountpoint.is_empty() {
-        return Err(einval!("either sock or mountpoint must be set".to_string()));
-    }
-    if !vu_sock.is_empty() && !mountpoint.is_empty() {
-        return Err(einval!(
-            "sock and mountpoint must not be set at the same time".to_string()
         ));
     }
 
@@ -354,18 +352,24 @@ fn main() -> Result<()> {
         .get_event_fd()?;
 
     #[cfg(feature = "virtiofsd")]
-    let daemon = create_nydus_daemon(vu_sock, vfs.clone())?;
+    let daemon = {
+        // sock means vhost-user-backend only
+        let vu_sock = cmd_arguments_parsed.value_of("sock").unwrap_or_default();
+        create_nydus_daemon(vu_sock, vfs.clone())?
+    };
     #[cfg(feature = "fusedev")]
     let daemon = {
-        let supervisor = cmd_arguments.value_of("supervisor").map(|s| s.to_string());
-        let daemon_id = cmd_arguments.value_of("id").map(|id| id.to_string());
+        let supervisor = cmd_arguments_parsed
+            .value_of("supervisor")
+            .map(|s| s.to_string());
+        let daemon_id = cmd_arguments_parsed.value_of("id").map(|id| id.to_string());
         // threads means number of fuse service threads
-        let threads: u32 = cmd_arguments
+        let threads: u32 = cmd_arguments_parsed
             .value_of("threads")
             .map(|n| n.parse().unwrap_or(1))
             .unwrap_or(1);
 
-        let p = cmd_arguments
+        let p = cmd_arguments_parsed
             .value_of("failover-policy")
             .unwrap_or("flush")
             .try_into()
@@ -374,6 +378,11 @@ fn main() -> Result<()> {
                 e
             })?;
 
+        // mountpoint means fuse device only
+        let mountpoint = cmd_arguments_parsed
+            .value_of("mountpoint")
+            .unwrap_or_default();
+
         create_nydus_daemon(
             mountpoint,
             vfs.clone(),
@@ -381,7 +390,7 @@ fn main() -> Result<()> {
             daemon_id,
             threads,
             apisock,
-            cmd_arguments.is_present("upgrade"),
+            cmd_arguments_parsed.is_present("upgrade"),
             p,
         )?
     };
