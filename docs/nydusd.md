@@ -17,7 +17,7 @@ cat /path/to/config-localfs.json
     }
   }
 }
-``` 
+```
 
 ### Run With FUSE
 
@@ -213,17 +213,17 @@ curl --unix-socket api.sock \
 
 ### Multiple Pseudo Mounts
 
-One single nydusd can have multiple pseudo mounts corresponding to a unique fuse mount or a unique virtio-fs mount inside guest.
+One single nydusd can have multiple pseudo mounts within a mountpoint.
 
-To obtain that, you have to trigger backend fs(e.g. Rafs) mount through curl method. Please note that don't specify `--bootstrap` option when you start nydusd.
+To achieve that, you can trigger backend fs (e.g., rafs) mount through the HTTP interfaces using curl command.
 
-The steps are exactly the same with one nydusd one backend fs scenario. But before any curl mount, you can't see any data from the virtio-fs mount inside guest. Then each time you do mount through curl command, you have a sub-directory created automatically within the virtio-fs mount point where you could find image data.
+When starting nydusd without the --bootstrap option, there will be no backend file system in a nydus mountpoint. You can use curl command to mount multiple backend fs at different sub-directories.
 
 #### Example
 
-Given that your virtio-fs mount point is `/mnt` inside guest.
+Given that your mountpoint is `/mnt` which can be a directory in local host or inside guest.
 
-When you have two pseudo mounts which are named "pseudo_1" and "pseudo_2" identified in http request data.
+When you have two pseudo mounts which are named "pseudo_1" and "pseudo_2" identified in http request body.
 
 pseudo_1 and pseudo_2 correspond to bootstrap respectively.
 
