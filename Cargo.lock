@@ -583,9 +583,9 @@ checksum = "9457b06509d27052635f90d6466700c65095fdf75409b3fbdd903e988b886f49"
 
 [[package]]
 name = "log"
-version = "0.4.6"
+version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c84ec4b527950aa83a329754b01dbe3f58361d1c5efacd1f6d68c494d08a17c6"
+checksum = "4fabed175da42fed1fa0746b0ea71f412aa9d35e76e95e59b192c64b9dc2bf8b"
 dependencies = [
  "cfg-if",
 ]
@@ -802,7 +802,7 @@ dependencies = [
  "stderrlog",
  "uuid",
  "vhost",
- "vhost_user_backend",
+ "vhost-user-backend",
  "vm-memory",
  "vmm-sys-util",
  "xattr",
@@ -1476,9 +1476,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "vhost_user_backend"
+name = "vhost-user-backend"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git#8ac5300240f8d7fe3c4bd0b6eaf7d69f357ad3d3"
+source = "git+ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git?branch=v5#31cef003de6cafe39daf046103cc2ea168ead67e"
 dependencies = [
  "epoll",
  "libc",

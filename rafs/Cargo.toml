@@ -14,7 +14,7 @@ bitflags = ">=1.1.0"
 httpdate = { version = "0.3.2", optional = true }
 lazy_static = "1.4.0"
 libc = "0.2"
-log = "0.4"
+log = "0.4.8"
 spmc = "0.3.0"
 lz4-sys = "1.9.2"
 nix = "0.17.0"

@@ -12,7 +12,7 @@ use libc::EFD_NONBLOCK;
 use fuse_rs::api::{server::Server, Vfs};
 use fuse_rs::transport::{FsCacheReqHandler, Reader, Writer};
 
-use vhost_rs::vhost_user::{message::*, Listener, SlaveFsCacheReq};
+use vhost_rs::vhost_user::{message::*, SlaveFsCacheReq};
 use vhost_user_backend::{VhostUserBackend, VhostUserDaemon, Vring};
 use vm_memory::GuestMemoryMmap;
 use vmm_sys_util::eventfd::EventFd;
@@ -134,11 +134,10 @@ impl VhostUserBackend for VhostUserFsBackendHandler {
     }
 
     fn handle_event(
-        &self,
+        &mut self,
         index: u16,
         evset: epoll::Events,
         vrings: &[Arc<RwLock<Vring>>],
-        _thread_id: usize,
     ) -> VhostUserBackendResult<bool> {
         if evset != epoll::Events::EPOLLIN {
             return Err(Error::HandleEventNotEpollIn.into());
@@ -161,7 +160,7 @@ impl VhostUserBackend for VhostUserFsBackendHandler {
         Ok(false)
     }
 
-    fn exit_event(&self, _thread_index: usize) -> Option<(EventFd, Option<u16>)> {
+    fn exit_event(&self) -> Option<(EventFd, Option<u16>)> {
         Some((
             self.backend.lock().unwrap().kill_evt.try_clone().unwrap(),
             Some(KILL_EVENT),
@@ -174,14 +173,12 @@ impl VhostUserBackend for VhostUserFsBackendHandler {
 }
 
 struct VirtiofsDaemon<S: VhostUserBackend> {
-    sock: String,
     daemon: VhostUserDaemon<S>,
 }
 
 impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
     fn start(&mut self, _: u32) -> Result<()> {
-        let listener = Listener::new(&self.sock, true).unwrap();
-        self.daemon.start(listener).map_err(|e| einval!(e))
+        self.daemon.start().map_err(|e| einval!(e))
     }
 
     fn wait(&mut self) -> Result<()> {
@@ -205,11 +202,9 @@ pub fn create_nydus_daemon(
 ) -> Result<Box<dyn NydusDaemon>> {
     let daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),
+        sock.to_owned(),
         Arc::new(RwLock::new(VhostUserFsBackendHandler::new(fs)?)),
     )
     .map_err(|e| Error::DaemonFailure(format!("{:?}", e)))?;
-    Ok(Box::new(VirtiofsDaemon {
-        sock: sock.to_owned(),
-        daemon,
-    }))
+    Ok(Box::new(VirtiofsDaemon { daemon }))
 }
