@@ -181,11 +181,7 @@ struct VirtiofsDaemon<S: VhostUserBackend> {
 
 impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
     fn start(&self, _: u32) -> Result<()> {
-        self.daemon
-            .lock()
-            .unwrap()
-            .start()
-            .map_err(|e| einval!(e))
+        self.daemon.lock().unwrap().start().map_err(|e| einval!(e))
     }
 
     fn wait(&self) -> Result<()> {
@@ -237,7 +233,6 @@ pub fn create_nydus_daemon(sock: &str, fs: Arc<Vfs>) -> Result<Arc<dyn NydusDaem
     )
     .map_err(|e| Error::DaemonFailure(format!("{:?}", e)))?;
     Ok(Arc::new(VirtiofsDaemon {
-        sock: sock.to_owned(),
         daemon: Mutex::new(daemon),
         id: None,
         supervisor: None,
