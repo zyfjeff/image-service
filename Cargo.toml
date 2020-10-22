@@ -29,14 +29,14 @@ nydus-utils = { path = "utils" }
 nydus-api = { path = "api" }
 upgrade-manager = { path = "upgrade" }
 vm-memory = { version = ">=0.2.0", optional = true }
-fuse-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.git", optional = true }
 
+event-manager = { git = "https://github.com/rust-vmm/event-manager.git", branch = "master"}
+fuse-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.git", optional = true }
 vhost-rs = { git = "https://github.com/cloud-hypervisor/vhost.git", branch = "dragonball", package = "vhost", optional = true }
-vhost-user-backend = { git = "https://github.com/cloud-hypervisor/vhost-user-backend.git", optional = true }
-event-manager = { git = "https://github.com/rust-vmm/event-manager.git", branch= "master" }
-snapshot = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/snapshot.git", branch = "v5" }
-versionize = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git", branch = "v5" }
-versionize_derive = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize_derive.git", branch = "v5" }
+vhost-user-backend = { git = "https://github.com/cloud-hypervisor/vhost-user-backend.git", package="vhost_user_backend", optional = true }
+snapshot = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/snapshot.git", branch = "master" }
+versionize = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git", branch = "master" }
+versionize_derive = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize_derive.git", branch = "master" }
 
 [features]
 fusedev = ["nydus-utils/fusedev", "fuse-rs/fusedev", "rafs/lz4_ipp"]
@@ -50,16 +50,13 @@ members = [
 ]
 
 [patch.crates-io]
-vm-memory = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-memory.git", branch = "v5" }
+vm-memory = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-memory.git", branch = "master", optional = true }
 
 [patch.'https://github.com/cloud-hypervisor/fuse-backend-rs.git']
-fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git", branch = "nydus-v5", optional = true }
+fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git", branch = "master", optional = true }
 
 [patch.'https://github.com/cloud-hypervisor/vhost-user-backend.git']
-vhost-user-backend = { git = "ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git", branch = "v5", optional = true }
+vhost-user-backend = { git = "ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git", package="vhost_user_backend", branch = "master", optional = true }
 
 [patch."https://github.com/cloud-hypervisor/vhost.git"]
-vhost-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/vhost.git", branch = "v5", package = "vhost", optional = true }
-
-[patch."https://github.com/rust-vmm/event-manager.git"]
-event-manager = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/event-manager.git", branch = "v5" }
+vhost-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/vhost.git", branch = "master", package = "vhost", optional = true }

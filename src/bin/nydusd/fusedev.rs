@@ -421,6 +421,7 @@ impl NydusDaemon for FusedevDaemon {
 impl<'a> Persist<'a> for &'a FusedevDaemon {
     type State = DaemonOpaque;
     type ConstructorArgs = &'a FusedevDaemon;
+    type LiveUpgradeConstructorArgs = &'a FusedevDaemon;
     type Error = Error;
 
     fn save(&self) -> Self::State {

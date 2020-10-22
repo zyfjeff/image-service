@@ -235,6 +235,7 @@ pub mod tests {
     impl Persist<'_> for Test {
         type State = TestState;
         type ConstructorArgs = TestArgs;
+        type LiveUpgradeConstructorArgs = TestArgs;
         type Error = Error;
 
         fn save(&self) -> Self::State {
