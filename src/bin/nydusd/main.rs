@@ -363,6 +363,11 @@ fn main() -> Result<()> {
             .value_of("supervisor")
             .map(|s| s.to_string());
         let daemon_id = cmd_arguments_parsed.value_of("id").map(|id| id.to_string());
+
+        if supervisor.is_some() && daemon_id.is_none() {
+            return Err(einval!("supervisor and id must be set at the same time"));
+        }
+
         // threads means number of fuse service threads
         let threads: u32 = cmd_arguments_parsed
             .value_of("threads")

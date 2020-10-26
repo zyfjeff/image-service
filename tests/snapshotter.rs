@@ -41,6 +41,7 @@ impl Snapshotter {
                             continue;
                         }
                         stream.send_with_fd(&buf, &fds).unwrap();
+                        received = false;
                     }
                     Err(err) => {
                         panic!(err);

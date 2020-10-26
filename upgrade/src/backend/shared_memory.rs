@@ -8,7 +8,7 @@ use std::io::ErrorKind;
 use std::io::Seek;
 use std::io::SeekFrom;
 use std::io::{Read, Result, Write};
-use std::os::unix::io::FromRawFd;
+use std::os::unix::io::{FromRawFd, RawFd};
 
 use nix::fcntl::OFlag;
 use nix::sys::mman::{shm_open, shm_unlink};
@@ -22,6 +22,7 @@ pub struct SharedMemoryBackend {
     file: File,
 }
 
+// SharedMemoryBackend is responsible for writing/reading binary data to/from shared memory file.
 impl SharedMemoryBackend {
     pub fn new(name: &str) -> Result<Self> {
         let fd = shm_open(
@@ -38,20 +39,28 @@ impl SharedMemoryBackend {
             file,
         })
     }
-}
 
-impl Backend for SharedMemoryBackend {
     fn reset(&mut self) -> Result<()> {
         self.file.seek(SeekFrom::Start(0))?;
         Ok(())
     }
+}
 
-    fn reader(&mut self) -> Result<&mut dyn Read> {
-        Ok(&mut self.file as &mut dyn Read)
+impl Backend for SharedMemoryBackend {
+    fn save(&mut self, _fds: &[RawFd], opaque: &[u8]) -> Result<usize> {
+        self.reset()?;
+        self.file.write_all(opaque)?;
+        Ok(opaque.len())
     }
 
-    fn writer(&mut self) -> Result<&mut dyn Write> {
-        Ok(&mut self.file as &mut dyn Write)
+    fn restore(
+        &mut self,
+        mut _fds: &mut Vec<RawFd>,
+        mut opaque: &mut Vec<u8>,
+    ) -> Result<(usize, usize)> {
+        self.reset()?;
+        let size = self.file.read_to_end(&mut opaque)?;
+        Ok((size, 0))
     }
 
     fn destroy(&mut self) -> Result<()> {

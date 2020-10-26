@@ -3,127 +3,351 @@
 //
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
-//! UpgradeManager manages all resources that need to be saved (persist to storage backend) and
-//! restored (reconstruct from storage backend), includes BinaryResource and FdResource.
+//! UpgradeManager manages all resources that need to be saved (persist to storage backend) or
+//! restored (reconstruct from storage backend), includes Fd and Binary data.
 
 #[macro_use]
 extern crate log;
 
-pub mod binary_resource;
-pub mod fd_resource;
-pub mod resource;
+pub mod backend;
 
 use std::collections::HashMap;
+use std::fmt;
+use std::io::Result;
 use std::os::unix::io::RawFd;
-use std::path::PathBuf;
 
-use binary_resource::backend::BackendType;
-use binary_resource::BinaryResource;
-use fd_resource::FdResource;
-use resource::{ResourceName, ResourceWrapper};
+use snapshot::{Persist, Snapshot};
+use versionize::{VersionMap, Versionize, VersionizeError, VersionizeResult};
+use versionize_derive::Versionize;
 
-#[derive(Default)]
+use backend::Backend;
+use nydus_utils::einval;
+
+// Use ResourceKind to distinguish resource instances in
+// UpgradeManager, you can add more as you need.
+#[derive(Hash, PartialEq, Eq, Clone, Debug, Versionize)]
+pub enum ResourceKind {
+    FuseDevice,
+    RafsMount,
+}
+
+impl fmt::Display for ResourceKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::FuseDevice => write!(f, "fuse_device"),
+            Self::RafsMount => write!(f, "rafs_mount"),
+        }
+    }
+}
+
+// Use version map to mange resource version during serializing/deserializing,
+// here is a default implementation, returns the version map with only one version,
+// If you need to add a version 2 for resource, need to do like this:
+// `VersionMap::new().new_version().set_type_version(Self::type_id(), 2).clone()`
+pub trait VersionMapGetter {
+    fn version_map() -> VersionMap {
+        VersionMap::new()
+    }
+}
+
+// BinaryResources stores all opaque data serialized by Snapshot,
+// use `ResourceKind` to distinguish.
+#[derive(Clone, Debug, Versionize)]
+struct BinaryResources {
+    data: HashMap<ResourceKind, Vec<u8>>,
+}
+
+impl VersionMapGetter for BinaryResources {}
+
+// UpgradeManager manages all state that needs to be saved (persist to storage backend)
+// or restored (reconstruct from storage backend), includes Fd and Binary (Opaque) data.
+//
+// See usage in unit testing below. First, we need to create an upgrade manager instance
+// with a new backend, then add fds or opaques (implemented Persist trait) to the manager.
+// We can call manager.save() or manager.restore() to save/restore all state from backend
+// when needed.
+#[allow(dead_code)]
 pub struct UpgradeManager {
     // Identify resource between multi nydusd instances
     id: String,
-    // BinaryResource and FdResource can be added in, use `ResourceName` to distinguish
-    resources: HashMap<ResourceName, Box<dyn ResourceWrapper + Sync + Send + 'static>>,
+    backend: Box<dyn Backend>,
+    fds: Vec<RawFd>,
+    opaques: BinaryResources,
 }
 
 impl UpgradeManager {
-    pub fn new(id: String) -> Self {
+    pub fn new(id: String, backend: Box<dyn Backend>) -> Self {
         UpgradeManager {
             id,
-            ..Default::default()
+            backend,
+            fds: Vec::new(),
+            opaques: BinaryResources {
+                data: HashMap::new(),
+            },
         }
     }
 
-    pub fn add_binary_resource(&mut self, res_name: ResourceName) {
-        // Use this key as shared memory file name, manager id and resource name will
-        // distinguish shared memory file between multi nydusd instances.
-        let key = format!("{}_{}_{}", self.id, "resource", res_name);
-        let res = BinaryResource::new(key.as_str(), BackendType::default()).unwrap();
-        self.resources.insert(res_name, Box::new(res));
+    // Cache fds to manager
+    pub fn add_fds(&mut self, fds: Vec<RawFd>) {
+        self.fds = fds;
     }
 
-    pub fn add_fd_resource(&mut self, res_name: ResourceName, supervisor: String, fds: Vec<RawFd>) {
-        // Supervisor should be unix domain socket (uds) server path. fds vector allow to
-        // be empty if we only need to restore fds from the uds server instead of saving.
-        let res = FdResource::new(PathBuf::from(supervisor), fds);
-        self.resources.insert(res_name, Box::new(res));
+    // Get fds from manager cache
+    pub fn get_fds(&mut self) -> &[RawFd] {
+        self.fds.as_slice()
     }
 
-    // Need return ResourceWrapper instead of Resource trait object,
-    // see `https://users.rust-lang.org/t/trait-object-with-generic-parameter/34101/4`.
-    pub fn get_resource<R>(&mut self, res_name: ResourceName) -> Option<&mut R>
+    // Cache opaque to manager, opaque object should implement Persist trait
+    pub fn add_opaque<'a, O, V, D>(&mut self, res_name: ResourceKind, obj: &O) -> Result<()>
     where
-        R: ResourceWrapper + Sync + Send + 'static,
+        O: Persist<'a, State = V, Error = D>,
+        V: Versionize + VersionMapGetter,
+        D: std::fmt::Debug,
     {
-        if let Some(res) = self.resources.get_mut(&res_name).map(|r| r.as_mut()) {
-            return res.as_any().downcast_mut::<R>();
-        }
-        None
+        let vm = V::version_map();
+        let latest_version = vm.latest_version();
+
+        let mut snapshot = Snapshot::new(vm, latest_version);
+
+        let state = obj.save();
+        let mut opaque: Vec<u8> = Vec::new();
+
+        snapshot
+            .save_with_crc64(&mut opaque, &state)
+            .map_err(|e| einval!(e))?;
+
+        self.opaques.data.insert(res_name, opaque);
+
+        Ok(())
     }
 
-    pub fn del_resource(&mut self, res_name: ResourceName) {
-        self.resources.remove(&res_name);
+    // Get opaque from manager cache
+    pub fn get_opaque<'a, O, V, A, D>(&mut self, res_name: ResourceKind, args: A) -> Result<O>
+    where
+        O: Persist<'a, State = V, ConstructorArgs = A, Error = D>,
+        V: Versionize + VersionMapGetter,
+        D: std::fmt::Debug,
+    {
+        if let Some(opaque) = self.opaques.data.get(&res_name) {
+            let vm = V::version_map();
+
+            let restored =
+                Snapshot::load_with_crc64(&mut opaque.as_slice(), vm).map_err(|e| einval!(e))?;
+
+            return Ok(O::restore(args, &restored).map_err(|e| einval!(e))?);
+        }
+
+        Err(einval!(format!("Can't find resource {:?}", res_name)))
+    }
+
+    // Save all fds and opaques to backend
+    pub fn save(&mut self) -> Result<()> {
+        let vm = BinaryResources::version_map();
+        let latest_version = vm.latest_version();
+
+        let mut snapshot = Snapshot::new(vm, latest_version);
+
+        let mut opaque: Vec<u8> = Vec::new();
+
+        snapshot
+            .save_with_crc64(&mut opaque, &self.opaques)
+            .map_err(|e| einval!(e))?;
+
+        self.backend.save(self.fds.as_slice(), opaque.as_slice())?;
+
+        Ok(())
+    }
+
+    // Restore all fds and opaques from backend, and put them to manager cache
+    pub fn restore(&mut self) -> Result<()> {
+        let vm = BinaryResources::version_map();
+
+        // TODO: Is 128K buffer large enough?
+        let mut opaque: Vec<u8> = vec![0u8; 128 << 10];
+        let mut fds: Vec<RawFd> = vec![0; 8];
+
+        let (opaque_size, fd_count) = self.backend.restore(&mut fds, &mut opaque)?;
+        opaque.truncate(opaque_size);
+        fds.truncate(fd_count);
+
+        self.fds = fds;
+        self.opaques =
+            Snapshot::load_with_crc64(&mut opaque.as_slice(), vm).map_err(|e| einval!(e))?;
+
+        Ok(())
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use std::io::Result;
+pub mod tests {
+    use std::collections::HashMap;
+    use std::fs::File;
+    use std::io::Error;
+    use std::io::{Seek, SeekFrom};
+    use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
+    use std::os::unix::net::UnixListener;
+    use std::path::PathBuf;
+    use std::thread;
+
+    use sendfd::{RecvWithFd, SendWithFd};
+    use snapshot::Persist;
+    use versionize::{VersionMap, Versionize, VersionizeResult};
+    use versionize_derive::Versionize;
+    use vmm_sys_util::tempfile::TempFile;
 
     use super::*;
+    use backend::unix_domain_socket::UdsBackend;
 
-    use binary_resource::tests::{Test, TestArgs};
-    use binary_resource::BinaryResource;
-    use resource::Resource;
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct Test {
+        pub foo: HashMap<String, String>,
+        pub bar: String,
+        pub baz: u32,
+    }
 
-    #[test]
-    fn test_upgrade_manager_with_binary_resource_with_empty_data() {
-        // Save the binary resource to upgrade manager
-        let mut mgr = UpgradeManager::new("nydus-smoke-test-1".to_string());
+    #[derive(Clone, Debug, Versionize)]
+    pub struct TestState {
+        foo: HashMap<String, String>,
+        #[version(start = 2, default_fn = "bar_default")]
+        bar: String,
+        baz: u32,
+    }
 
-        mgr.add_binary_resource(ResourceName::RafsConf);
+    impl TestState {
+        fn bar_default(_: u16) -> String {
+            String::from("bar")
+        }
+    }
 
-        // Get the binary resource from upgrade manager
-        let resource: &mut BinaryResource = mgr.get_resource(ResourceName::RafsConf).unwrap();
+    impl VersionMapGetter for TestState {
+        fn version_map() -> VersionMap {
+            VersionMap::new()
+                .new_version()
+                .set_type_version(Self::type_id(), 2)
+                .clone()
+        }
+    }
 
-        // Restore should be failed for the backend has no data
-        assert!((resource.restore(TestArgs { baz: 10 }) as Result<Test>).is_err());
+    pub struct TestArgs {
+        pub baz: u32,
+    }
+
+    impl Persist<'_> for Test {
+        type State = TestState;
+        type ConstructorArgs = TestArgs;
+        type Error = Error;
+
+        fn save(&self) -> Self::State {
+            TestState {
+                foo: self.foo.clone(),
+                bar: self.bar.clone(),
+                baz: self.baz,
+            }
+        }
+
+        fn restore(
+            args: Self::ConstructorArgs,
+            state: &Self::State,
+        ) -> std::result::Result<Self, Self::Error> {
+            Ok(Test {
+                foo: state.foo.clone(),
+                bar: state.bar.clone(),
+                baz: args.baz,
+            })
+        }
+    }
+
+    fn start_uds_server(path: PathBuf) {
+        let mut received = false;
+        let mut fds: Vec<RawFd> = vec![0; 1];
+        let mut buf = vec![0u8; 4 << 10];
+
+        let listener = UnixListener::bind(path).unwrap();
+
+        for stream in listener.incoming() {
+            match stream {
+                Ok(stream) => {
+                    if !received {
+                        let (opaque_size, fds_count) = stream
+                            .recv_with_fd(buf.as_mut_slice(), fds.as_mut_slice())
+                            .unwrap();
+                        assert_eq!(fds_count, 1);
+                        buf.truncate(opaque_size);
+                        fds.truncate(fds_count);
+                        received = true;
+                        continue;
+                    }
+                    stream.send_with_fd(&buf, &fds).unwrap();
+                }
+                Err(err) => {
+                    panic!(err);
+                }
+            }
+        }
     }
 
     #[test]
-    fn test_upgrade_manager_with_binary_resource() {
-        let foo = HashMap::new();
-        let test = Test {
-            foo: foo.clone(),
-            bar: String::from("bar"),
+    fn test_upgrade_manager_with_uds_backend() {
+        let opaque1 = Test {
+            foo: HashMap::new(),
+            bar: String::from("bar1"),
             baz: 100,
         };
 
-        // Save the binary resource to upgrade manager
-        let mut mgr = UpgradeManager::new("nydus-smoke-test-2".to_string());
-
-        mgr.add_binary_resource(ResourceName::RafsConf);
-
-        // Get the binary resource from upgrade manager
-        let resource: &mut BinaryResource = mgr.get_resource(ResourceName::RafsConf).unwrap();
-
-        // Save an object to binary resource
-        resource.save(&test).unwrap();
-
-        // Restore the object from binary resource
-        let expected = Test {
-            foo,
-            bar: String::from("bar"),
-            baz: 10,
+        let opaque2 = Test {
+            foo: HashMap::new(),
+            bar: String::from("bar2"),
+            baz: 100,
         };
-        let restored_test: Test = resource.restore(TestArgs { baz: 10 }).unwrap();
 
-        resource.destroy().unwrap();
+        // Start uds server for recv and reply fd + opaque
+        let sock_file = TempFile::new().unwrap();
+        let uds_path = sock_file.as_path().to_path_buf();
+        let res_uds_path = uds_path.clone();
+        // Just get a temp path for uds server creation
+        drop(sock_file);
 
-        assert_eq!(restored_test, expected);
+        thread::spawn(move || start_uds_server(res_uds_path));
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        let seek_pos = 123;
+        let temp_file = TempFile::new().unwrap();
+        let fds = vec![temp_file.as_file().as_raw_fd()];
+        temp_file.as_file().seek(SeekFrom::Start(seek_pos)).unwrap();
+
+        let backend = UdsBackend::new(uds_path.clone());
+        let mut upgrade_mgr = UpgradeManager::new(String::from("test"), Box::new(backend));
+
+        // Save fd + opaque to uds server
+        upgrade_mgr.add_fds(fds);
+        upgrade_mgr
+            .add_opaque(ResourceKind::FuseDevice, &opaque1)
+            .unwrap();
+        upgrade_mgr
+            .add_opaque(ResourceKind::RafsMount, &opaque2)
+            .unwrap();
+        upgrade_mgr.save().unwrap();
+
+        // Restore fd + opaque from uds server
+        let backend = UdsBackend::new(uds_path);
+        let mut upgrade_mgr = UpgradeManager::new(String::from("test"), Box::new(backend));
+        upgrade_mgr.restore().unwrap();
+
+        let restored_opaque1: Test = upgrade_mgr
+            .get_opaque(ResourceKind::FuseDevice, TestArgs { baz: 100 })
+            .unwrap();
+        let restored_opaque2: Test = upgrade_mgr
+            .get_opaque(ResourceKind::RafsMount, TestArgs { baz: 100 })
+            .unwrap();
+        let restored_fds = upgrade_mgr.get_fds();
+
+        // Check restored opaques
+        assert_eq!(restored_opaque1, opaque1);
+        assert_eq!(restored_opaque2, opaque2);
+
+        // Check restored fd
+        let mut temp_file = unsafe { File::from_raw_fd(restored_fds[0]) };
+        let expected = temp_file.seek(SeekFrom::Current(0)).unwrap();
+        assert_eq!(seek_pos, expected);
     }
 }

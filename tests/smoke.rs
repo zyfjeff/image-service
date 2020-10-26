@@ -18,6 +18,30 @@ use vmm_sys_util::tempdir::TempDir;
 use nydus_utils::{eother, exec};
 use snapshotter::Snapshotter;
 
+const COMPAT_BOOTSTRAPS: &'static [&'static str] = &[
+    "blake3-lz4_block-non_repeatable",
+    "sha256-nocompress-repeatable",
+];
+
+fn check_compact<'a>(work_dir: &'a PathBuf, bootstrap_name: &str, rafs_mode: &str) -> Result<()> {
+    let nydusd = nydusd::new(
+        work_dir,
+        false,
+        false,
+        rafs_mode.parse()?,
+        bootstrap_name.into(),
+        "api.sock".into(),
+        true,
+    )?;
+
+    nydusd.start()?;
+    let result_path = format!("repeatable/{}.result", bootstrap_name);
+    nydusd.check(result_path.as_str())?;
+    nydusd.stop();
+
+    Ok(())
+}
+
 fn test(
     compressor: &str,
     enable_cache: bool,
@@ -146,30 +170,6 @@ fn integration_test_directory_8() -> Result<()> {
     test("lz4_block", true, true, "cached")
 }
 
-const COMPAT_BOOTSTRAPS: &'static [&'static str] = &[
-    "blake3-lz4_block-non_repeatable",
-    "sha256-nocompress-repeatable",
-];
-
-fn check_compact<'a>(work_dir: &'a PathBuf, bootstrap_name: &str, rafs_mode: &str) -> Result<()> {
-    let nydusd = nydusd::new(
-        work_dir,
-        false,
-        false,
-        rafs_mode.parse()?,
-        bootstrap_name.into(),
-        "api.sock".into(),
-        true,
-    )?;
-
-    nydusd.start()?;
-    let result_path = format!("repeatable/{}.result", bootstrap_name);
-    nydusd.check(result_path.as_str())?;
-    nydusd.stop();
-
-    Ok(())
-}
-
 #[test]
 fn integration_test_compact() -> Result<()> {
     info!("\n\n==================== testing run: compact test");
@@ -281,6 +281,9 @@ fn integration_test_hot_upgrade() -> Result<()> {
 
     // New nydusd's state should be RUNNING
     assert_eq!(snapshotter.get_status(&new_nydusd.api_sock), "RUNNING");
+
+    // Snapshotter receive fuse fd from new nydusd
+    snapshotter.request_sendfd(&new_nydusd.api_sock);
 
     // Check files in mount point
     let result_path = format!("repeatable/{}.result", COMPAT_BOOTSTRAPS[0]);

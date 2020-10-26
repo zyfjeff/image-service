@@ -7,7 +7,7 @@ use std::fs::{File, OpenOptions};
 use std::io;
 use std::ops::Deref;
 use std::os::unix::fs::PermissionsExt;
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::io::{AsRawFd, FromRawFd, RawFd};
 use std::path::{Path, PathBuf};
 
 use libc::{c_int, sysconf, _SC_PAGESIZE};
@@ -36,9 +36,8 @@ pub struct FuseSession {
     mountpoint: PathBuf,
     fsname: String,
     subtype: String,
-    pub file: Option<File>,
+    file: Option<File>,
     bufsize: usize,
-    pub fuse_fd: Option<RawFd>,
 }
 
 const EXIT_FUSE_SERVICE: u64 = 1;
@@ -56,7 +55,6 @@ impl FuseSession {
             subtype: subtype.to_owned(),
             file: None,
             bufsize: FUSE_KERN_BUF_SIZE * pagesize() + FUSE_HEADER_SIZE,
-            fuse_fd: None,
         })
     }
 
@@ -65,18 +63,18 @@ impl FuseSession {
             MsFlags::MS_NOSUID | MsFlags::MS_NODEV | MsFlags::MS_NOATIME | MsFlags::MS_RDONLY;
 
         let file = fuse_kern_mount(&self.mountpoint, &self.fsname, &self.subtype, flags)?;
-        let fuse_fd = file.as_raw_fd();
-
         fcntl(file.as_raw_fd(), FcntlArg::F_SETFL(OFlag::O_NONBLOCK)).map_err(|e| einval!(e))?;
-
-        self.fuse_fd = Some(fuse_fd);
         self.file = Some(file);
 
         Ok(())
     }
 
-    pub fn expose_fuse_fd(&self) -> Option<RawFd> {
-        self.fuse_fd
+    pub fn get_fuse_fd(&mut self) -> Option<RawFd> {
+        self.file.as_ref().map(|file| file.as_raw_fd())
+    }
+
+    pub fn set_fuse_fd(&mut self, fd: RawFd) {
+        self.file = Some(unsafe { File::from_raw_fd(fd) });
     }
 
     /// destroy a fuse session
