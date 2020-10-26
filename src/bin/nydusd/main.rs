@@ -402,7 +402,6 @@ fn main() -> Result<()> {
         let mountpoint = cmd_arguments_parsed
             .value_of("mountpoint")
             .unwrap_or_default();
-
         create_nydus_daemon(
             mountpoint,
             vfs.clone(),
@@ -412,9 +411,12 @@ fn main() -> Result<()> {
             apisock,
             cmd_arguments_parsed.is_present("upgrade"),
             p,
-        )?
+        )
+        .map(|d| {
+            info!("Fuse daemon started!");
+            d
+        })?
     };
-    info!("starting fuse daemon");
 
     let mut http_thread: Option<thread::JoinHandle<Result<()>>> = None;
     let http_exit_evtfd = EventFd::new(0).unwrap();
