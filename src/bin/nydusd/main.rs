@@ -118,6 +118,18 @@ extern "C" fn sig_exit(_sig: std::os::raw::c_int) {
     }
 }
 
+pub mod built_info {
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
+fn dump_program_info() {
+    info!(
+        "Git Version: {:?}, Build Time: {:?}",
+        built_info::GIT_COMMIT_HASH.unwrap_or_default(),
+        built_info::BUILT_TIME_UTC
+    );
+}
+
 fn main() -> Result<()> {
     let cmd_arguments = App::new("vhost-user-fs backend")
         .version(crate_version!())
@@ -259,6 +271,7 @@ fn main() -> Result<()> {
     // So we set stderrlog verbosity to TRACE which is High enough. Otherwise, we
     // can't change log level to a higher level than what is passed to `stderrlog`.
     log::set_max_level(v);
+    dump_program_info();
     // A string including multiple directories and regular files should be separated by white-space, e.g.
     //      <path1> <path2> <path3>
     // And each path should be relative to rafs root, e.g.
