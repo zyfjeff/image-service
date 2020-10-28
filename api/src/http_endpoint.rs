@@ -146,6 +146,17 @@ fn error_response(error: Option<HttpError>, status: StatusCode) -> Response {
     response
 }
 
+fn translate_status_code(e: &ApiError) -> StatusCode {
+    if let ApiError::DaemonAbnormal(kind) = e {
+        match kind {
+            DaemonErrorKind::NotReady => StatusCode::ServiceUnavailable,
+            _ => StatusCode::InternalServerError,
+        }
+    } else {
+        StatusCode::InternalServerError
+    }
+}
+
 fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(
     api_resp: ApiResponse,
     op: O,
@@ -163,7 +174,10 @@ fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(
 
             Ok(resp)
         }
-        Err(e) => Ok(error_response(Some(op(e)), StatusCode::InternalServerError)),
+        Err(e) => {
+            let sc = translate_status_code(&e);
+            Ok(error_response(Some(op(e)), sc))
+        }
     }
 }
 
