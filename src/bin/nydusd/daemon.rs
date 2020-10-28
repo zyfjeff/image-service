@@ -72,7 +72,7 @@ impl Display for DaemonError {
 pub type DaemonResult<T> = std::result::Result<T, DaemonError>;
 
 pub trait NydusDaemon {
-    fn start(&self, cnt: u32) -> Result<()>;
+    fn start(&self) -> Result<()>;
     fn wait(&self) -> Result<()>;
     fn stop(&self) -> Result<()>;
     fn as_any(&self) -> &dyn Any;

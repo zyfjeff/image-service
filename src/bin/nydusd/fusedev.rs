@@ -7,7 +7,7 @@ use std::any::Any;
 use std::ffi::{CStr, CString};
 use std::fs::{metadata, File, OpenOptions};
 use std::io::{Result, Write};
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::io::FromRawFd;
@@ -18,7 +18,7 @@ use std::sync::{
     mpsc::{channel, Receiver, Sender},
     Arc, Mutex, Once,
 };
-use std::thread;
+use std::thread::{self, JoinHandle};
 
 use fuse_rs::api::{server::Server, Vfs, VfsOptions};
 use rust_fsm::*;
@@ -116,7 +116,9 @@ pub struct FusedevDaemon {
     server: Arc<Server<Arc<Vfs>>>,
     vfs: Arc<Vfs>,
     pub session: Mutex<FuseSession>,
-    threads: Mutex<Vec<Option<thread::JoinHandle<Result<()>>>>>,
+    thread_tx: Mutex<Option<Sender<JoinHandle<Result<()>>>>>,
+    thread_rx: Mutex<Receiver<JoinHandle<Result<()>>>>,
+    running_threads: AtomicI32,
     event_fd: EventFd,
     state: AtomicI32,
     pub threads_cnt: u32,
@@ -202,7 +204,6 @@ impl FusedevDaemonSM {
                     .expect("Daemon state machine goes insane, this is critical error!");
 
                 let d = self.daemon.as_ref();
-                let cnt = d.threads_cnt;
                 let cur = self.sm.state();
                 info!(
                     "from {:?} to {:?}, input {:?} output {:?}",
@@ -212,7 +213,7 @@ impl FusedevDaemonSM {
                     Some(a) => match a {
                         FusedevStateMachineOutput::StartService => {
                             d.set_state(DaemonState::RUNNING);
-                            d.start(cnt)
+                            d.start()
                         }
                         FusedevStateMachineOutput::Persist => d.persist().map_err(|e| eother!(e)),
                         FusedevStateMachineOutput::Umount => d.session.lock().unwrap().umount(),
@@ -262,7 +263,15 @@ impl FusedevDaemon {
                     })
             })
             .map_err(Error::ThreadSpawn)?;
-        self.threads.lock().unwrap().push(Some(thread));
+        // Safe to unwrap because it should be intialized as Some when deamon being created.
+        self.thread_tx
+            .lock()
+            .expect("Not expect poisoned lock.")
+            .as_ref()
+            .unwrap()
+            .send(thread)
+            .map_err(|e| eother!(e))?;
+        self.running_threads.fetch_add(1, Ordering::AcqRel);
         Ok(())
     }
 
@@ -296,19 +305,29 @@ impl NydusDaemon for FusedevDaemon {
         self
     }
 
-    fn start(&self, cnt: u32) -> Result<()> {
-        for _ in 0..cnt {
+    fn start(&self) -> Result<()> {
+        for _ in 0..self.threads_cnt {
             self.kick_one_server(self.trigger.clone())?;
         }
+
+        // Safe to unwrap because it is should be initialized as Some when daemon is being created.
+        drop(
+            self.thread_tx
+                .lock()
+                .expect("Not expect poisoned lock")
+                .take()
+                .unwrap(),
+        );
         Ok(())
     }
 
     fn wait(&self) -> Result<()> {
-        let mut threads = self.threads.lock().unwrap();
-        for t in threads.deref_mut() {
-            if let Some(handle) = t.take() {
-                handle.join().map_err(|_| Error::WaitDaemon)??;
-            }
+        while let Ok(handle) = self.thread_rx.lock().unwrap().recv() {
+            self.running_threads.fetch_sub(1, Ordering::AcqRel);
+            handle.join().map_err(|_| Error::WaitDaemon)??
+        }
+        if self.running_threads.load(Ordering::Acquire) != 0 {
+            warn!("Not all threads are joined.");
         }
         Ok(())
     }
@@ -532,7 +551,7 @@ pub fn create_nydus_daemon(
     upgrade: bool,
     fp: FailoverPolicy,
 ) -> Result<Arc<dyn NydusDaemon + Send>> {
-    let (trigger, rx) = channel::<FusedevStateMachineInput>();
+    let (trigger, events_rx) = channel::<FusedevStateMachineInput>();
     let session = FuseSession::new(Path::new(mountpoint), "rafs", "")?;
 
     let upgrade_mgr_id = format!(
@@ -540,11 +559,15 @@ pub fn create_nydus_daemon(
         id.clone().unwrap_or_else(|| String::from("temp"))
     );
 
+    let (tx, rx) = channel::<JoinHandle<Result<()>>>();
+
     let daemon = Arc::new(FusedevDaemon {
         session: Mutex::new(session),
         server: Arc::new(Server::new(vfs.clone())),
         vfs,
-        threads: Mutex::new(Vec::new()),
+        thread_tx: Mutex::new(Some(tx)),
+        thread_rx: Mutex::new(rx),
+        running_threads: AtomicI32::new(0),
         event_fd: EventFd::new(0).unwrap(),
         state: AtomicI32::new(DaemonState::INIT as i32),
         threads_cnt,
@@ -556,7 +579,7 @@ pub fn create_nydus_daemon(
         upgrade_mgr: Mutex::new(UpgradeManager::new(upgrade_mgr_id)),
     });
 
-    let machine = FusedevDaemonSM::new(daemon.clone(), rx);
+    let machine = FusedevDaemonSM::new(daemon.clone(), events_rx);
     machine.kick_state_machine()?;
 
     if !upgrade && !is_crashed(mountpoint, api_sock)? {

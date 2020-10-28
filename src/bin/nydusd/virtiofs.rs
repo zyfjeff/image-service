@@ -180,7 +180,7 @@ struct VirtiofsDaemon<S: VhostUserBackend> {
 }
 
 impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
-    fn start(&self, _: u32) -> Result<()> {
+    fn start(&self) -> Result<()> {
         self.daemon.lock().unwrap().start().map_err(|e| einval!(e))
     }
 
