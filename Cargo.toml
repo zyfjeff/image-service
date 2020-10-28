@@ -63,3 +63,6 @@ vhost-user-backend = { git = "ssh://git@gitlab.alibaba-inc.com/kata-containers/v
 
 [patch."https://github.com/cloud-hypervisor/vhost.git"]
 vhost-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/vhost.git", branch = "master", package = "vhost", optional = true }
+
+[patch.'https://github.com/firecracker-microvm/micro-http.git']
+micro_http = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/micro-http.git", branch = "master"}
