@@ -135,7 +135,7 @@ pub struct FusedevDaemon {
 /// to set up fuse session by mounting `/fuse/dev`.
 /// `Ready` means nydusd has successfully prepared all the stuff needed to work as a
 /// user-space fuse filesystem, however, the essential capabilities negotiation is not
-/// done. So nydusd is still waiting for fuse `Init` message to achieve `Running` state.
+/// done. So nydusd is still waiting for fuse `Init` message to achieve `Negotiated` state.
 /// Nydusd can as well transit to `Upgrade` state from `Init` when getting started, which
 /// only happens during live upgrade progress. Then we don't have to do kernel mount again
 /// to set up a session but try to reuse a fuse fd from somewhere else. In this state, we
@@ -162,15 +162,15 @@ state_machine! {
     },
     Ready => {
         Stop => Die [Umount],
-        InitMsg => Running [Persist],
-        Successful => Running,
+        InitMsg => Negotiated [Persist],
+        Successful => Negotiated,
         // This should rarely happen because if supervisor does not already obtain
         // internal upgrade related stuff, why should it try to kill me?
         Exit => Interrupt [TerminateFuseService],
     },
     Upgrade(Successful) => Ready[StartService],
-    Running => {
-        InitMsg => Running,
+    Negotiated => {
+        InitMsg => Negotiated,
         Exit => Interrupt [TerminateFuseService],
         Stop =>  Die [Umount],
     },
@@ -351,7 +351,7 @@ impl NydusDaemon for FusedevDaemon {
     }
 
     fn trigger_takeover(&self) -> DaemonResult<()> {
-        // Daemon won't reach `Running` state until the first fuse message arrives.
+        // State machine won't reach `Negotiated` state until the first fuse message arrives.
         // So we don't try to send InitMsg event from here.
         self.on_event(FusedevStateMachineInput::Takeover)?;
         self.on_event(FusedevStateMachineInput::Successful)?;
