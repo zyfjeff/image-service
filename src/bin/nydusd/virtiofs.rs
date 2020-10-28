@@ -209,11 +209,11 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
     }
 
     fn get_state(&self) -> DaemonState {
-        DaemonState::INIT
+        unimplemented!();
     }
 
-    fn set_state(&self, _state: DaemonState) -> DaemonState {
-        DaemonState::INIT
+    fn set_state(&self, _state: DaemonState) {
+        unimplemented!();
     }
 
     fn save(&self) -> DaemonResult<()> {

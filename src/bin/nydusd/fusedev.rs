@@ -162,13 +162,12 @@ state_machine! {
     },
     Ready => {
         Stop => Die [Umount],
-        InitMsg => Negotiated [Persist],
-        Successful => Negotiated,
+        InitMsg => Negotiated [Negotiate],
         // This should rarely happen because if supervisor does not already obtain
         // internal upgrade related stuff, why should it try to kill me?
         Exit => Interrupt [TerminateFuseService],
     },
-    Upgrade(Successful) => Ready[StartService],
+    Upgrade(Successful) => Negotiated [StartServiceWithRunning],
     Negotiated => {
         InitMsg => Negotiated,
         Exit => Interrupt [TerminateFuseService],
@@ -204,20 +203,34 @@ impl FusedevDaemonSM {
                 let d = self.daemon.as_ref();
                 let cur = self.sm.state();
                 info!(
-                    "from {:?} to {:?}, input {:?} output {:?}",
+                    "State machine: from {:?} to {:?}, input [{:?}], output [{:?}]",
                     last, cur, input, &action
                 );
                 match action {
                     Some(a) => match a {
-                        FusedevStateMachineOutput::StartService => {
-                            d.set_state(DaemonState::RUNNING);
-                            d.start()
+                        FusedevStateMachineOutput::StartService => d.start().and_then(|_| {
+                            d.set_state(DaemonState::INIT);
+                            Ok(())
+                        }),
+                        FusedevStateMachineOutput::StartServiceWithRunning => {
+                            d.start().and_then(|_| {
+                                d.set_state(DaemonState::RUNNING);
+                                Ok(())
+                            })
                         }
-                        FusedevStateMachineOutput::Persist => d.persist().map_err(|e| eother!(e)),
-                        FusedevStateMachineOutput::Umount => d.session.lock().unwrap().umount(),
+                        FusedevStateMachineOutput::Negotiate => {
+                            d.set_state(DaemonState::RUNNING);
+                            Ok(())
+                        }
+                        FusedevStateMachineOutput::Umount => {
+                            d.session.lock().unwrap().umount().and_then(|_| {
+                                // TODO: d.set_state(?);
+                                Ok(())
+                            })
+                        }
                         FusedevStateMachineOutput::TerminateFuseService => {
-                            d.set_state(DaemonState::INTERRUPT);
                             d.interrupt();
+                            d.set_state(DaemonState::INTERRUPT);
                             Ok(())
                         }
                         FusedevStateMachineOutput::Restore => {
@@ -270,10 +283,6 @@ impl FusedevDaemon {
             .send(thread)
             .map_err(|e| eother!(e))?;
         self.running_threads.fetch_add(1, Ordering::AcqRel);
-        Ok(())
-    }
-
-    fn persist(&self) -> DaemonResult<()> {
         Ok(())
     }
 
@@ -337,10 +346,8 @@ impl NydusDaemon for FusedevDaemon {
         self.event_fd.write(1).expect("Stop fuse service loop");
     }
 
-    fn set_state(&self, state: DaemonState) -> DaemonState {
-        let old = self.get_state();
+    fn set_state(&self, state: DaemonState) {
         self.state.store(state as i32, Ordering::Relaxed);
-        old
     }
 
     fn get_state(&self) -> DaemonState {
@@ -359,9 +366,6 @@ impl NydusDaemon for FusedevDaemon {
         // State machine won't reach `Negotiated` state until the first fuse message arrives.
         // So we don't try to send InitMsg event from here.
         self.on_event(FusedevStateMachineInput::Takeover)?;
-        self.on_event(FusedevStateMachineInput::Successful)?;
-        self.on_event(FusedevStateMachineInput::Successful)?;
-
         Ok(())
     }
 
@@ -374,10 +378,10 @@ impl NydusDaemon for FusedevDaemon {
         let mut mgr_guard = self.upgrade_mgr.as_ref().unwrap().lock().unwrap();
 
         let fds = vec![self.session.lock().unwrap().get_fuse_fd().unwrap()];
-        mgr_guard.add_fds(fds);
+        mgr_guard.set_fds(fds);
 
         mgr_guard
-            .add_opaque(ResourceKind::FuseDevice, &self)
+            .set_opaque(ResourceKind::FuseDevice, &self)
             .map_err(|_| DaemonError::SendFd)?;
 
         // Save fd and opaque data to remote uds server
@@ -407,6 +411,8 @@ impl NydusDaemon for FusedevDaemon {
         drain_fuse_requests(conn, &self.failover_policy);
 
         self.session.lock().unwrap().set_fuse_fd(fds[0]);
+
+        self.on_event(FusedevStateMachineInput::Successful)?;
 
         Ok(())
     }

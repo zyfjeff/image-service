@@ -27,10 +27,9 @@ use crate::EVENT_MANAGER_RUN;
 pub enum DaemonState {
     INIT = 1,
     RUNNING = 2,
-    INTERRUPT = 3,
-    UPGRADE = 4,
-    STOP = 5,
-    INVALID = -1,
+    UPGRADE = 3,
+    INTERRUPT = 4,
+    UNKNOWN = 5,
 }
 
 impl Display for DaemonState {
@@ -44,10 +43,9 @@ impl From<i32> for DaemonState {
         match i {
             1 => DaemonState::INIT,
             2 => DaemonState::RUNNING,
-            3 => DaemonState::INTERRUPT,
-            4 => DaemonState::UPGRADE,
-            5 => DaemonState::STOP,
-            _ => DaemonState::INVALID,
+            3 => DaemonState::UPGRADE,
+            4 => DaemonState::INTERRUPT,
+            _ => DaemonState::UNKNOWN,
         }
     }
 }
@@ -78,7 +76,7 @@ pub trait NydusDaemon {
     fn as_any(&self) -> &dyn Any;
     fn interrupt(&self) {}
     fn get_state(&self) -> DaemonState;
-    fn set_state(&self, s: DaemonState) -> DaemonState;
+    fn set_state(&self, s: DaemonState);
     fn trigger_exit(&self) -> DaemonResult<()> {
         Ok(())
     }

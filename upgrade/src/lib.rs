@@ -88,7 +88,7 @@ impl UpgradeManager {
     }
 
     // Cache fds to manager
-    pub fn add_fds(&mut self, fds: Vec<RawFd>) {
+    pub fn set_fds(&mut self, fds: Vec<RawFd>) {
         self.fds = fds;
     }
 
@@ -98,7 +98,7 @@ impl UpgradeManager {
     }
 
     // Cache opaque to manager, opaque object should implement Persist trait
-    pub fn add_opaque<'a, O, V, D>(&mut self, res_name: ResourceKind, obj: &O) -> Result<()>
+    pub fn set_opaque<'a, O, V, D>(&mut self, res_name: ResourceKind, obj: &O) -> Result<()>
     where
         O: Persist<'a, State = V, Error = D>,
         V: Versionize + VersionMapGetter,
@@ -319,12 +319,12 @@ pub mod tests {
         let mut upgrade_mgr = UpgradeManager::new(String::from("test"), Box::new(backend));
 
         // Save fd + opaque to uds server
-        upgrade_mgr.add_fds(fds);
+        upgrade_mgr.set_fds(fds);
         upgrade_mgr
-            .add_opaque(ResourceKind::FuseDevice, &opaque1)
+            .set_opaque(ResourceKind::FuseDevice, &opaque1)
             .unwrap();
         upgrade_mgr
-            .add_opaque(ResourceKind::RafsMount, &opaque2)
+            .set_opaque(ResourceKind::RafsMount, &opaque2)
             .unwrap();
         upgrade_mgr.save().unwrap();
 
