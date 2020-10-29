@@ -14,12 +14,13 @@ use std::os::unix::io::AsRawFd;
 use http::uri::Uri;
 use url::Url;
 
-use micro_http::{Body, HttpServer, MediaType, Request, Response, StatusCode, Version};
+use micro_http::{HttpServer, MediaType, Request, Response, StatusCode};
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::http_endpoint::{
-    ApiError, ApiRequest, ApiResponse, ExitHandler, HttpResult, InfoHandler, MetricsFilesHandler,
-    MetricsHandler, MetricsPatternHandler, MountHandler, SendFuseFdHandler, TakeoverHandler,
+    error_response, ApiError, ApiRequest, ApiResponse, ExitHandler, HttpError, HttpResult,
+    InfoHandler, MetricsFilesHandler, MetricsHandler, MetricsPatternHandler, MountHandler,
+    SendFuseFdHandler, TakeoverHandler,
 };
 
 const HTTP_ROOT: &str = "/api/v1";
@@ -93,19 +94,8 @@ fn handle_http_request(
             .handle_request(&request, &|r| {
                 kick_api_server(api_notifier, to_api, from_api, r)
             })
-            .unwrap_or_else(|_| {
-                let mut r = Response::new(Version::Http11, StatusCode::BadRequest);
-                r.set_body(Body::new("Bad request!"));
-                r
-            }),
-        None => {
-            let mut r = Response::new(Version::Http11, StatusCode::NotFound);
-            r.set_body(Body::new(format!(
-                "No route to {}",
-                request.uri().get_abs_path().to_string()
-            )));
-            r
-        }
+            .unwrap_or_else(|err| error_response(Some(err), StatusCode::BadRequest)),
+        None => error_response(Some(HttpError::NoRoute), StatusCode::NotFound),
     };
 
     response.set_server("Nydus API");

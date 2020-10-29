@@ -6,7 +6,7 @@
 
 use std::any::Any;
 use std::io::Result;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::thread;
 
 use libc::EFD_NONBLOCK;
@@ -19,10 +19,11 @@ use vhost_user_backend::{VhostUserBackend, VhostUserDaemon, Vring};
 use vm_memory::GuestMemoryMmap;
 use vmm_sys_util::eventfd::EventFd;
 
+use nydus_utils::einval;
+use upgrade_manager::UpgradeManager;
+
 use crate::daemon;
 use daemon::{DaemonError, DaemonResult, DaemonState, Error, NydusDaemon};
-
-use nydus_utils::einval;
 
 const VIRTIO_F_VERSION_1: u32 = 32;
 const QUEUE_SIZE: usize = 1024;
@@ -176,10 +177,12 @@ impl VhostUserBackend for VhostUserFsBackendHandler {
 }
 
 struct VirtiofsDaemon<S: VhostUserBackend> {
+    vfs: Arc<Vfs>,
     daemon: Mutex<VhostUserDaemon<S>>,
     sock: String,
     id: Option<String>,
     supervisor: Option<String>,
+    upgrade_mgr: Option<Mutex<UpgradeManager>>,
 }
 
 impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
@@ -233,20 +236,34 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
     fn restore(&self) -> DaemonResult<()> {
         unimplemented!();
     }
+
+    fn get_vfs(&self) -> &Vfs {
+        &self.vfs
+    }
+
+    fn get_upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>> {
+        self.upgrade_mgr.as_ref().map(|mgr| mgr.lock().unwrap())
+    }
 }
 
-pub fn create_nydus_daemon(sock: &str, fs: Arc<Vfs>) -> Result<Arc<dyn NydusDaemon + Send>> {
+pub fn create_nydus_daemon(
+    id: Option<String>,
+    sock: &str,
+    vfs: Arc<Vfs>,
+) -> Result<Arc<dyn NydusDaemon + Send>> {
     let vu_daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),
-        Arc::new(RwLock::new(VhostUserFsBackendHandler::new(fs)?)),
+        Arc::new(RwLock::new(VhostUserFsBackendHandler::new(vfs.clone())?)),
     )
     .map_err(|e| Error::DaemonFailure(format!("{:?}", e)))?;
 
     let daemon = Arc::new(VirtiofsDaemon {
+        vfs,
         daemon: Mutex::new(vu_daemon),
         sock: sock.to_string(),
-        id: None,
+        id,
         supervisor: None,
+        upgrade_mgr: None,
     });
 
     let d = daemon.clone();

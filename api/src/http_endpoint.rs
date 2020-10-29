@@ -69,7 +69,9 @@ pub type HttpResult = std::result::Result<Response, HttpError>;
 #[derive(Debug)]
 pub enum ApiRequest {
     DaemonInfo,
-    Mount(MountInfo),
+    Mount(RafsMountInfo),
+    UpdateMount(RafsMountInfo),
+    Umount(RafsUmountInfo),
     ConfigureDaemon(DaemonConf),
     ExportGlobalMetrics(Option<String>),
     ExportFilesMetrics(Option<String>),
@@ -87,7 +89,7 @@ pub struct DaemonInfo {
     pub state: String,
 }
 
-#[derive(Clone, Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Debug)]
 pub struct MountInfo {
     /// Bootstrap path by which to import rafs
     #[serde(default)]
@@ -100,7 +102,31 @@ pub struct MountInfo {
     pub ops: String,
 }
 
-#[derive(Clone, Deserialize, Serialize, Debug)]
+#[derive(Clone, Deserialize, Debug)]
+pub struct RafsMountInfo {
+    pub source: String,
+    pub config: String,
+    pub mountpoint: String,
+}
+
+impl RafsMountInfo {
+    pub fn parse(body: &Body) -> Result<RafsMountInfo, HttpError> {
+        serde_json::from_slice::<RafsMountInfo>(body.raw()).map_err(HttpError::ParseBody)
+    }
+}
+
+#[derive(Clone, Deserialize, Debug)]
+pub struct RafsUmountInfo {
+    pub mountpoint: String,
+}
+
+impl RafsUmountInfo {
+    pub fn parse(body: &Body) -> Result<RafsUmountInfo, HttpError> {
+        serde_json::from_slice::<RafsUmountInfo>(body.raw()).map_err(HttpError::ParseBody)
+    }
+}
+
+#[derive(Clone, Deserialize, Debug)]
 pub struct DaemonConf {
     pub log_level: String,
 }
@@ -108,10 +134,11 @@ pub struct DaemonConf {
 /// Errors associated with Nydus management
 #[derive(Debug)]
 pub enum HttpError {
+    NoRoute,
     /// API request receive error
     SerdeJsonDeserialize(SerdeError),
     SerdeJsonSerialize(SerdeError),
-    ParseBody,
+    ParseBody(SerdeError),
     /// Could not query daemon info
     Info(ApiError),
     /// Could not mount resource
@@ -146,7 +173,7 @@ struct ErrorMessage {
     message: String,
 }
 
-fn error_response(error: Option<HttpError>, status: StatusCode) -> Response {
+pub fn error_response(error: Option<HttpError>, status: StatusCode) -> Response {
     let mut response = Response::new(Version::Http11, status);
 
     if let Some(e) = error {
@@ -194,12 +221,8 @@ fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(
     }
 }
 
-fn parse_mount_request(body: &Body) -> Result<MountInfo, HttpError> {
-    serde_json::from_slice::<MountInfo>(body.raw()).map_err(|_| HttpError::ParseBody)
-}
-
 fn parse_configure_daemon_request(body: &Body) -> Result<DaemonConf, HttpError> {
-    serde_json::from_slice::<DaemonConf>(body.raw()).map_err(|_| HttpError::ParseBody)
+    serde_json::from_slice::<DaemonConf>(body.raw()).map_err(HttpError::ParseBody)
 }
 
 pub struct InfoHandler {}
@@ -232,9 +255,19 @@ impl EndpointHandler for MountHandler {
         kicker: &dyn Fn(ApiRequest) -> ApiResponse,
     ) -> HttpResult {
         match (req.method(), req.body.as_ref()) {
-            (Method::Put, Some(body)) => {
-                let info = parse_mount_request(body)?;
+            (Method::Post, Some(body)) => {
+                let info = RafsMountInfo::parse(body)?;
                 let r = kicker(ApiRequest::Mount(info));
+                convert_to_response(r, HttpError::Mount)
+            }
+            (Method::Put, Some(body)) => {
+                let info = RafsMountInfo::parse(body)?;
+                let r = kicker(ApiRequest::UpdateMount(info));
+                convert_to_response(r, HttpError::Mount)
+            }
+            (Method::Delete, Some(body)) => {
+                let info = RafsUmountInfo::parse(body)?;
+                let r = kicker(ApiRequest::Umount(info));
                 convert_to_response(r, HttpError::Mount)
             }
             _ => Ok(error_response(None, StatusCode::BadRequest)),

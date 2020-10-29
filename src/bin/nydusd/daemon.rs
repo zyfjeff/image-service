@@ -4,23 +4,33 @@
 //
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
-#[cfg(feature = "virtiofs")]
-use fuse_rs::transport::Error as FuseTransportError;
-use fuse_rs::Error as VhostUserFsError;
 use std::any::Any;
+use std::cmp::PartialEq;
 use std::convert::From;
 use std::fmt::{Display, Formatter};
 use std::io::Result;
+use std::ops::Deref;
+use std::sync::atomic::Ordering;
 use std::sync::mpsc::RecvError;
+use std::sync::MutexGuard;
 use std::{convert, error, fmt, io};
 
 use event_manager::{EventOps, EventSubscriber, Events};
-use nydus_utils::{einval, last_error};
-use std::sync::atomic::Ordering;
+use fuse_rs::api::Vfs;
+#[cfg(feature = "virtiofs")]
+use fuse_rs::transport::Error as FuseTransportError;
+use fuse_rs::Error as VhostUserFsError;
+use serde::{Deserialize, Serialize};
+use versionize::{VersionMap, Versionize, VersionizeResult};
+use versionize_derive::Versionize;
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
-use crate::SubscriberWrapper;
+use nydus_utils::{einval, eother, last_error};
+use rafs::fs::{Rafs, RafsConfig};
+use rafs::RafsIoRead;
+use upgrade_manager::{OpaqueKind, UpgradeManager, VersionMapGetter};
 
+use crate::SubscriberWrapper;
 use crate::EVENT_MANAGER_RUN;
 
 #[allow(dead_code)]
@@ -75,6 +85,58 @@ impl Display for DaemonError {
 
 pub type DaemonResult<T> = std::result::Result<T, DaemonError>;
 
+#[derive(Default, Debug, PartialEq, Serialize, Deserialize, Clone, Versionize)]
+pub struct RafsMountsState {
+    pub items: Vec<RafsMountInfo>,
+}
+
+impl RafsMountsState {
+    pub fn new() -> Self {
+        Self { items: vec![] }
+    }
+
+    pub fn add(&mut self, info: RafsMountInfo) {
+        if let Some(idx) = self
+            .items
+            .iter()
+            .position(|mount| mount.mountpoint == info.mountpoint)
+        {
+            self.items[idx].source = info.source;
+            self.items[idx].config = info.config;
+        } else {
+            self.items.push(RafsMountInfo {
+                source: info.source,
+                config: info.config,
+                mountpoint: info.mountpoint,
+            });
+        }
+    }
+
+    pub fn remove(&mut self, info: RafsUmountInfo) {
+        if let Some(idx) = self
+            .items
+            .iter()
+            .position(|mount| mount.mountpoint == info.mountpoint)
+        {
+            self.items.remove(idx);
+        }
+    }
+}
+
+impl VersionMapGetter for RafsMountsState {}
+
+#[derive(Clone, Deserialize, Serialize, PartialEq, Debug, Versionize)]
+pub struct RafsMountInfo {
+    pub source: String,
+    pub config: String,
+    pub mountpoint: String,
+}
+
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct RafsUmountInfo {
+    pub mountpoint: String,
+}
+
 pub trait NydusDaemon {
     fn start(&self) -> DaemonResult<()>;
     fn wait(&self) -> Result<()>;
@@ -93,6 +155,94 @@ pub trait NydusDaemon {
     fn supervisor(&self) -> Option<String>;
     fn save(&self) -> DaemonResult<()>;
     fn restore(&self) -> DaemonResult<()>;
+    fn get_vfs(&self) -> &Vfs;
+    fn get_upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>>;
+
+    fn mount(&self, info: RafsMountInfo, persist: bool) -> Result<()> {
+        if self.get_vfs().get_rootfs(&info.mountpoint).is_ok() {
+            return Err(einval!(format!(
+                "Failed to mount, mountpoint {} exists.",
+                info.mountpoint
+            )));
+        }
+
+        let rafs_config = RafsConfig::from_file(&info.config)?;
+        let mut bootstrap = RafsIoRead::from_file(&info.source)?;
+
+        let mut rafs = Rafs::new(rafs_config, &info.mountpoint, &mut bootstrap)?;
+        rafs.import(&mut bootstrap, None)?;
+
+        self.get_vfs().mount(Box::new(rafs), &info.mountpoint)?;
+
+        if persist {
+            // Add mounts opaque to UpgradeManager
+            if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
+                let mut state = mgr_guard
+                    .get_opaque_raw(OpaqueKind::RafsMounts)?
+                    .unwrap_or_else(RafsMountsState::new);
+                state.add(info);
+                mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn update_mount(&self, info: RafsMountInfo) -> Result<()> {
+        if self.get_vfs().get_rootfs(&info.mountpoint).is_err() {
+            return Err(einval!(format!(
+                "Failed to update mount, mountpoint {} not exists.",
+                info.mountpoint
+            )));
+        }
+
+        let rafs_config = RafsConfig::from_file(&&info.config)?;
+        let mut bootstrap = RafsIoRead::from_file(&&info.source)?;
+
+        let rootfs = self.get_vfs().get_rootfs(&info.mountpoint)?;
+        let any_fs = rootfs.deref().as_any();
+
+        let rafs = any_fs
+            .downcast_ref::<Rafs>()
+            .ok_or_else(|| einval!("Can't downcast to Rafs"))?;
+
+        rafs.update(&mut bootstrap, rafs_config)
+            .map_err(|e| eother!(e))?;
+
+        // Update mounts opaque from UpgradeManager
+        if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
+            let mut state = mgr_guard
+                .get_opaque_raw(OpaqueKind::RafsMounts)?
+                .unwrap_or_else(RafsMountsState::new);
+            state.add(info);
+            mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
+        }
+
+        Ok(())
+    }
+
+    fn umount(&self, info: RafsUmountInfo) -> Result<()> {
+        if self.get_vfs().get_rootfs(&info.mountpoint).is_err() {
+            return Err(einval!(format!(
+                "Faild to umount, mountpoint {} not exists.",
+                info.mountpoint
+            )));
+        }
+
+        self.get_vfs().umount(&info.mountpoint)?;
+
+        // Remove mount opaque from UpgradeManager
+        if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
+            if let Some(mut state) =
+                mgr_guard.get_opaque_raw(OpaqueKind::RafsMounts)? as Option<RafsMountsState>
+            {
+                state.remove(info);
+                mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 #[allow(dead_code)]
@@ -195,5 +345,73 @@ impl EventSubscriber for NydusDaemonSubscriber {
     fn init(&self, ops: &mut EventOps) {
         ops.add(Events::new(&self.event_fd, EventSet::IN))
             .expect("Cannot register event")
+    }
+}
+
+#[cfg(test)]
+pub mod tests {
+    use std::path::PathBuf;
+
+    use upgrade_manager::backend::unix_domain_socket::UdsBackend;
+    use upgrade_manager::{OpaqueKind, UpgradeManager};
+
+    use super::*;
+
+    #[test]
+    fn test_rafs_mounts_state_with_upgrade_manager() {
+        let backend = UdsBackend::new(PathBuf::from("fake"));
+        let mut upgrade_mgr = UpgradeManager::new(String::from("test"), Box::new(backend));
+
+        let mut rafs_mount = RafsMountsState::new();
+        rafs_mount.add(RafsMountInfo {
+            source: String::from("source-fake1"),
+            config: String::from("config-fake1"),
+            mountpoint: String::from("mountpoint-fake1"),
+        });
+        rafs_mount.add(RafsMountInfo {
+            source: String::from("source-fake2"),
+            config: String::from("config-fake2"),
+            mountpoint: String::from("mountpoint-fake2"),
+        });
+        rafs_mount.add(RafsMountInfo {
+            source: String::from("source-fake3"),
+            config: String::from("config-fake3"),
+            mountpoint: String::from("mountpoint-fake2"),
+        });
+        rafs_mount.add(RafsMountInfo {
+            source: String::from("source-fake4"),
+            config: String::from("config-fake4"),
+            mountpoint: String::from("mountpoint-fake4"),
+        });
+        rafs_mount.remove(RafsUmountInfo {
+            mountpoint: String::from("mountpoint-fake4"),
+        });
+
+        upgrade_mgr
+            .set_opaque_raw(OpaqueKind::RafsMounts, &rafs_mount)
+            .unwrap();
+
+        let expcted_rafs_mount: RafsMountsState = upgrade_mgr
+            .get_opaque_raw(OpaqueKind::RafsMounts)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            expcted_rafs_mount,
+            RafsMountsState {
+                items: vec![
+                    RafsMountInfo {
+                        source: String::from("source-fake1"),
+                        config: String::from("config-fake1"),
+                        mountpoint: String::from("mountpoint-fake1"),
+                    },
+                    RafsMountInfo {
+                        source: String::from("source-fake3"),
+                        config: String::from("config-fake3"),
+                        mountpoint: String::from("mountpoint-fake2"),
+                    }
+                ],
+            }
+        );
     }
 }

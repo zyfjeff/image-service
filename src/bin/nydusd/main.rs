@@ -314,10 +314,9 @@ fn main() -> Result<()> {
         .map(|n| n.parse().unwrap_or(rlimit_nofile_default))
         .unwrap_or(rlimit_nofile_default);
 
-    let content =
-        std::fs::read_to_string(config).map_err(|e| Error::InvalidConfig(e.to_string()))?;
-    let rafs_conf: RafsConfig =
-        serde_json::from_str(&content).map_err(|e| Error::InvalidConfig(e.to_string()))?;
+    let rafs_conf =
+        RafsConfig::from_file(&config).map_err(|e| Error::InvalidConfig(e.to_string()))?;
+
     let vfs = Vfs::new(VfsOptions::default());
     if let Some(shared_dir) = shared_dir {
         // Vfs by default enables no_open and writeback, passthroughfs
@@ -365,18 +364,19 @@ fn main() -> Result<()> {
         .unwrap()
         .get_event_fd()?;
 
+    let daemon_id = cmd_arguments_parsed.value_of("id").map(|id| id.to_string());
+
     #[cfg(feature = "virtiofs")]
     let daemon = {
         // sock means vhost-user-backend only
         let vu_sock = cmd_arguments_parsed.value_of("sock").unwrap_or_default();
-        create_nydus_daemon(vu_sock, vfs.clone())?
+        create_nydus_daemon(daemon_id, vu_sock, vfs)?
     };
     #[cfg(feature = "fusedev")]
     let daemon = {
         let supervisor = cmd_arguments_parsed
             .value_of("supervisor")
             .map(|s| s.to_string());
-        let daemon_id = cmd_arguments_parsed.value_of("id").map(|id| id.to_string());
 
         if supervisor.is_some() && daemon_id.is_none() {
             return Err(einval!("supervisor and id must be set at the same time"));
@@ -403,7 +403,7 @@ fn main() -> Result<()> {
             .unwrap_or_default();
         create_nydus_daemon(
             mountpoint,
-            vfs.clone(),
+            vfs,
             supervisor,
             daemon_id,
             threads,
@@ -420,8 +420,6 @@ fn main() -> Result<()> {
     let mut http_thread: Option<thread::JoinHandle<Result<()>>> = None;
     let http_exit_evtfd = EventFd::new(0).unwrap();
     if apisock != "" {
-        let vfs = Arc::clone(&vfs);
-
         let (to_api, from_http) = channel();
         let (to_http, from_api) = channel();
 
@@ -431,7 +429,7 @@ fn main() -> Result<()> {
             daemon.clone(),
         )?;
 
-        let api_server_subscriber = Arc::new(ApiSeverSubscriber::new(vfs, api_server, from_http)?);
+        let api_server_subscriber = Arc::new(ApiSeverSubscriber::new(api_server, from_http)?);
         let api_server_id = event_manager.add_subscriber(api_server_subscriber);
         let evtfd = event_manager
             .subscriber_mut(api_server_id)

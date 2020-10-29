@@ -29,15 +29,14 @@ fn check_compact<'a>(work_dir: &'a PathBuf, bootstrap_name: &str, rafs_mode: &st
         false,
         false,
         rafs_mode.parse()?,
-        bootstrap_name.into(),
         "api.sock".into(),
         true,
     )?;
 
-    nydusd.start()?;
+    nydusd.start(Some(bootstrap_name), "mnt")?;
     let result_path = format!("repeatable/{}.result", bootstrap_name);
-    nydusd.check(result_path.as_str())?;
-    nydusd.stop();
+    nydusd.check(result_path.as_str(), "mnt")?;
+    nydusd.umount("mnt");
 
     Ok(())
 }
@@ -71,13 +70,12 @@ fn test(
             enable_cache,
             cache_compressed,
             rafs_mode.parse()?,
-            "bootstrap-lower".into(),
             "api.sock".into(),
             true,
         )?;
-        nydusd.start()?;
-        nydusd.check("directory/lower.result")?;
-        nydusd.stop();
+        nydusd.start(Some("bootstrap-lower"), "mnt")?;
+        nydusd.check("directory/lower.result", "mnt")?;
+        nydusd.umount("mnt");
     }
 
     // Mount upper rootfs and check
@@ -92,13 +90,12 @@ fn test(
             enable_cache,
             cache_compressed,
             rafs_mode.parse()?,
-            "bootstrap-overlay".into(),
             "api.sock".into(),
             true,
         )?;
-        nydusd.start()?;
-        nydusd.check("directory/overlay.result")?;
-        nydusd.stop();
+        nydusd.start(Some("bootstrap-overlay"), "mnt")?;
+        nydusd.check("directory/overlay.result", "mnt")?;
+        nydusd.umount("mnt");
     }
 
     // Test blob cache recovery if enable cache
@@ -108,13 +105,12 @@ fn test(
             enable_cache,
             cache_compressed,
             rafs_mode.parse()?,
-            "bootstrap-overlay".into(),
             "api.sock".into(),
             true,
         )?;
-        nydusd.start()?;
-        nydusd.check("directory/overlay.result")?;
-        nydusd.stop();
+        nydusd.start(Some("bootstrap-overlay"), "mnt")?;
+        nydusd.check("directory/overlay.result", "mnt")?;
+        nydusd.umount("mnt");
     }
 
     Ok(())
@@ -212,21 +208,20 @@ fn integration_test_stargz() -> Result<()> {
         true,
         true,
         "direct".parse()?,
-        "bootstrap-overlay".into(),
         "api.sock".into(),
         false,
     )?;
 
-    nydusd.start()?;
-    nydusd.check("directory/overlay.result")?;
-    nydusd.stop();
+    nydusd.start(Some("bootstrap-overlay"), "mnt")?;
+    nydusd.check("directory/overlay.result", "mnt")?;
+    nydusd.umount("mnt");
 
     Ok(())
 }
 
 #[test]
-fn integration_test_hot_upgrade() -> Result<()> {
-    info!("\n\n==================== testing run: hot upgrade");
+fn integration_test_hot_upgrade_with_fusedev() -> Result<()> {
+    info!("\n\n==================== testing run: hot upgrade with fusedev");
 
     let tmp_dir = TempDir::new().map_err(|e| eother!(e))?;
     let work_dir = tmp_dir.as_path().to_path_buf();
@@ -241,7 +236,6 @@ fn integration_test_hot_upgrade() -> Result<()> {
         false,
         false,
         "direct".parse()?,
-        COMPAT_BOOTSTRAPS[0].into(),
         "api.sock".into(),
         true,
     )?;
@@ -251,15 +245,14 @@ fn integration_test_hot_upgrade() -> Result<()> {
         false,
         false,
         "direct".parse()?,
-        COMPAT_BOOTSTRAPS[0].into(),
         "new-api.sock".into(),
         true,
     )?;
 
-    let snapshotter = Snapshotter::new(work_dir);
+    let snapshotter = Snapshotter::new(work_dir.clone());
 
     // Start old nydusd to mount
-    old_nydusd.start()?;
+    old_nydusd.start(Some(COMPAT_BOOTSTRAPS[0]), "mnt")?;
 
     // Old nydusd's state should be RUNNING
     assert_eq!(snapshotter.get_status(&old_nydusd.api_sock), "RUNNING");
@@ -268,7 +261,7 @@ fn integration_test_hot_upgrade() -> Result<()> {
     snapshotter.request_sendfd(&old_nydusd.api_sock);
 
     // Start new nydusd but don't mount
-    new_nydusd.start_with_upgrade()?;
+    new_nydusd.start_with_upgrade(Some(COMPAT_BOOTSTRAPS[0]), "mnt")?;
 
     // New nydusd's state should be INIT
     assert_eq!(snapshotter.get_status(&new_nydusd.api_sock), "INIT");
@@ -287,10 +280,100 @@ fn integration_test_hot_upgrade() -> Result<()> {
 
     // Check files in mount point
     let result_path = format!("repeatable/{}.result", COMPAT_BOOTSTRAPS[0]);
-    new_nydusd.check(result_path.as_str())?;
+    new_nydusd.check(result_path.as_str(), "mnt")?;
 
     // Stop new nydusd
-    new_nydusd.stop();
+    new_nydusd.umount("mnt");
+
+    Ok(())
+}
+
+#[test]
+fn integration_test_hot_upgrade_with_rafs_mount() -> Result<()> {
+    info!("\n\n==================== testing run: hot upgrade with rafs mount");
+
+    let tmp_dir = TempDir::new().map_err(|e| eother!(e))?;
+    let work_dir = tmp_dir.as_path().to_path_buf();
+    let _ = exec(
+        format!("cp -a tests/texture/repeatable/* {:?}", work_dir).as_str(),
+        false,
+    )
+    .unwrap();
+
+    let old_nydusd = nydusd::new(
+        &work_dir,
+        false,
+        false,
+        "direct".parse()?,
+        "api.sock".into(),
+        true,
+    )?;
+
+    let new_nydusd = nydusd::new(
+        &work_dir,
+        false,
+        false,
+        "direct".parse()?,
+        "new-api.sock".into(),
+        true,
+    )?;
+
+    let snapshotter = Snapshotter::new(work_dir.clone());
+
+    // Start old nydusd to mount
+    old_nydusd.start(None, "mnt")?;
+
+    // Add RAFS mountpoint
+    snapshotter.mount(
+        &old_nydusd.api_sock,
+        "blobs",
+        "/sub1",
+        "hot-upgrade-test-config",
+        COMPAT_BOOTSTRAPS[0],
+    );
+
+    // Add RAFS mountpoint
+    snapshotter.mount(
+        &old_nydusd.api_sock,
+        "blobs",
+        "/sub2",
+        "hot-upgrade-test-config",
+        COMPAT_BOOTSTRAPS[1],
+    );
+
+    // Old nydusd's state should be RUNNING
+    assert_eq!(snapshotter.get_status(&old_nydusd.api_sock), "RUNNING");
+
+    // Snapshotter receive fuse fd from old nydusd
+    snapshotter.request_sendfd(&old_nydusd.api_sock);
+
+    // Start new nydusd but don't mount
+    new_nydusd.start_with_upgrade(None, "mnt")?;
+
+    // New nydusd's state should be INIT
+    assert_eq!(snapshotter.get_status(&new_nydusd.api_sock), "INIT");
+
+    // Snapshotter tells old nydusd to exit
+    snapshotter.kill_nydusd(&old_nydusd.api_sock);
+
+    // Snapshotter send fuse fd to new nydusd
+    snapshotter.take_over(&new_nydusd.api_sock);
+
+    // New nydusd's state should be RUNNING
+    assert_eq!(snapshotter.get_status(&new_nydusd.api_sock), "RUNNING");
+
+    // Snapshotter receive fuse fd from new nydusd
+    snapshotter.request_sendfd(&new_nydusd.api_sock);
+
+    // Check files in mount point
+    let result_path = format!("repeatable/{}.result", COMPAT_BOOTSTRAPS[0]);
+    new_nydusd.check(result_path.as_str(), "mnt/sub1")?;
+
+    let result_path = format!("repeatable/{}.result", COMPAT_BOOTSTRAPS[1]);
+    new_nydusd.check(result_path.as_str(), "mnt/sub2")?;
+
+    // Stop new nydusd
+    new_nydusd.umount("mnt");
 
     Ok(())
 }

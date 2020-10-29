@@ -4,27 +4,25 @@
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
 use std::convert::From;
-use std::fs::File;
-use std::ops::Deref;
-use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
 use event_manager::{EventOps, EventSubscriber, Events};
-use fuse_rs::api::Vfs;
 use nix::sys::signal::{kill, SIGTERM};
 use nix::unistd::Pid;
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
 use nydus_api::http_endpoint::{
     ApiError, ApiRequest, ApiResponse, ApiResponsePayload, ApiResult, DaemonConf, DaemonErrorKind,
-    DaemonInfo, MountInfo,
+    DaemonInfo, RafsMountInfo, RafsUmountInfo,
 };
-use nydus_utils::{einval, enoent, eother, epipe, last_error};
-use rafs::fs::{Rafs, RafsConfig};
+use nydus_utils::{epipe, last_error};
 use rafs::io_stats;
 
-use crate::daemon::{DaemonError, NydusDaemon};
+use crate::daemon::{
+    DaemonError, NydusDaemon, RafsMountInfo as DaemonRafsMountInfo,
+    RafsUmountInfo as DaemonRafsUmountInfo,
+};
 #[cfg(fusedev)]
 use crate::fusedev::FusedevDaemon;
 use crate::SubscriberWrapper;
@@ -63,19 +61,16 @@ impl ApiServer {
         })
     }
 
-    fn process_request(
-        &self,
-        from_http: &Receiver<ApiRequest>,
-        rafs_conf: &RafsConfig,
-        vfs: &Vfs,
-    ) -> std::io::Result<()> {
+    fn process_request(&self, from_http: &Receiver<ApiRequest>) -> std::io::Result<()> {
         let request = from_http
             .recv()
             .map_err(|e| epipe!(format!("receive API channel failed {}", e)))?;
 
         let resp = match request {
             ApiRequest::DaemonInfo => self.daemon_info(),
-            ApiRequest::Mount(info) => Self::do_mount(info, rafs_conf, vfs),
+            ApiRequest::Mount(info) => self.do_mount(info),
+            ApiRequest::UpdateMount(info) => self.do_update_mount(info),
+            ApiRequest::Umount(info) => self.do_umount(info),
             ApiRequest::ConfigureDaemon(conf) => self.configure_daemon(conf),
             ApiRequest::ExportGlobalMetrics(id) => Self::export_global_metrics(id),
             ApiRequest::ExportFilesMetrics(id) => Self::export_files_metrics(id),
@@ -107,12 +102,6 @@ impl ApiServer {
         };
 
         Ok(ApiResponsePayload::DaemonInfo(response))
-    }
-
-    fn do_mount(info: MountInfo, rafs_conf: &RafsConfig, vfs: &Vfs) -> ApiResponse {
-        rafs_mount(info, &rafs_conf, vfs)
-            .map(|_| ApiResponsePayload::Empty)
-            .map_err(ApiError::MountFailure)
     }
 
     fn configure_daemon(&self, conf: DaemonConf) -> ApiResponse {
@@ -151,10 +140,7 @@ impl ApiServer {
         let d = self.daemon.as_ref();
 
         d.save()
-            .map(|_| {
-                info!("save fuse fd to uds server");
-                ApiResponsePayload::Empty
-            })
+            .map(|_| ApiResponsePayload::Empty)
             .map_err(|e| ApiError::DaemonAbnormal(e.into()))
     }
 
@@ -167,10 +153,7 @@ impl ApiServer {
     fn do_takeover(&self) -> ApiResponse {
         let d = self.daemon.as_ref();
         d.trigger_takeover()
-            .map(|_| {
-                info!("restore fuse fd from uds server");
-                ApiResponsePayload::Empty
-            })
+            .map(|_| ApiResponsePayload::Empty)
             .map_err(|e| ApiError::DaemonAbnormal(e.into()))
     }
 
@@ -194,83 +177,39 @@ impl ApiServer {
 
         Ok(ApiResponsePayload::Empty)
     }
-}
 
-fn parse_rafs_config(p: impl AsRef<Path>) -> Option<RafsConfig> {
-    if let Ok(content) = std::fs::read_to_string(p) {
-        if let Ok(rafs_conf) = serde_json::from_str::<RafsConfig>(&content) {
-            return Some(rafs_conf);
-        }
+    fn do_mount(&self, info: RafsMountInfo) -> ApiResponse {
+        self.daemon
+            .mount(
+                DaemonRafsMountInfo {
+                    mountpoint: info.mountpoint,
+                    config: info.config,
+                    source: info.source,
+                },
+                true,
+            )
+            .map(|_| ApiResponsePayload::Empty)
+            .map_err(ApiError::MountFailure)
     }
-    None
-}
 
-/// Mount Rafs per as to provided mount-info.
-pub fn rafs_mount(
-    info: MountInfo,
-    default_rafs_conf: &RafsConfig,
-    vfs: &Vfs,
-) -> std::io::Result<()> {
-    match info.ops.as_str() {
-        "mount" => {
-            // As `umount` op has nothing to do with `source`, the body can have no `source`.
-            let source = info
-                .source
-                .ok_or_else(|| enoent!("No source file is provided!"))?;
+    fn do_update_mount(&self, info: RafsMountInfo) -> ApiResponse {
+        self.daemon
+            .update_mount(DaemonRafsMountInfo {
+                mountpoint: info.mountpoint,
+                config: info.config,
+                source: info.source,
+            })
+            .map(|_| ApiResponsePayload::Empty)
+            .map_err(ApiError::MountFailure)
+    }
 
-            let rafs_config = match info.config.as_ref() {
-                Some(config) => {
-                    parse_rafs_config(config).ok_or_else(|| einval!("Fail in parsing config"))?
-                }
-                None => default_rafs_conf.clone(),
-            };
-
-            let mut file =
-                Box::new(File::open(source).map_err(|e| eother!(e))?) as Box<dyn rafs::RafsIoRead>;
-            let mut rafs = Rafs::new(rafs_config, &info.mountpoint, &mut file)?;
-            rafs.import(&mut file, None)?;
-
-            vfs.mount(Box::new(rafs), &info.mountpoint).map_err(|e| {
-                eother!(e);
-                e
-            })?;
-
-            info!("rafs mounted");
-            Ok(())
-        }
-        "update" => {
-            info!("switch backend");
-
-            // As `umount` op has nothing to do with `source`, the body can have no `source`.
-            let source = info
-                .source
-                .ok_or_else(|| enoent!("No source file is provided!"))?;
-
-            let config = info
-                .config
-                .as_ref()
-                .ok_or_else(|| enoent!("No rafs configuration was provided!"))?;
-
-            // Safe to unwrap since we already checked if `config` is None or not above.
-            let rafs_conf =
-                parse_rafs_config(config).ok_or_else(|| einval!("Fail in parsing config"))?;
-
-            let rootfs = vfs.get_rootfs(&info.mountpoint).map_err(|e| enoent!(e))?;
-            let any_fs = rootfs.deref().as_any();
-            let fs_swap = any_fs.downcast_ref::<Rafs>().ok_or_else(|| {
-                error!("Can't downcast!");
-                einval!()
-            })?;
-            let mut file = Box::new(File::open(source).map_err(|e| last_error!(e))?)
-                as Box<dyn rafs::RafsIoRead>;
-
-            fs_swap
-                .update(&mut file, rafs_conf)
-                .map_err(|e| eother!(e))?;
-            Ok(())
-        }
-        "umount" => vfs.umount(&info.mountpoint),
-        _ => Err(einval!("Invalid op")),
+    fn do_umount(&self, info: RafsUmountInfo) -> ApiResponse {
+        self.daemon
+            .umount(DaemonRafsUmountInfo {
+                mountpoint: info.mountpoint,
+            })
+            .map(|_| ApiResponsePayload::Empty)
+            .map_err(ApiError::MountFailure)
     }
 }
 
@@ -284,21 +223,13 @@ pub struct ApiSeverSubscriber {
     event_fd: EventFd,
     server: ApiServer,
     api_receiver: Receiver<ApiRequest>,
-    rafs_conf: RafsConfig,
-    vfs: Arc<Vfs>,
 }
 
 impl ApiSeverSubscriber {
-    pub fn new(
-        vfs: Arc<Vfs>,
-        server: ApiServer,
-        api_receiver: Receiver<ApiRequest>,
-    ) -> std::io::Result<Self> {
+    pub fn new(server: ApiServer, api_receiver: Receiver<ApiRequest>) -> std::io::Result<Self> {
         match EventFd::new(0) {
             Ok(fd) => Ok(Self {
                 event_fd: fd,
-                rafs_conf: RafsConfig::new(),
-                vfs,
                 server,
                 api_receiver,
             }),
@@ -320,7 +251,7 @@ impl EventSubscriber for ApiSeverSubscriber {
         match events.event_set() {
             EventSet::IN => {
                 self.server
-                    .process_request(&self.api_receiver, &self.rafs_conf, &self.vfs)
+                    .process_request(&self.api_receiver)
                     .unwrap_or_else(|e| error!("API server process events failed, {}", e));
             }
             EventSet::ERROR => {

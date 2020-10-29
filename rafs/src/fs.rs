@@ -7,21 +7,19 @@
 //! RAFS: a readonly FUSE file system designed for Cloud Native.
 
 use std::any::Any;
-use std::ffi::CStr;
-use std::ffi::OsStr;
+use std::ffi::{CStr, OsStr};
 use std::fmt;
 use std::io::Result;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use fuse_rs::abi::linux_abi::Attr;
 use fuse_rs::api::filesystem::*;
 use fuse_rs::api::BackendFileSystem;
 use nix::unistd::{getegid, geteuid};
 use serde::Deserialize;
-use std::time::SystemTime;
 
 use crate::io_stats;
 use crate::io_stats::StatsFop;
@@ -83,6 +81,11 @@ impl RafsConfig {
         RafsConfig {
             ..Default::default()
         }
+    }
+
+    pub fn from_file(path: &str) -> Result<RafsConfig> {
+        let file = File::open(path)?;
+        serde_json::from_reader::<File, RafsConfig>(file).map_err(|e| einval!(e))
     }
 }
 

@@ -706,7 +706,7 @@ checksum = "3728d817d99e5ac407411fa471ff9800a778d88a24685968b36824eaf4bee400"
 [[package]]
 name = "micro_http"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/micro-http.git#de72a5d145a71d07e193ef530a500be2f11dc960"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/micro-http.git?branch=master#bc2611dac66f14e08b69996bdebb6b9481aa386e"
 dependencies = [
  "epoll",
 ]
@@ -1074,8 +1074,11 @@ dependencies = [
  "serde_json",
  "sha-1",
  "sha2",
+ "snapshot",
  "spmc",
  "url",
+ "versionize",
+ "versionize_derive",
  "vm-memory",
  "vmm-sys-util",
 ]

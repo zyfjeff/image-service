@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicI32, AtomicU64, Ordering},
     mpsc::{channel, Receiver, Sender},
-    Arc, Mutex,
+    Arc, Mutex, MutexGuard,
 };
 use std::thread::{self, JoinHandle};
 
@@ -28,10 +28,12 @@ use vmm_sys_util::eventfd::EventFd;
 
 use crate::daemon;
 use crate::exit_event_manager;
-use daemon::{DaemonError, DaemonResult, DaemonState, Error, NydusDaemon};
+use daemon::{
+    DaemonError, DaemonResult, DaemonState, Error, NydusDaemon, RafsMountInfo, RafsMountsState,
+};
 use nydus_utils::{einval, eio, eother, FuseChannel, FuseSession};
 use upgrade_manager::backend::unix_domain_socket::UdsBackend;
-use upgrade_manager::{ResourceKind, UpgradeManager, VersionMapGetter};
+use upgrade_manager::{OpaqueKind, UpgradeManager, VersionMapGetter};
 
 struct FuseServer {
     server: Arc<Server<Arc<Vfs>>>,
@@ -346,17 +348,23 @@ impl NydusDaemon for FusedevDaemon {
         }
 
         // Unwrap should be safe because it's in hot upgrade / failover workflow
-        let mut mgr_guard = self.upgrade_mgr.as_ref().unwrap().lock().unwrap();
+        let mut mgr_guard = self.get_upgrade_mgr().unwrap();
 
+        // Save fuse fd
         let fds = vec![self.session.lock().unwrap().get_fuse_fd().unwrap()];
         mgr_guard.set_fds(fds);
 
+        // Save daemon opaque
         mgr_guard
-            .set_opaque(ResourceKind::FuseDevice, &self)
+            .set_opaque(OpaqueKind::FuseDevice, &self)
             .map_err(|_| DaemonError::SendFd)?;
 
-        // Save fd and opaque data to remote uds server
         mgr_guard.save().map_err(|_| DaemonError::SendFd)?;
+
+        info!(
+            "Saved opaques {:?} to remote UDS server",
+            mgr_guard.get_opaque_kinds()
+        );
 
         Ok(())
     }
@@ -367,22 +375,58 @@ impl NydusDaemon for FusedevDaemon {
         }
 
         // Unwrap should be safe because it's in hot upgrade / failover workflow
-        let mut mgr_guard = self.upgrade_mgr.as_ref().unwrap().lock().unwrap();
+        let mut mgr_guard = self.get_upgrade_mgr().unwrap();
         mgr_guard.restore().map_err(|_| DaemonError::RecvFd)?;
 
-        // Restore daemon opaque data from remote uds server
-        let _: &Self = mgr_guard
-            .get_opaque(ResourceKind::FuseDevice, self)
-            .map_err(|_| DaemonError::RecvFd)?;
+        // Restore daemon opaque
+        if (mgr_guard
+            .get_opaque(OpaqueKind::FuseDevice, self)
+            .map_err(|_| DaemonError::RecvFd)? as Option<&Self>)
+            .is_none()
+        {
+            return Err(DaemonError::NoResource);
+        }
 
-        // Restore fuse fd from remote uds server
+        // Restore fuse fd
         let fds = mgr_guard.get_fds();
+        self.session.lock().unwrap().set_fuse_fd(fds[0]);
+
+        // Restore RAFS mounts
+        if let Some(mount_state) = mgr_guard
+            .get_opaque_raw(OpaqueKind::RafsMounts)
+            .unwrap_or_else(|_| Some(RafsMountsState::new()))
+        {
+            for item in mount_state.items {
+                self.mount(
+                    RafsMountInfo {
+                        mountpoint: item.mountpoint,
+                        source: item.source,
+                        config: item.config,
+                    },
+                    false,
+                )
+                .map_err(|_| DaemonError::RecvFd)?;
+            }
+        }
+
+        info!(
+            "Restored opaques {:?} from remote UDS server",
+            mgr_guard.get_opaque_kinds()
+        );
+
+        // Start to serve fuse request
         let conn = self.conn.load(Ordering::Acquire);
         drain_fuse_requests(conn, &self.failover_policy);
 
-        self.session.lock().unwrap().set_fuse_fd(fds[0]);
-
         Ok(())
+    }
+
+    fn get_vfs(&self) -> &Vfs {
+        &self.vfs
+    }
+
+    fn get_upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>> {
+        self.upgrade_mgr.as_ref().map(|mgr| mgr.lock().unwrap())
     }
 }
 

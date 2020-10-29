@@ -23,19 +23,19 @@ use versionize_derive::Versionize;
 use backend::Backend;
 use nydus_utils::einval;
 
-// Use ResourceKind to distinguish resource instances in
+// Use OpaqueKind to distinguish resource instances in
 // UpgradeManager, you can add more as you need.
 #[derive(Hash, PartialEq, Eq, Clone, Debug, Versionize)]
-pub enum ResourceKind {
+pub enum OpaqueKind {
     FuseDevice,
-    RafsMount,
+    RafsMounts,
 }
 
-impl fmt::Display for ResourceKind {
+impl fmt::Display for OpaqueKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::FuseDevice => write!(f, "fuse_device"),
-            Self::RafsMount => write!(f, "rafs_mount"),
+            Self::RafsMounts => write!(f, "rafs_mount"),
         }
     }
 }
@@ -50,14 +50,14 @@ pub trait VersionMapGetter {
     }
 }
 
-// BinaryResources stores all opaque data serialized by Snapshot,
-// use `ResourceKind` to distinguish.
+// Opaques stores all opaque data serialized by Snapshot,
+// use `OpaqueKind` to distinguish.
 #[derive(Clone, Debug, Versionize)]
-struct BinaryResources {
-    data: HashMap<ResourceKind, Vec<u8>>,
+struct Opaques {
+    data: HashMap<OpaqueKind, Vec<u8>>,
 }
 
-impl VersionMapGetter for BinaryResources {}
+impl VersionMapGetter for Opaques {}
 
 // UpgradeManager manages all state that needs to be saved (persist to storage backend)
 // or restored (reconstruct from storage backend), includes Fd and Binary (Opaque) data.
@@ -72,7 +72,7 @@ pub struct UpgradeManager {
     id: String,
     backend: Box<dyn Backend>,
     fds: Vec<RawFd>,
-    opaques: BinaryResources,
+    opaques: Opaques,
 }
 
 impl UpgradeManager {
@@ -81,7 +81,7 @@ impl UpgradeManager {
             id,
             backend,
             fds: Vec::new(),
-            opaques: BinaryResources {
+            opaques: Opaques {
                 data: HashMap::new(),
             },
         }
@@ -97,8 +97,8 @@ impl UpgradeManager {
         self.fds.as_slice()
     }
 
-    // Cache opaque to manager, opaque object should implement Persist trait
-    pub fn set_opaque<'a, O, V, D>(&mut self, res_name: ResourceKind, obj: &O) -> Result<()>
+    // Cache opaque (implemented Persist trait) to manager, opaque object should implement Persist trait
+    pub fn set_opaque<'a, O, V, D>(&mut self, kind: OpaqueKind, obj: &O) -> Result<()>
     where
         O: Persist<'a, State = V, Error = D>,
         V: Versionize + VersionMapGetter,
@@ -116,33 +116,71 @@ impl UpgradeManager {
             .save_with_crc64(&mut opaque, &state)
             .map_err(|e| einval!(e))?;
 
-        self.opaques.data.insert(res_name, opaque);
+        self.opaques.data.insert(kind, opaque);
 
         Ok(())
     }
 
-    // Get opaque from manager cache
-    pub fn get_opaque<'a, O, V, A, D>(&mut self, res_name: ResourceKind, args: A) -> Result<O>
+    // Cache opaque (implemented Versionize) to manager, opaque object should implement Persist trait
+    pub fn set_opaque_raw<V>(&mut self, kind: OpaqueKind, obj: &V) -> Result<()>
+    where
+        V: Versionize + VersionMapGetter,
+    {
+        let vm = V::version_map();
+        let latest_version = vm.latest_version();
+
+        let mut snapshot = Snapshot::new(vm, latest_version);
+        let mut opaque: Vec<u8> = Vec::new();
+
+        snapshot
+            .save_with_crc64(&mut opaque, obj)
+            .map_err(|e| einval!(e))?;
+
+        self.opaques.data.insert(kind, opaque);
+
+        Ok(())
+    }
+
+    // Get opaque (implemented Persist trait) from manager cache
+    pub fn get_opaque<'a, O, V, A, D>(&mut self, kind: OpaqueKind, args: A) -> Result<Option<O>>
     where
         O: Persist<'a, State = V, ConstructorArgs = A, Error = D>,
         V: Versionize + VersionMapGetter,
         D: std::fmt::Debug,
     {
-        if let Some(opaque) = self.opaques.data.get(&res_name) {
+        if let Some(opaque) = self.opaques.data.get(&kind) {
             let vm = V::version_map();
 
-            let restored =
+            let state =
                 Snapshot::load_with_crc64(&mut opaque.as_slice(), vm).map_err(|e| einval!(e))?;
+            let opaque = O::restore(args, &state).map_err(|e| einval!(e))?;
 
-            return Ok(O::restore(args, &restored).map_err(|e| einval!(e))?);
+            return Ok(Some(opaque));
         }
 
-        Err(einval!(format!("Can't find resource {:?}", res_name)))
+        Ok(None)
+    }
+
+    // Get opaque (implemented Versionize) from manager cache
+    pub fn get_opaque_raw<V>(&mut self, kind: OpaqueKind) -> Result<Option<V>>
+    where
+        V: Versionize + VersionMapGetter,
+    {
+        if let Some(opaque) = self.opaques.data.get(&kind) {
+            let vm = V::version_map();
+
+            let opaque =
+                Snapshot::load_with_crc64(&mut opaque.as_slice(), vm).map_err(|e| einval!(e))?;
+
+            return Ok(Some(opaque));
+        }
+
+        Ok(None)
     }
 
     // Save all fds and opaques to backend
     pub fn save(&mut self) -> Result<()> {
-        let vm = BinaryResources::version_map();
+        let vm = Opaques::version_map();
         let latest_version = vm.latest_version();
 
         let mut snapshot = Snapshot::new(vm, latest_version);
@@ -160,10 +198,10 @@ impl UpgradeManager {
 
     // Restore all fds and opaques from backend, and put them to manager cache
     pub fn restore(&mut self) -> Result<()> {
-        let vm = BinaryResources::version_map();
+        let vm = Opaques::version_map();
 
-        // TODO: Is 128K buffer large enough?
-        let mut opaque: Vec<u8> = vec![0u8; 128 << 10];
+        // TODO: Is 256K buffer large enough?
+        let mut opaque: Vec<u8> = vec![0u8; 256 << 10];
         let mut fds: Vec<RawFd> = vec![0; 8];
 
         let (opaque_size, fd_count) = self.backend.restore(&mut fds, &mut opaque)?;
@@ -175,6 +213,10 @@ impl UpgradeManager {
             Snapshot::load_with_crc64(&mut opaque.as_slice(), vm).map_err(|e| einval!(e))?;
 
         Ok(())
+    }
+
+    pub fn get_opaque_kinds(&mut self) -> Vec<&OpaqueKind> {
+        self.opaques.data.keys().collect()
     }
 }
 
@@ -322,10 +364,10 @@ pub mod tests {
         // Save fd + opaque to uds server
         upgrade_mgr.set_fds(fds);
         upgrade_mgr
-            .set_opaque(ResourceKind::FuseDevice, &opaque1)
+            .set_opaque(OpaqueKind::FuseDevice, &opaque1)
             .unwrap();
         upgrade_mgr
-            .set_opaque(ResourceKind::RafsMount, &opaque2)
+            .set_opaque(OpaqueKind::RafsMounts, &opaque2)
             .unwrap();
         upgrade_mgr.save().unwrap();
 
@@ -335,10 +377,12 @@ pub mod tests {
         upgrade_mgr.restore().unwrap();
 
         let restored_opaque1: Test = upgrade_mgr
-            .get_opaque(ResourceKind::FuseDevice, TestArgs { baz: 100 })
+            .get_opaque(OpaqueKind::FuseDevice, TestArgs { baz: 100 })
+            .unwrap()
             .unwrap();
         let restored_opaque2: Test = upgrade_mgr
-            .get_opaque(ResourceKind::RafsMount, TestArgs { baz: 100 })
+            .get_opaque(OpaqueKind::RafsMounts, TestArgs { baz: 100 })
+            .unwrap()
             .unwrap();
         let restored_fds = upgrade_mgr.get_fds();
 
