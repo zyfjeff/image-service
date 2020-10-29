@@ -230,7 +230,7 @@ fn main() -> Result<()> {
                 .global(true),
         );
 
-    #[cfg(feature = "virtiofs")]
+    #[cfg(feature = "virtiofsd")]
     let cmd_arguments = cmd_arguments.arg(
         Arg::with_name("sock")
             .long("sock")
