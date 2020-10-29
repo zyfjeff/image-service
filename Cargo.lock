@@ -332,7 +332,7 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 [[package]]
 name = "fuse-rs"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git#126a3111d8ee2f80faf14b5fc15d5c5b8bf39375"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git#d8d39e19bab7feb9eba89f08fefd752ec40da201"
 dependencies = [
  "arc-swap",
  "bimap",
@@ -340,7 +340,6 @@ dependencies = [
  "libc",
  "log",
  "nix",
- "serde",
  "snapshot",
  "versionize",
  "versionize_derive",

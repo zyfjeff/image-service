@@ -19,9 +19,8 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 
-use fuse_rs::api::{server::Server, Vfs, VfsOptions};
+use fuse_rs::api::{server::Server, Vfs, VfsOptions, VfsOptionsState};
 use rust_fsm::*;
-use serde::{Deserialize, Serialize};
 use snapshot::Persist;
 use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
@@ -208,25 +207,19 @@ impl FusedevDaemonSM {
                 );
                 match action {
                     Some(a) => match a {
-                        FusedevStateMachineOutput::StartService => d.start().and_then(|_| {
+                        FusedevStateMachineOutput::StartService => d.start().map(|_| {
                             d.set_state(DaemonState::INIT);
-                            Ok(())
                         }),
-                        FusedevStateMachineOutput::StartServiceWithRunning => {
-                            d.start().and_then(|_| {
-                                d.set_state(DaemonState::RUNNING);
-                                Ok(())
-                            })
-                        }
+                        FusedevStateMachineOutput::StartServiceWithRunning => d.start().map(|_| {
+                            d.set_state(DaemonState::RUNNING);
+                        }),
                         FusedevStateMachineOutput::Negotiate => {
                             d.set_state(DaemonState::RUNNING);
                             Ok(())
                         }
                         FusedevStateMachineOutput::Umount => {
-                            d.session.lock().unwrap().umount().and_then(|_| {
-                                // TODO: d.set_state(?);
-                                Ok(())
-                            })
+                            // TODO: d.set_state(?);
+                            d.session.lock().unwrap().umount()
                         }
                         FusedevStateMachineOutput::TerminateFuseService => {
                             d.interrupt();
@@ -422,11 +415,12 @@ impl<'a> Persist<'a> for &'a FusedevDaemon {
     type State = DaemonOpaque;
     type ConstructorArgs = &'a FusedevDaemon;
     type LiveUpgradeConstructorArgs = &'a FusedevDaemon;
-    type Error = Error;
+    type Error = DaemonError;
 
     fn save(&self) -> Self::State {
+        let vfs_opts = self.vfs.get_opts();
         DaemonOpaque {
-            vfs_opts: self.vfs.get_opts(),
+            vfs_opts: vfs_opts.save(),
             conn: self.conn.load(Ordering::Acquire),
         }
     }
@@ -435,7 +429,9 @@ impl<'a> Persist<'a> for &'a FusedevDaemon {
         daemon: Self::ConstructorArgs,
         opaque: &Self::State,
     ) -> std::result::Result<Self, Self::Error> {
-        daemon.vfs.set_opts(opaque.vfs_opts);
+        let vfs_opts =
+            VfsOptions::restore((), &opaque.vfs_opts).map_err(|()| DaemonError::RecvFd)?;
+        daemon.vfs.set_opts(vfs_opts);
         daemon.conn.store(opaque.conn, Ordering::Relaxed);
         Ok(daemon)
     }
@@ -599,10 +595,10 @@ pub fn create_nydus_daemon(
     Ok(daemon)
 }
 
-#[derive(Default, Debug, Serialize, Deserialize, Clone, Versionize)]
+#[derive(Debug, Versionize)]
 pub struct DaemonOpaque {
     // Negotiate with kernel when do mount
-    vfs_opts: VfsOptions,
+    vfs_opts: VfsOptionsState,
     conn: u64,
 }
 
