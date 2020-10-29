@@ -3,7 +3,7 @@
 //
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
-#[macro_use(crate_version, crate_authors)]
+#[macro_use(crate_authors, crate_version)]
 extern crate clap;
 #[macro_use]
 extern crate log;
@@ -40,7 +40,7 @@ use event_manager::{EventManager, EventSubscriber, SubscriberOps};
 use vmm_sys_util::eventfd::EventFd;
 
 use nydus_api::http::start_http_thread;
-use nydus_utils::{einval, log_level_to_verbosity};
+use nydus_utils::{einval, log_level_to_verbosity, BuildTimeInfo};
 use rafs::fs::{Rafs, RafsConfig};
 
 mod daemon;
@@ -124,17 +124,23 @@ pub mod built_info {
 
 fn dump_program_info() {
     info!(
-        "Git Version: {:?}, Build Time: {:?}",
+        "Git Commit: {:?}, Build Time: {:?}",
         built_info::GIT_COMMIT_HASH.unwrap_or_default(),
         built_info::BUILT_TIME_UTC
     );
 }
 
 fn main() -> Result<()> {
-    let cmd_arguments = App::new("vhost-user-fs backend")
-        .version(crate_version!())
+    let bti = BuildTimeInfo::dump(
+        crate_version!(),
+        built_info::GIT_COMMIT_HASH.unwrap_or_default(),
+        built_info::BUILT_TIME_UTC,
+    );
+
+    let cmd_arguments = App::new("")
+        .version(bti.as_str())
         .author(crate_authors!())
-        .about("Launch a vhost-user-fs backend.")
+        .about("Nydus image service")
         .arg(
             Arg::with_name("bootstrap")
                 .long("bootstrap")
