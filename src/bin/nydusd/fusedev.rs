@@ -27,7 +27,7 @@ use versionize_derive::Versionize;
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::daemon;
-use crate::{EVENT_MANAGER_RUN, EXIT_EVTFD};
+use crate::EXIT_EVTFD;
 use daemon::{DaemonError, DaemonResult, DaemonState, Error, NydusDaemon};
 use nydus_utils::{einval, eio, eother, FuseChannel, FuseSession};
 use upgrade_manager::backend::unix_domain_socket::UdsBackend;
@@ -248,7 +248,6 @@ impl FusedevDaemon {
             .name("fuse_server".to_string())
             .spawn(move || {
                 let _ = s.svc_loop();
-                EVENT_MANAGER_RUN.store(false, Ordering::Relaxed);
                 EXIT_EVTFD
                     .lock()
                     .unwrap()
