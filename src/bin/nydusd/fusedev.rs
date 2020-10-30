@@ -188,6 +188,7 @@ impl FusedevDaemonSM {
         thread::Builder::new()
             .name("state_machine".to_string())
             .spawn(move || loop {
+                use FusedevStateMachineOutput::*;
                 let event = self
                     .event_collector
                     .recv()
@@ -207,26 +208,26 @@ impl FusedevDaemonSM {
                 );
                 match action {
                     Some(a) => match a {
-                        FusedevStateMachineOutput::StartService => d.start().map(|_| {
+                        StartService => d.start().map(|_| {
                             d.set_state(DaemonState::INIT);
                         }),
-                        FusedevStateMachineOutput::StartServiceWithRunning => d.start().map(|_| {
+                        StartServiceWithRunning => d.start().map(|_| {
                             d.set_state(DaemonState::RUNNING);
                         }),
-                        FusedevStateMachineOutput::Negotiate => {
+                        Negotiate => {
                             d.set_state(DaemonState::RUNNING);
                             Ok(())
                         }
-                        FusedevStateMachineOutput::Umount => {
+                        Umount => {
                             // TODO: d.set_state(?);
                             d.session.lock().unwrap().umount()
                         }
-                        FusedevStateMachineOutput::TerminateFuseService => {
+                        TerminateFuseService => {
                             d.interrupt();
                             d.set_state(DaemonState::INTERRUPT);
                             Ok(())
                         }
-                        FusedevStateMachineOutput::Restore => {
+                        Restore => {
                             d.set_state(DaemonState::UPGRADE);
                             d.restore().map_err(|e| eother!(e))
                         }
@@ -267,7 +268,7 @@ impl FusedevDaemon {
                     })
             })
             .map_err(Error::ThreadSpawn)?;
-        // Safe to unwrap because it should be intialized as Some when deamon being created.
+        // Safe to unwrap because it should be initialized as Some when daemon being created.
         self.thread_tx
             .lock()
             .expect("Not expect poisoned lock.")
