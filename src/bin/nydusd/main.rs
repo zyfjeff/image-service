@@ -17,7 +17,7 @@ extern crate stderrlog;
 use std::convert::TryInto;
 use std::fs::File;
 use std::io::{Read, Result};
-use std::ops::{Deref, DerefMut};
+use std::ops::DerefMut;
 use std::path::Path;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -97,6 +97,16 @@ fn get_default_rlimit_nofile() -> Result<rlim> {
         .map(|(curr, _)| if curr >= max_fds { 0 } else { max_fds })
 }
 
+pub fn exit_event_manager() {
+    EXIT_EVTFD
+        .lock()
+        .expect("Not poisoned lock!")
+        .as_ref()
+        .unwrap()
+        .write(1)
+        .unwrap_or_else(|e| error!("Write event fd failed when exiting event manager, {}", e))
+}
+
 extern "C" fn sig_exit(_sig: std::os::raw::c_int) {
     if cfg!(feature = "virtiofs") {
         // In case of virtiofs, mechanism to unblock recvmsg() from VMM is lacked.
@@ -105,14 +115,7 @@ extern "C" fn sig_exit(_sig: std::os::raw::c_int) {
         process::exit(0);
     } else {
         // Can't directly exit here since we want to umount rafs reflecting the signal.
-        EXIT_EVTFD
-            .lock()
-            .unwrap()
-            .deref()
-            .as_ref()
-            .unwrap()
-            .write(1)
-            .unwrap_or_else(|e| error!("Write event fd failed, {}", e))
+        exit_event_manager();
     }
 }
 

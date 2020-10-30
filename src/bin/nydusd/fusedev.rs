@@ -27,7 +27,7 @@ use versionize_derive::Versionize;
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::daemon;
-use crate::EXIT_EVTFD;
+use crate::exit_event_manager;
 use daemon::{DaemonError, DaemonResult, DaemonState, Error, NydusDaemon};
 use nydus_utils::{einval, eio, eother, FuseChannel, FuseSession};
 use upgrade_manager::backend::unix_domain_socket::UdsBackend;
@@ -248,17 +248,9 @@ impl FusedevDaemon {
             .name("fuse_server".to_string())
             .spawn(move || {
                 let _ = s.svc_loop();
-                EXIT_EVTFD
-                    .lock()
-                    .unwrap()
-                    .deref()
-                    .as_ref()
-                    .unwrap()
-                    .write(1)
-                    .map_err(|e| {
-                        error!("Write event fd failed, {}", e);
-                        e
-                    })
+                exit_event_manager();
+                // Ignore fuse service error when joining them.
+                Ok(())
             })
             .map_err(Error::ThreadSpawn)?;
         // Safe to unwrap because it should be initialized as Some when daemon being created.
