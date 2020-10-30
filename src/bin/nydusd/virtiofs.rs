@@ -34,7 +34,7 @@ const REQ_QUEUE_EVENT: u16 = 1;
 // The device has been dropped.
 const KILL_EVENT: u16 = 2;
 
-/// TODO: group virtiofsd code into a different file
+/// TODO: group virtiofs code into a different file
 type VhostUserBackendResult<T> = std::result::Result<T, std::io::Error>;
 
 #[allow(dead_code)]

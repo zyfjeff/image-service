@@ -4,7 +4,7 @@
 //
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
-#[cfg(feature = "virtiofsd")]
+#[cfg(feature = "virtiofs")]
 use fuse_rs::transport::Error as FuseTransportError;
 use fuse_rs::Error as VhostUserFsError;
 use std::any::Any;
@@ -103,7 +103,7 @@ pub enum Error {
     /// No memory configured.
     NoMemoryConfigured,
     /// Invalid Virtio descriptor chain.
-    #[cfg(feature = "virtiofsd")]
+    #[cfg(feature = "virtiofs")]
     InvalidDescriptorChain(FuseTransportError),
     /// Processing queue failed.
     ProcessQueue(VhostUserFsError),

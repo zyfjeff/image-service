@@ -43,7 +43,7 @@ versionize_derive = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versioniz
 
 [features]
 fusedev = ["nydus-utils/fusedev", "fuse-rs/fusedev", "rafs/lz4_ipp"]
-virtiofsd = ["fuse-rs/vhost-user-fs", "vm-memory/backend-mmap", "vhost-rs/vhost-user-slave", "vhost-user-backend", "rafs/lz4_ipp"]
+virtiofs = ["fuse-rs/vhost-user-fs", "vm-memory/backend-mmap", "vhost-rs/vhost-user-slave", "vhost-user-backend", "rafs/lz4_ipp"]
 
 [workspace]
 members = [

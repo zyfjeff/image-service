@@ -46,9 +46,9 @@ use rafs::fs::{Rafs, RafsConfig};
 mod daemon;
 use daemon::{Error, NydusDaemonSubscriber};
 
-#[cfg(feature = "virtiofsd")]
+#[cfg(feature = "virtiofs")]
 mod virtiofs;
-#[cfg(feature = "virtiofsd")]
+#[cfg(feature = "virtiofs")]
 use virtiofs::create_nydus_daemon;
 #[cfg(feature = "fusedev")]
 mod fusedev;
@@ -98,8 +98,8 @@ fn get_default_rlimit_nofile() -> Result<rlim> {
 }
 
 extern "C" fn sig_exit(_sig: std::os::raw::c_int) {
-    if cfg!(feature = "virtiofsd") {
-        // In case of virtiofsd, mechanism to unblock recvmsg() from VMM is lacked.
+    if cfg!(feature = "virtiofs") {
+        // In case of virtiofs, mechanism to unblock recvmsg() from VMM is lacked.
         // Given the fact that we have nothing to clean up, directly exit seems fine.
         // TODO: But it might be possible to use libc::pthread_kill to unblock it.
         process::exit(0);
@@ -230,7 +230,7 @@ fn main() -> Result<()> {
                 .global(true),
         );
 
-    #[cfg(feature = "virtiofsd")]
+    #[cfg(feature = "virtiofs")]
     let cmd_arguments = cmd_arguments.arg(
         Arg::with_name("sock")
             .long("sock")
@@ -351,7 +351,7 @@ fn main() -> Result<()> {
         .unwrap()
         .get_event_fd()?;
 
-    #[cfg(feature = "virtiofsd")]
+    #[cfg(feature = "virtiofs")]
     let daemon = {
         // sock means vhost-user-backend only
         let vu_sock = cmd_arguments_parsed.value_of("sock").unwrap_or_default();

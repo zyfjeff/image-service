@@ -32,7 +32,7 @@ sudo target-fusedev/debug/nydusd \
 ### Run With Virtio-FS
 
 ``` shell
-sudo target-virtiofsd/debug/nydusd \
+sudo target-virtiofs/debug/nydusd \
   --config /path/to/config-localfs.json \
   --sock /path/to/vhost-user-fs.sock \
   --bootstrap /path/to/bootstrap \
