@@ -68,9 +68,8 @@ impl FuseServer {
 
         // Given error EBADF, it means kernel has shut down this session.
         let _ebadf = std::io::Error::from_raw_os_error(libc::EBADF);
-        let mut exit = false;
         loop {
-            if let Some(reader) = self.ch.get_reader(&mut self.buf, &mut exit)? {
+            if let Some(reader) = self.ch.get_reader(&mut self.buf)? {
                 let writer = self.ch.get_writer()?;
                 if let Err(e) = self.server.handle_message(reader, writer, None) {
                     match e {
@@ -85,11 +84,6 @@ impl FuseServer {
                 }
             } else {
                 info!("fuse server exits");
-                break;
-            }
-
-            if exit {
-                info!("Fuse service is stopped manually");
                 break;
             }
 
