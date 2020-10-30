@@ -111,7 +111,6 @@ extern "C" fn sig_exit(_sig: std::os::raw::c_int) {
     if cfg!(feature = "virtiofs") {
         // In case of virtiofs, mechanism to unblock recvmsg() from VMM is lacked.
         // Given the fact that we have nothing to clean up, directly exit seems fine.
-        // TODO: But it might be possible to use libc::pthread_kill to unblock it.
         process::exit(0);
     } else {
         // Can't directly exit here since we want to umount rafs reflecting the signal.
