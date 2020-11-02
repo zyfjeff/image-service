@@ -122,13 +122,13 @@ pub struct FusedevDaemon {
     upgrade_mgr: Option<Mutex<UpgradeManager>>,
 }
 
-/// Fusedev daemon work flow is controlled by state machine.
+/// Fusedev daemon workflow is controlled by state machine.
 /// `Init` means nydusd is just started and potentially configured well but not
 /// yet negotiate with kernel the capabilities of both sides. It even does not try
 /// to set up fuse session by mounting `/fuse/dev`.
 /// `Ready` means nydusd has successfully prepared all the stuff needed to work as a
 /// user-space fuse filesystem, however, the essential capabilities negotiation is not
-/// done. So nydusd is still waiting for fuse `Init` message to achieve `Negotiated` state.
+/// done yet. So nydusd is still waiting for fuse `Init` message to achieve `Negotiated` state.
 /// Nydusd can as well transit to `Upgrade` state from `Init` when getting started, which
 /// only happens during live upgrade progress. Then we don't have to do kernel mount again
 /// to set up a session but try to reuse a fuse fd from somewhere else. In this state, we
@@ -154,13 +154,14 @@ state_machine! {
         Takeover => Upgrade [Restore],
     },
     Ready => {
-        Stop => Die [Umount],
-        InitMsg => Negotiated [Negotiate],
+        InitMsg => Negotiated [Behave],
+        Successful => Negotiated [Behave],
         // This should rarely happen because if supervisor does not already obtain
         // internal upgrade related stuff, why should it try to kill me?
         Exit => Interrupt [TerminateFuseService],
+        Stop => Die [Umount],
     },
-    Upgrade(Successful) => Negotiated [StartServiceWithRunning],
+    Upgrade(Successful) => Ready [StartService],
     Negotiated => {
         InitMsg => Negotiated,
         Exit => Interrupt [TerminateFuseService],
@@ -192,7 +193,7 @@ impl FusedevDaemonSM {
                 let action = self
                     .sm
                     .consume(&event)
-                    .expect("Daemon state machine goes insane, this is critical error!");
+                    .unwrap_or_else(|_|panic!("Daemon state machine goes insane, this is critical error! Event={:?}, CurrentState={:?}", input, &last));
 
                 let d = self.daemon.as_ref();
                 let cur = self.sm.state();
@@ -202,13 +203,8 @@ impl FusedevDaemonSM {
                 );
                 match action {
                     Some(a) => match a {
-                        StartService => d.start().map(|_| {
-                            d.set_state(DaemonState::INIT);
-                        }),
-                        StartServiceWithRunning => d.start().map(|_| {
-                            d.set_state(DaemonState::RUNNING);
-                        }),
-                        Negotiate => {
+                        StartService => d.start(),
+                        Behave => {
                             d.set_state(DaemonState::RUNNING);
                             Ok(())
                         }
@@ -345,6 +341,7 @@ impl NydusDaemon for FusedevDaemon {
         // State machine won't reach `Negotiated` state until the first fuse message arrives.
         // So we don't try to send InitMsg event from here.
         self.on_event(FusedevStateMachineInput::Takeover)?;
+        self.on_event(FusedevStateMachineInput::Successful)?;
         Ok(())
     }
 
