@@ -146,7 +146,8 @@ fn main() -> Result<()> {
                 .long("bootstrap")
                 .help("rafs bootstrap file")
                 .takes_value(true)
-                .min_values(1),
+                .min_values(1)
+                .conflicts_with("shared-dir"),
         )
         .arg(
             Arg::with_name("config")
@@ -168,7 +169,8 @@ fn main() -> Result<()> {
                 .long("shared-dir")
                 .help("Shared directory path")
                 .takes_value(true)
-                .min_values(1),
+                .min_values(1)
+                .conflicts_with("bootstrap"),
         )
         .arg(
             Arg::with_name("log-level")
@@ -298,16 +300,12 @@ fn main() -> Result<()> {
 
     // Retrieve arguments
     // shared-dir means fs passthrough
-    let shared_dir = cmd_arguments_parsed
-        .value_of("shared-dir")
-        .unwrap_or_default();
+    let shared_dir = cmd_arguments_parsed.value_of("shared-dir");
     let config = cmd_arguments_parsed
         .value_of("config")
         .ok_or_else(|| Error::InvalidArguments("config file is not provided".to_string()))?;
     // bootstrap means rafs only
-    let bootstrap = cmd_arguments_parsed
-        .value_of("bootstrap")
-        .unwrap_or_default();
+    let bootstrap = cmd_arguments_parsed.value_of("bootstrap");
     // apisock means admin api socket support
     let apisock = cmd_arguments_parsed.value_of("apisock").unwrap_or_default();
     let rlimit_nofile_default = get_default_rlimit_nofile()?;
@@ -316,19 +314,12 @@ fn main() -> Result<()> {
         .map(|n| n.parse().unwrap_or(rlimit_nofile_default))
         .unwrap_or(rlimit_nofile_default);
 
-    // Some basic validation
-    if !shared_dir.is_empty() && !bootstrap.is_empty() {
-        return Err(einval!(
-            "shared-dir and bootstrap cannot be set at the same time"
-        ));
-    }
-
     let content =
         std::fs::read_to_string(config).map_err(|e| Error::InvalidConfig(e.to_string()))?;
     let rafs_conf: RafsConfig =
         serde_json::from_str(&content).map_err(|e| Error::InvalidConfig(e.to_string()))?;
     let vfs = Vfs::new(VfsOptions::default());
-    if !shared_dir.is_empty() {
+    if let Some(shared_dir) = shared_dir {
         // Vfs by default enables no_open and writeback, passthroughfs
         // needs to specify them explicitly.
         // TODO(liubo): enable no_open_dir.
@@ -351,7 +342,9 @@ fn main() -> Result<()> {
         if rlimit_nofile != 0 {
             Resource::NOFILE.set(rlimit_nofile, rlimit_nofile)?;
         }
-    } else if !bootstrap.is_empty() {
+    }
+
+    if let Some(bootstrap) = bootstrap {
         let mut file = Box::new(File::open(bootstrap)?) as Box<dyn rafs::RafsIoRead>;
         let mut rafs = Rafs::new(rafs_conf.clone(), &"/".to_string(), &mut file)?;
         rafs.import(&mut file, Some(prefetch_files))?;
