@@ -114,6 +114,7 @@ pub struct FusedevDaemon {
     state: AtomicI32,
     pub threads_cnt: u32,
     trigger: Arc<Mutex<Trigger>>,
+    result_receiver: Mutex<Receiver<Result<()>>>,
     pub supervisor: Option<String>,
     pub id: Option<String>,
     /// Fuse connection ID which usually equals to `st_dev`
@@ -143,6 +144,7 @@ struct FusedevDaemonSM {
     sm: StateMachine<FusedevStateMachine>,
     daemon: Arc<FusedevDaemon>,
     event_collector: Receiver<FusedevStateMachineInput>,
+    result_sender: Sender<Result<()>>,
 }
 
 state_machine! {
@@ -163,7 +165,10 @@ state_machine! {
     },
     Upgrade(Successful) => Ready [StartService],
     Negotiated => {
+        // This might look strange due to the fact that the first fuse message races
+        // with Successful event during upgrading.
         InitMsg => Negotiated,
+        Successful => Negotiated,
         Exit => Interrupt [TerminateFuseService],
         Stop =>  Die [Umount],
     },
@@ -171,11 +176,16 @@ state_machine! {
 }
 
 impl FusedevDaemonSM {
-    fn new(d: Arc<FusedevDaemon>, rx: Receiver<FusedevStateMachineInput>) -> Self {
+    fn new(
+        d: Arc<FusedevDaemon>,
+        rx: Receiver<FusedevStateMachineInput>,
+        result_sender: Sender<Result<()>>,
+    ) -> Self {
         Self {
             sm: StateMachine::new(),
             daemon: d,
             event_collector: rx,
+            result_sender,
         }
     }
 
@@ -202,7 +212,7 @@ impl FusedevDaemonSM {
                     "State machine: from {:?} to {:?}, input [{:?}], output [{:?}]",
                     last, cur, input, &action
                 );
-                match action {
+                let r = match action {
                     Some(a) => match a {
                         StartService => d.start(),
                         Behave => {
@@ -224,16 +234,18 @@ impl FusedevDaemonSM {
                             d.restore().map_err(|e| eother!(e))
                         }
                     },
-                    _ => continue,
+                    _ => Ok(()), // With no output action involved, caller should also have reply back
                 }
-                .unwrap_or_else(|e| {
+                .map_err(|e| {
                     error!(
                         "Handle action failed, {:?}. Rollback machine to State {:?}",
                         e,
                         sm_rollback.state()
                     );
                     self.sm = sm_rollback;
+                    e
                 });
+                self.result_sender.send(r).unwrap();
             })
             .map(|_| ())
     }
@@ -275,7 +287,14 @@ impl FusedevDaemon {
             .lock()
             .unwrap()
             .send(event)
-            .map_err(|_| DaemonError::Channel)
+            .map_err(|_| DaemonError::Channel)?;
+
+        self.result_receiver
+            .lock()
+            .expect("Not poisoned lock!")
+            .recv()
+            .unwrap()
+            .map_err(|_| DaemonError::StateMachine)
     }
 }
 
@@ -312,7 +331,6 @@ impl NydusDaemon for FusedevDaemon {
     }
 
     fn stop(&self) -> Result<()> {
-        self.interrupt();
         self.on_event(FusedevStateMachineInput::Stop)
             .map_err(|e| eother!(e))
             .map(|_| ())
@@ -350,6 +368,8 @@ impl NydusDaemon for FusedevDaemon {
         // State machine won't reach `Negotiated` state until the first fuse message arrives.
         // So we don't try to send InitMsg event from here.
         self.on_event(FusedevStateMachineInput::Takeover)?;
+        self.on_event(FusedevStateMachineInput::Successful)?;
+        // We indeed need this extra event since machine has to transit to RUNNING state
         self.on_event(FusedevStateMachineInput::Successful)?;
         Ok(())
     }
@@ -391,13 +411,10 @@ impl NydusDaemon for FusedevDaemon {
 
         // Restore fuse fd from remote uds server
         let fds = mgr_guard.get_fds();
-
         let conn = self.conn.load(Ordering::Acquire);
         drain_fuse_requests(conn, &self.failover_policy);
 
         self.session.lock().unwrap().set_fuse_fd(fds[0]);
-
-        self.on_event(FusedevStateMachineInput::Successful)?;
 
         Ok(())
     }
@@ -552,6 +569,7 @@ pub fn create_nydus_daemon(
     };
 
     let (tx, rx) = channel::<JoinHandle<Result<()>>>();
+    let (result_sender, result_receiver) = channel::<Result<()>>();
 
     let daemon = Arc::new(FusedevDaemon {
         session: Mutex::new(session),
@@ -564,6 +582,7 @@ pub fn create_nydus_daemon(
         state: AtomicI32::new(DaemonState::INIT as i32),
         threads_cnt,
         trigger: Arc::new(Mutex::new(trigger)),
+        result_receiver: Mutex::new(result_receiver),
         supervisor,
         id,
         conn: AtomicU64::new(0),
@@ -571,7 +590,7 @@ pub fn create_nydus_daemon(
         upgrade_mgr,
     });
 
-    let machine = FusedevDaemonSM::new(daemon.clone(), events_rx);
+    let machine = FusedevDaemonSM::new(daemon.clone(), events_rx, result_sender);
     machine.kick_state_machine()?;
 
     if !upgrade && !is_crashed(mountpoint, api_sock)? {

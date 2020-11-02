@@ -61,6 +61,7 @@ pub enum DaemonError {
     RecvFd,
     Channel,
     ServiceStop,
+    StateMachine,
 }
 
 impl Display for DaemonError {
