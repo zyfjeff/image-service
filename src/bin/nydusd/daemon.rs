@@ -29,7 +29,8 @@ pub enum DaemonState {
     RUNNING = 2,
     UPGRADE = 3,
     INTERRUPT = 4,
-    UNKNOWN = 5,
+    STOPPED = 5,
+    UNKNOWN = 6,
 }
 
 impl Display for DaemonState {
@@ -45,6 +46,7 @@ impl From<i32> for DaemonState {
             2 => DaemonState::RUNNING,
             3 => DaemonState::UPGRADE,
             4 => DaemonState::INTERRUPT,
+            5 => DaemonState::STOPPED,
             _ => DaemonState::UNKNOWN,
         }
     }

@@ -209,8 +209,9 @@ impl FusedevDaemonSM {
                             Ok(())
                         }
                         Umount => {
-                            // TODO: d.set_state(?);
-                            d.session.lock().unwrap().umount()
+                            let r = d.session.lock().unwrap().umount();
+                            d.set_state(DaemonState::STOPPED);
+                            r
                         }
                         TerminateFuseService => {
                             d.interrupt();
