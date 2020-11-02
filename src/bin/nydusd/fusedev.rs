@@ -189,11 +189,12 @@ impl FusedevDaemonSM {
                     .recv()
                     .expect("Event channel can't be broken!");
                 let last = self.sm.state().clone();
+                let sm_rollback = StateMachine::<FusedevStateMachine>::from_state(last.clone());
                 let input = &event;
-                let action = self
-                    .sm
-                    .consume(&event)
-                    .unwrap_or_else(|_|panic!("Daemon state machine goes insane, this is critical error! Event={:?}, CurrentState={:?}", input, &last));
+                let action = self.sm.consume(&event).unwrap_or_else(|_| {
+                    error!("Event={:?}, CurrentState={:?}", input, &last);
+                    panic!("Daemon state machine goes insane, this is critical error!")
+                });
 
                 let d = self.daemon.as_ref();
                 let cur = self.sm.state();
@@ -225,7 +226,14 @@ impl FusedevDaemonSM {
                     },
                     _ => continue,
                 }
-                .unwrap_or_else(|e| error!("Handle action failed. {}", e));
+                .unwrap_or_else(|e| {
+                    error!(
+                        "Handle action failed, {:?}. Rollback machine to State {:?}",
+                        e,
+                        sm_rollback.state()
+                    );
+                    self.sm = sm_rollback;
+                });
             })
             .map(|_| ())
     }
