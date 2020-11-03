@@ -167,9 +167,9 @@ fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(
             let resp = match r {
                 Empty => success_response(None),
                 DaemonInfo(d) => success_response(Some(to_string(&d)?)),
-                FsFilesMetrics(d) => success_response(Some(to_string(&d)?)),
-                FsGlobalMetrics(d) => success_response(Some(to_string(&d)?)),
-                FsFilesPatterns(d) => success_response(Some(to_string(&d)?)),
+                FsFilesMetrics(d) => success_response(Some(d)),
+                FsGlobalMetrics(d) => success_response(Some(d)),
+                FsFilesPatterns(d) => success_response(Some(d)),
             };
 
             Ok(resp)
