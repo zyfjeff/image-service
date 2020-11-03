@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicI32, AtomicU64, Ordering},
     mpsc::{channel, Receiver, Sender},
-    Arc, Mutex, Once,
+    Arc, Mutex,
 };
 use std::thread::{self, JoinHandle};
 
@@ -33,30 +33,21 @@ use nydus_utils::{einval, eio, eother, FuseChannel, FuseSession};
 use upgrade_manager::backend::unix_domain_socket::UdsBackend;
 use upgrade_manager::{ResourceKind, UpgradeManager, VersionMapGetter};
 
-static FUSE_INIT: Once = Once::new();
-
 struct FuseServer {
     server: Arc<Server<Arc<Vfs>>>,
     ch: FuseChannel,
     // read buffer for fuse requests
     buf: Vec<u8>,
-    trigger: Arc<Mutex<Sender<FusedevStateMachineInput>>>,
 }
 
 type Trigger = Sender<FusedevStateMachineInput>;
 
 impl FuseServer {
-    fn new(
-        server: Arc<Server<Arc<Vfs>>>,
-        se: &FuseSession,
-        evtfd: EventFd,
-        trigger: Arc<Mutex<Sender<FusedevStateMachineInput>>>,
-    ) -> Result<FuseServer> {
+    fn new(server: Arc<Server<Arc<Vfs>>>, se: &FuseSession, evtfd: EventFd) -> Result<FuseServer> {
         Ok(FuseServer {
             server,
             ch: se.new_channel(evtfd)?,
             buf: Vec::with_capacity(se.bufsize()),
-            trigger,
         })
     }
 
@@ -86,17 +77,6 @@ impl FuseServer {
                 info!("fuse server exits");
                 break;
             }
-
-            // We have to ensure that fuse service loop actually runs, which means
-            // the first `init` message has been handled and kernel and daemon have
-            // negotiated capabilities. Then we can store those capabilities.
-            FUSE_INIT.call_once(|| {
-                self.trigger
-                    .lock()
-                    .unwrap()
-                    .send(FusedevStateMachineInput::InitMsg)
-                    .unwrap()
-            });
         }
 
         Ok(())
@@ -127,15 +107,13 @@ pub struct FusedevDaemon {
 /// `Init` means nydusd is just started and potentially configured well but not
 /// yet negotiate with kernel the capabilities of both sides. It even does not try
 /// to set up fuse session by mounting `/fuse/dev`.
-/// `Ready` means nydusd has successfully prepared all the stuff needed to work as a
-/// user-space fuse filesystem, however, the essential capabilities negotiation is not
-/// done yet. So nydusd is still waiting for fuse `Init` message to achieve `Negotiated` state.
-/// Nydusd can as well transit to `Upgrade` state from `Init` when getting started, which
+/// `Running` means nydusd has successfully prepared all the stuff needed to work as a
+/// user-space fuse filesystem, however, the essential capabilities negotiation might not be
+/// done yet. It relies on `fuse-rs` to tell if capability negotiation is done.
+/// Nydusd can as well transit to `Upgrade` state from `Running` when getting started, which
 /// only happens during live upgrade progress. Then we don't have to do kernel mount again
 /// to set up a session but try to reuse a fuse fd from somewhere else. In this state, we
-/// try to push `Successful` event to state machine to trigger state transition. But
-/// a real fuse message except `init` may already transit the state in nature, which means the
-/// session already begin to serve within the new nydusd process.
+/// try to push `Successful` event to state machine to trigger state transition.
 /// `Interrupt` state means nydusd has shutdown fuse server, which means no more message will
 /// be read from kernel and handled and no pending and in-flight fuse message exists. But the
 /// nydusd daemon should be alive and wait for coming events.
@@ -152,27 +130,15 @@ state_machine! {
     FusedevStateMachine(Init)
 
     Init => {
-        Mount => Ready [StartService],
-        Takeover => Upgrade [Restore],
+        Mount => Running [StartService],
+        Takeover => Upgrading [Restore],
     },
-    Ready => {
-        InitMsg => Negotiated [Behave],
-        Successful => Negotiated [Behave],
-        // This should rarely happen because if supervisor does not already obtain
-        // internal upgrade related stuff, why should it try to kill me?
-        Exit => Interrupt [TerminateFuseService],
+    Running => {
+        Exit => Interrupted [TerminateFuseService],
         Stop => Die [Umount],
     },
-    Upgrade(Successful) => Ready [StartService],
-    Negotiated => {
-        // This might look strange due to the fact that the first fuse message races
-        // with Successful event during upgrading.
-        InitMsg => Negotiated,
-        Successful => Negotiated,
-        Exit => Interrupt [TerminateFuseService],
-        Stop =>  Die [Umount],
-    },
-    Interrupt(Stop) => Die,
+    Upgrading(Successful) => Running [StartService],
+    Interrupted(Stop) => Die,
 }
 
 impl FusedevDaemonSM {
@@ -214,16 +180,19 @@ impl FusedevDaemonSM {
                 );
                 let r = match action {
                     Some(a) => match a {
-                        StartService => d.start(),
-                        Behave => {
+                        StartService => d.start().map(|r| {
                             d.set_state(DaemonState::RUNNING);
-                            Ok(())
-                        }
-                        Umount => {
-                            let r = d.session.lock().unwrap().umount();
-                            d.set_state(DaemonState::STOPPED);
                             r
-                        }
+                        }),
+                        Umount => d
+                            .session
+                            .lock()
+                            .expect("Not expect poisoned lock.")
+                            .umount()
+                            .map(|r| {
+                                d.set_state(DaemonState::STOPPED);
+                                r
+                            }),
                         TerminateFuseService => {
                             d.interrupt();
                             d.set_state(DaemonState::INTERRUPT);
@@ -252,13 +221,12 @@ impl FusedevDaemonSM {
 }
 
 impl FusedevDaemon {
-    fn kick_one_server(&self, t: Arc<Mutex<Trigger>>) -> Result<()> {
+    fn kick_one_server(&self) -> Result<()> {
         let mut s = FuseServer::new(
             self.server.clone(),
             self.session.lock().unwrap().deref(),
             // Clone event fd must succeed, otherwise fusedev daemon should not work.
             self.event_fd.try_clone().unwrap(),
-            t,
         )?;
 
         let thread = thread::Builder::new()
@@ -291,7 +259,7 @@ impl FusedevDaemon {
 
         self.result_receiver
             .lock()
-            .expect("Not poisoned lock!")
+            .expect("Not expect poisoned lock!")
             .recv()
             .unwrap()
             .map_err(|_| DaemonError::StateMachine)
@@ -305,7 +273,7 @@ impl NydusDaemon for FusedevDaemon {
 
     fn start(&self) -> Result<()> {
         for _ in 0..self.threads_cnt {
-            self.kick_one_server(self.trigger.clone())?;
+            self.kick_one_server()?;
         }
 
         // Safe to unwrap because it is should be initialized as Some when daemon is being created.
@@ -369,13 +337,11 @@ impl NydusDaemon for FusedevDaemon {
         // So we don't try to send InitMsg event from here.
         self.on_event(FusedevStateMachineInput::Takeover)?;
         self.on_event(FusedevStateMachineInput::Successful)?;
-        // We indeed need this extra event since machine has to transit to RUNNING state
-        self.on_event(FusedevStateMachineInput::Successful)?;
         Ok(())
     }
 
     fn save(&self) -> DaemonResult<()> {
-        if self.get_state() != DaemonState::RUNNING {
+        if !self.vfs.initialized() {
             return Err(DaemonError::NotReady);
         }
 
