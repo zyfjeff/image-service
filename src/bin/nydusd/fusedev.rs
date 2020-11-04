@@ -94,7 +94,7 @@ pub struct FusedevDaemon {
     state: AtomicI32,
     pub threads_cnt: u32,
     trigger: Arc<Mutex<Trigger>>,
-    result_receiver: Mutex<Receiver<Result<()>>>,
+    result_receiver: Mutex<Receiver<DaemonResult<()>>>,
     pub supervisor: Option<String>,
     pub id: Option<String>,
     /// Fuse connection ID which usually equals to `st_dev`
@@ -122,7 +122,7 @@ struct FusedevDaemonSM {
     sm: StateMachine<FusedevStateMachine>,
     daemon: Arc<FusedevDaemon>,
     event_collector: Receiver<FusedevStateMachineInput>,
-    result_sender: Sender<Result<()>>,
+    result_sender: Sender<DaemonResult<()>>,
 }
 
 state_machine! {
@@ -145,7 +145,7 @@ impl FusedevDaemonSM {
     fn new(
         d: Arc<FusedevDaemon>,
         rx: Receiver<FusedevStateMachineInput>,
-        result_sender: Sender<Result<()>>,
+        result_sender: Sender<DaemonResult<()>>,
     ) -> Self {
         Self {
             sm: StateMachine::new(),
@@ -189,10 +189,10 @@ impl FusedevDaemonSM {
                             .lock()
                             .expect("Not expect poisoned lock.")
                             .umount()
-                            .map(|r| {
+                            .map(|_| {
                                 d.set_state(DaemonState::STOPPED);
-                                r
-                            }),
+                            })
+                            .map_err(DaemonError::SessionShutdown),
                         TerminateFuseService => {
                             d.interrupt();
                             d.set_state(DaemonState::INTERRUPTED);
@@ -200,7 +200,7 @@ impl FusedevDaemonSM {
                         }
                         Restore => {
                             d.set_state(DaemonState::UPGRADING);
-                            d.restore().map_err(|e| eother!(e))
+                            d.restore()
                         }
                     },
                     _ => Ok(()), // With no output action involved, caller should also have reply back
@@ -262,7 +262,6 @@ impl FusedevDaemon {
             .expect("Not expect poisoned lock!")
             .recv()
             .unwrap()
-            .map_err(|_| DaemonError::StateMachine)
     }
 }
 
@@ -271,9 +270,10 @@ impl NydusDaemon for FusedevDaemon {
         self
     }
 
-    fn start(&self) -> Result<()> {
+    fn start(&self) -> DaemonResult<()> {
         for _ in 0..self.threads_cnt {
-            self.kick_one_server()?;
+            self.kick_one_server()
+                .map_err(|e| DaemonError::StartService(format!("{:?}", e)))?;
         }
 
         // Safe to unwrap because it is should be initialized as Some when daemon is being created.
@@ -535,7 +535,7 @@ pub fn create_nydus_daemon(
     };
 
     let (tx, rx) = channel::<JoinHandle<Result<()>>>();
-    let (result_sender, result_receiver) = channel::<Result<()>>();
+    let (result_sender, result_receiver) = channel::<DaemonResult<()>>();
 
     let daemon = Arc::new(FusedevDaemon {
         session: Mutex::new(session),

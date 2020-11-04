@@ -20,7 +20,7 @@ use vm_memory::GuestMemoryMmap;
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::daemon;
-use daemon::{DaemonResult, DaemonState, Error, NydusDaemon};
+use daemon::{DaemonError, DaemonResult, DaemonState, Error, NydusDaemon};
 
 use nydus_utils::einval;
 
@@ -183,13 +183,15 @@ struct VirtiofsDaemon<S: VhostUserBackend> {
 }
 
 impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
-    fn start(&self) -> Result<()> {
-        let listener = Listener::new(&self.sock, true).map_err(|e| einval!(e))?;
+    fn start(&self) -> DaemonResult<()> {
+        let listener = Listener::new(&self.sock, true)
+            .map_err(|e| DaemonError::StartService(format!("{:?}", e)))?;
+
         self.daemon
             .lock()
             .unwrap()
             .start(listener)
-            .map_err(|e| einval!(e))
+            .map_err(|e| DaemonError::StartService(format!("{:?}", e)))
     }
 
     fn wait(&self) -> Result<()> {

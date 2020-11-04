@@ -60,8 +60,9 @@ pub enum DaemonError {
     SendFd,
     RecvFd,
     Channel,
+    StartService(String),
     ServiceStop,
-    StateMachine,
+    SessionShutdown(io::Error),
 }
 
 impl Display for DaemonError {
@@ -73,7 +74,7 @@ impl Display for DaemonError {
 pub type DaemonResult<T> = std::result::Result<T, DaemonError>;
 
 pub trait NydusDaemon {
-    fn start(&self) -> Result<()>;
+    fn start(&self) -> DaemonResult<()>;
     fn wait(&self) -> Result<()>;
     fn stop(&self) -> Result<()>;
     fn as_any(&self) -> &dyn Any;
