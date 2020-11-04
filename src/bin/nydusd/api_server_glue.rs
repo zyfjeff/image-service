@@ -131,20 +131,20 @@ impl ApiServer {
     fn export_global_metrics(id: Option<String>) -> ApiResponse {
         io_stats::export_global_stats(&id)
             .map(ApiResponsePayload::FsGlobalMetrics)
-            .map_err(|_| ApiError::ResponsePayloadType)
+            .map_err(|e| ApiError::Metrics(format!("{:?}", e)))
     }
 
     fn export_files_metrics(id: Option<String>) -> ApiResponse {
         // TODO: Use mount point name to refer to per rafs metrics.
         io_stats::export_files_stats(&id)
             .map(ApiResponsePayload::FsFilesMetrics)
-            .map_err(|_| ApiError::ResponsePayloadType)
+            .map_err(|e| ApiError::Metrics(format!("{:?}", e)))
     }
 
     fn export_access_patterns(id: Option<String>) -> ApiResponse {
         io_stats::export_files_access_pattern(&id)
             .map(ApiResponsePayload::FsFilesPatterns)
-            .map_err(|_| ApiError::ResponsePayloadType)
+            .map_err(|e| ApiError::Metrics(format!("{:?}", e)))
     }
 
     fn send_fuse_fd(&self) -> ApiResponse {

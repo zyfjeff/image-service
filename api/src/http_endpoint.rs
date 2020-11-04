@@ -3,6 +3,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use std::fmt::Debug;
 use std::io;
 use std::sync::mpsc::{RecvError, SendError};
 
@@ -42,6 +43,8 @@ pub enum ApiError {
     ResponseRecv(RecvError),
 
     DaemonAbnormal(DaemonErrorKind),
+
+    Metrics(String),
 }
 pub type ApiResult<T> = std::result::Result<T, ApiError>;
 
