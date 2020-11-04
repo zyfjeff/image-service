@@ -11,6 +11,7 @@ use std::any::Any;
 use std::convert::From;
 use std::fmt::{Display, Formatter};
 use std::io::Result;
+use std::sync::mpsc::RecvError;
 use std::{convert, error, fmt, io};
 
 use event_manager::{EventOps, EventSubscriber, Events};
@@ -59,7 +60,8 @@ pub enum DaemonError {
     NoResource,
     SendFd,
     RecvFd,
-    Channel,
+    ChannelSend(String),
+    ChannelRecv(RecvError),
     StartService(String),
     ServiceStop,
     SessionShutdown(io::Error),

@@ -255,13 +255,13 @@ impl FusedevDaemon {
             .lock()
             .unwrap()
             .send(event)
-            .map_err(|_| DaemonError::Channel)?;
+            .map_err(|e| DaemonError::ChannelSend(format!("{:?}", e)))?;
 
         self.result_receiver
             .lock()
             .expect("Not expect poisoned lock!")
             .recv()
-            .unwrap()
+            .map_err(DaemonError::ChannelRecv)?
     }
 }
 
