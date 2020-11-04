@@ -7,6 +7,7 @@
 use std::any::Any;
 use std::io::Result;
 use std::sync::{Arc, Mutex, RwLock};
+use std::thread;
 
 use libc::EFD_NONBLOCK;
 
@@ -233,15 +234,26 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
 }
 
 pub fn create_nydus_daemon(sock: &str, fs: Arc<Vfs>) -> Result<Arc<dyn NydusDaemon + Send>> {
-    let daemon = VhostUserDaemon::new(
+    let vu_daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),
         Arc::new(RwLock::new(VhostUserFsBackendHandler::new(fs)?)),
     )
     .map_err(|e| Error::DaemonFailure(format!("{:?}", e)))?;
-    Ok(Arc::new(VirtiofsDaemon {
-        daemon: Mutex::new(daemon),
+
+    let daemon = Arc::new(VirtiofsDaemon {
+        daemon: Mutex::new(vu_daemon),
         sock: sock.to_string(),
         id: None,
         supervisor: None,
-    }))
+    });
+
+    let d = daemon.clone();
+    thread::Builder::new()
+        .name("virtiofs_listener".to_string())
+        .spawn(move || {
+            d.start().expect("Failed to start virtiofs daemon");
+        })
+        .map_err(Error::ThreadSpawn)?;
+
+    Ok(daemon)
 }
