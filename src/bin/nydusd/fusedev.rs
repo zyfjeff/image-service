@@ -195,11 +195,11 @@ impl FusedevDaemonSM {
                             }),
                         TerminateFuseService => {
                             d.interrupt();
-                            d.set_state(DaemonState::INTERRUPT);
+                            d.set_state(DaemonState::INTERRUPTED);
                             Ok(())
                         }
                         Restore => {
-                            d.set_state(DaemonState::UPGRADE);
+                            d.set_state(DaemonState::UPGRADING);
                             d.restore().map_err(|e| eother!(e))
                         }
                     },

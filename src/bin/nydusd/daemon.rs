@@ -27,8 +27,8 @@ use crate::EVENT_MANAGER_RUN;
 pub enum DaemonState {
     INIT = 1,
     RUNNING = 2,
-    UPGRADE = 3,
-    INTERRUPT = 4,
+    UPGRADING = 3,
+    INTERRUPTED = 4,
     STOPPED = 5,
     UNKNOWN = 6,
 }
@@ -44,8 +44,8 @@ impl From<i32> for DaemonState {
         match i {
             1 => DaemonState::INIT,
             2 => DaemonState::RUNNING,
-            3 => DaemonState::UPGRADE,
-            4 => DaemonState::INTERRUPT,
+            3 => DaemonState::UPGRADING,
+            4 => DaemonState::INTERRUPTED,
             5 => DaemonState::STOPPED,
             _ => DaemonState::UNKNOWN,
         }
