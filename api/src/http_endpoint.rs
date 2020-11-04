@@ -137,11 +137,21 @@ fn success_response(body: Option<String>) -> Response {
     r
 }
 
+#[derive(Serialize, Debug)]
+struct ErrorMessage {
+    code: String,
+    message: String,
+}
+
 fn error_response(error: Option<HttpError>, status: StatusCode) -> Response {
     let mut response = Response::new(Version::Http11, status);
 
     if let Some(e) = error {
-        response.set_body(Body::new(format!("{:?}", e)));
+        let err_msg = ErrorMessage {
+            code: "UNDEFINED".to_string(),
+            message: format!("{:?}", e),
+        };
+        response.set_body(Body::new(serde_json::to_string(&err_msg).unwrap()));
     }
     response
 }
