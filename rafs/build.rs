@@ -7,7 +7,7 @@ fn main() {
         return;
     }
 
-    if let Some(_) = std::env::var_os("CARGO_FEATURE_LZ4_IPP") {
+    if std::env::var_os("CARGO_FEATURE_LZ4_IPP").is_some() {
         let topdir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
 
         println!("cargo:rustc-cfg=lz4_ipp_enabled");
