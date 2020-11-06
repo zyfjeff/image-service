@@ -43,6 +43,7 @@ impl From<DaemonError> for DaemonErrorKind {
             NotReady => DaemonErrorKind::NotReady,
             SendFd => DaemonErrorKind::SendFd,
             RecvFd => DaemonErrorKind::RecvFd,
+            Unsupported => DaemonErrorKind::Unsupported,
             _ => DaemonErrorKind::Other,
         }
     }
@@ -190,7 +191,7 @@ impl ApiServer {
                 true,
             )
             .map(|_| ApiResponsePayload::Empty)
-            .map_err(ApiError::MountFailure)
+            .map_err(|e| ApiError::MountFailure(e.into()))
     }
 
     fn do_update_mount(&self, mountpoint: String, info: RafsMountInfo) -> ApiResponse {
@@ -201,14 +202,14 @@ impl ApiServer {
                 source: info.source,
             })
             .map(|_| ApiResponsePayload::Empty)
-            .map_err(ApiError::MountFailure)
+            .map_err(|e| ApiError::MountFailure(e.into()))
     }
 
     fn do_umount(&self, mountpoint: String) -> ApiResponse {
         self.daemon
             .umount(DaemonRafsUmountInfo { mountpoint })
             .map(|_| ApiResponsePayload::Empty)
-            .map_err(ApiError::MountFailure)
+            .map_err(|e| ApiError::MountFailure(e.into()))
     }
 }
 

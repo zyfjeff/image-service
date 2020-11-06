@@ -8,7 +8,7 @@ use std::any::Any;
 use std::cmp::PartialEq;
 use std::convert::From;
 use std::fmt::{Display, Formatter};
-use std::io::Result;
+use std::io::{Error as IoError, ErrorKind as IoErrorKind, Result};
 use std::ops::Deref;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::RecvError;
@@ -25,9 +25,11 @@ use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
-use nydus_utils::{einval, eother, last_error};
-use rafs::fs::{Rafs, RafsConfig};
-use rafs::RafsIoRead;
+use nydus_utils::{einval, last_error};
+use rafs::{
+    fs::{Rafs, RafsConfig},
+    RafsError, RafsIoRead,
+};
 use upgrade_manager::{OpaqueKind, UpgradeManager};
 
 use crate::SubscriberWrapper;
@@ -66,8 +68,10 @@ impl From<i32> for DaemonState {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum DaemonError {
+    Common(String),
     NotReady,
     NoResource,
+    Unsupported,
     SendFd,
     RecvFd,
     ChannelSend(String),
@@ -75,6 +79,13 @@ pub enum DaemonError {
     StartService(String),
     ServiceStop,
     SessionShutdown(io::Error),
+    Config(io::Error),
+    Metadata(io::Error),
+    Mount(io::Error),
+    Vfs(io::Error),
+    Downcast(String),
+    Opaque(io::Error),
+    FsTypeMismatch(String),
 }
 
 impl Display for DaemonError {
@@ -164,91 +175,104 @@ pub trait NydusDaemon {
         info: RafsMountInfo,
         vfs_state: Option<&'a VfsState>,
         persist: bool,
-    ) -> Result<()> {
+    ) -> DaemonResult<()> {
         if self.get_vfs().get_rootfs(&info.mountpoint).is_ok() {
-            return Err(einval!(format!(
-                "Failed to mount, mountpoint {} exists.",
-                info.mountpoint
+            return Err(DaemonError::Vfs(IoError::new(
+                IoErrorKind::AlreadyExists,
+                "Already mounted",
             )));
         }
 
-        let rafs_config = RafsConfig::from_file(&info.config)?;
-        let mut bootstrap = RafsIoRead::from_file(&info.source)?;
+        let rafs_config = RafsConfig::from_file(&info.config).map_err(DaemonError::Config)?;
+        let mut bootstrap = RafsIoRead::from_file(&info.source).map_err(DaemonError::Metadata)?;
 
-        let mut rafs = Rafs::new(rafs_config, &info.mountpoint, &mut bootstrap)?;
-        rafs.import(&mut bootstrap, None)?;
+        let mut rafs = Rafs::new(rafs_config, &info.mountpoint, &mut bootstrap)
+            .map_err(DaemonError::Metadata)?;
+        rafs.import(&mut bootstrap, None)
+            .map_err(DaemonError::Metadata)?;
 
         if let Some(vfs_state) = vfs_state {
             self.get_vfs()
-                .restore_mount(Box::new(rafs), &info.mountpoint, vfs_state)?;
+                .restore_mount(Box::new(rafs), &info.mountpoint, vfs_state)
+                .map_err(DaemonError::Mount)?;
         } else {
-            self.get_vfs().mount(Box::new(rafs), &info.mountpoint)?;
+            self.get_vfs()
+                .mount(Box::new(rafs), &info.mountpoint)
+                .map_err(DaemonError::Mount)?;
         }
 
         if persist {
             // Add mounts opaque to UpgradeManager
             if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
                 let mut state = mgr_guard
-                    .get_opaque_raw(OpaqueKind::RafsMounts)?
+                    .get_opaque_raw(OpaqueKind::RafsMounts)
+                    .map_err(DaemonError::Opaque)?
                     .unwrap_or_else(RafsMountsState::new);
                 state.add(info);
-                mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
+                mgr_guard
+                    .set_opaque_raw(OpaqueKind::RafsMounts, &state)
+                    .map_err(DaemonError::Opaque)?;
             }
         }
 
         Ok(())
     }
 
-    fn update_mount(&self, info: RafsMountInfo) -> Result<()> {
-        if self.get_vfs().get_rootfs(&info.mountpoint).is_err() {
-            return Err(einval!(format!(
-                "Failed to update mount, mountpoint {} not exists.",
-                info.mountpoint
-            )));
-        }
+    fn update_mount(&self, info: RafsMountInfo) -> DaemonResult<()> {
+        let rootfs = self
+            .get_vfs()
+            .get_rootfs(&info.mountpoint)
+            .map_err(DaemonError::Vfs)?;
 
-        let rafs_config = RafsConfig::from_file(&&info.config)?;
-        let mut bootstrap = RafsIoRead::from_file(&&info.source)?;
-
-        let rootfs = self.get_vfs().get_rootfs(&info.mountpoint)?;
+        let rafs_config = RafsConfig::from_file(&&info.config).map_err(DaemonError::Config)?;
+        let mut bootstrap = RafsIoRead::from_file(&&info.source).map_err(DaemonError::Metadata)?;
         let any_fs = rootfs.deref().as_any();
-
         let rafs = any_fs
             .downcast_ref::<Rafs>()
-            .ok_or_else(|| einval!("Can't downcast to Rafs"))?;
+            .ok_or_else(|| DaemonError::FsTypeMismatch("to rafs".to_string()))?;
 
         rafs.update(&mut bootstrap, rafs_config)
-            .map_err(|e| eother!(e))?;
+            .map_err(|e| match e {
+                RafsError::Unsupported => DaemonError::Unsupported,
+                e => DaemonError::Common(format!("{:?}", e)),
+            })?;
 
         // Update mounts opaque from UpgradeManager
         if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
             let mut state = mgr_guard
-                .get_opaque_raw(OpaqueKind::RafsMounts)?
+                .get_opaque_raw(OpaqueKind::RafsMounts)
+                .map_err(DaemonError::Opaque)?
                 .unwrap_or_else(RafsMountsState::new);
             state.add(info);
-            mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
+            mgr_guard
+                .set_opaque_raw(OpaqueKind::RafsMounts, &state)
+                .map_err(DaemonError::Opaque)?;
         }
 
         Ok(())
     }
 
-    fn umount(&self, info: RafsUmountInfo) -> Result<()> {
-        if self.get_vfs().get_rootfs(&info.mountpoint).is_err() {
-            return Err(einval!(format!(
-                "Faild to umount, mountpoint {} not exists.",
-                info.mountpoint
-            )));
-        }
+    fn umount(&self, info: RafsUmountInfo) -> DaemonResult<()> {
+        let _ = self
+            .get_vfs()
+            .get_rootfs(&info.mountpoint)
+            .map_err(DaemonError::Vfs)?;
 
-        self.get_vfs().umount(&info.mountpoint)?;
+        self.get_vfs()
+            .umount(&info.mountpoint)
+            .map_err(DaemonError::Vfs)?;
 
         // Remove mount opaque from UpgradeManager
         if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
-            if let Some(mut state) =
-                mgr_guard.get_opaque_raw(OpaqueKind::RafsMounts)? as Option<RafsMountsState>
+            if let Some(mut state) = mgr_guard
+                .get_opaque_raw(OpaqueKind::RafsMounts)
+                .map_err(DaemonError::Opaque)?
+                as Option<RafsMountsState>
             {
                 state.remove(info);
-                mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
+                mgr_guard
+                    .set_opaque_raw(OpaqueKind::RafsMounts, &state)
+                    .map_err(DaemonError::Opaque)?;
             }
         }
 
