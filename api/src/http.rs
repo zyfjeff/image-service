@@ -94,8 +94,8 @@ fn handle_http_request(
             .handle_request(&request, &|r| {
                 kick_api_server(api_notifier, to_api, from_api, r)
             })
-            .unwrap_or_else(|err| error_response(Some(err), StatusCode::BadRequest)),
-        None => error_response(Some(HttpError::NoRoute), StatusCode::NotFound),
+            .unwrap_or_else(|err| error_response(err, StatusCode::BadRequest)),
+        None => error_response(HttpError::NoRoute, StatusCode::NotFound),
     };
 
     response.set_server("Nydus API");

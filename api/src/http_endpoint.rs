@@ -134,7 +134,8 @@ pub struct DaemonConf {
 #[derive(Debug)]
 pub enum HttpError {
     NoRoute,
-    BaqRequest(String),
+    BadRequest,
+    QueryString(String),
     /// API request receive error
     SerdeJsonDeserialize(SerdeError),
     SerdeJsonSerialize(SerdeError),
@@ -173,16 +174,15 @@ struct ErrorMessage {
     message: String,
 }
 
-pub fn error_response(error: Option<HttpError>, status: StatusCode) -> Response {
+pub fn error_response(error: HttpError, status: StatusCode) -> Response {
     let mut response = Response::new(Version::Http11, status);
 
-    if let Some(e) = error {
-        let err_msg = ErrorMessage {
-            code: "UNDEFINED".to_string(),
-            message: format!("{:?}", e),
-        };
-        response.set_body(Body::new(serde_json::to_string(&err_msg).unwrap()));
-    }
+    let err_msg = ErrorMessage {
+        code: "UNDEFINED".to_string(),
+        message: format!("{:?}", error),
+    };
+    response.set_body(Body::new(serde_json::to_string(&err_msg).unwrap()));
+
     response
 }
 
@@ -216,7 +216,7 @@ fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(
         }
         Err(e) => {
             let sc = translate_status_code(&e);
-            Ok(error_response(Some(op(e)), sc))
+            Ok(error_response(op(e), sc))
         }
     }
 }
@@ -242,7 +242,7 @@ impl EndpointHandler for InfoHandler {
                 let r = kicker(ApiRequest::ConfigureDaemon(conf));
                 convert_to_response(r, HttpError::Configure)
             }
-            _ => Ok(error_response(None, StatusCode::BadRequest)),
+            _ => Err(HttpError::BadRequest),
         }
     }
 }
@@ -255,7 +255,7 @@ impl EndpointHandler for MountHandler {
         kicker: &dyn Fn(ApiRequest) -> ApiResponse,
     ) -> HttpResult {
         let mountpoint = extract_query_part(req, "mountpoint").ok_or_else(|| {
-            HttpError::BaqRequest("`mountpoint` should be specified in query string".to_string())
+            HttpError::QueryString("'mountpoint' should be specified in query string".to_string())
         })?;
         match (req.method(), req.body.as_ref()) {
             (Method::Post, Some(body)) => {
@@ -272,7 +272,7 @@ impl EndpointHandler for MountHandler {
                 let r = kicker(ApiRequest::Umount(mountpoint));
                 convert_to_response(r, HttpError::Mount)
             }
-            _ => Ok(error_response(None, StatusCode::BadRequest)),
+            _ => Err(HttpError::BadRequest),
         }
     }
 }
@@ -290,7 +290,7 @@ impl EndpointHandler for MetricsHandler {
                 let r = kicker(ApiRequest::ExportGlobalMetrics(id));
                 convert_to_response(r, HttpError::GlobalMetrics)
             }
-            _ => Ok(error_response(None, StatusCode::BadRequest)),
+            _ => Err(HttpError::BadRequest),
         }
     }
 }
@@ -308,7 +308,7 @@ impl EndpointHandler for MetricsFilesHandler {
                 let r = kicker(ApiRequest::ExportFilesMetrics(id));
                 convert_to_response(r, HttpError::FsFilesMetrics)
             }
-            _ => Ok(error_response(None, StatusCode::BadRequest)),
+            _ => Err(HttpError::BadRequest),
         }
     }
 }
@@ -326,7 +326,7 @@ impl EndpointHandler for MetricsPatternHandler {
                 let r = kicker(ApiRequest::ExportAccessPatterns(id));
                 convert_to_response(r, HttpError::Pattern)
             }
-            _ => Ok(error_response(None, StatusCode::BadRequest)),
+            _ => Err(HttpError::BadRequest),
         }
     }
 }
@@ -343,7 +343,7 @@ impl EndpointHandler for SendFuseFdHandler {
                 let r = kicker(ApiRequest::SendFuseFd);
                 convert_to_response(r, HttpError::Upgrade)
             }
-            _ => Ok(error_response(None, StatusCode::BadRequest)),
+            _ => Err(HttpError::BadRequest),
         }
     }
 }
@@ -360,7 +360,7 @@ impl EndpointHandler for TakeoverHandler {
                 let r = kicker(ApiRequest::Takeover);
                 convert_to_response(r, HttpError::Upgrade)
             }
-            _ => Ok(error_response(None, StatusCode::BadRequest)),
+            _ => Err(HttpError::BadRequest),
         }
     }
 }
@@ -377,7 +377,7 @@ impl EndpointHandler for ExitHandler {
                 let r = kicker(ApiRequest::Exit);
                 convert_to_response(r, HttpError::Upgrade)
             }
-            _ => Ok(error_response(None, StatusCode::BadRequest)),
+            _ => Err(HttpError::BadRequest),
         }
     }
 }
