@@ -16,6 +16,7 @@ use crate::http::{extract_query_part, EndpointHandler};
 pub enum DaemonErrorKind {
     NotReady,
     NoResource,
+    Unsupported,
     Connect(io::Error),
     SendFd,
     RecvFd,
@@ -31,7 +32,7 @@ pub enum ApiError {
     EventFdWrite(io::Error),
 
     /// Cannot mount a resource
-    MountFailure(io::Error),
+    MountFailure(DaemonErrorKind),
 
     /// API request send error
     RequestSend(SendError<ApiRequest>),
@@ -187,13 +188,13 @@ pub fn error_response(error: HttpError, status: StatusCode) -> Response {
 }
 
 fn translate_status_code(e: &ApiError) -> StatusCode {
-    if let ApiError::DaemonAbnormal(kind) = e {
-        match kind {
+    match e {
+        ApiError::DaemonAbnormal(kind) | ApiError::MountFailure(kind) => match kind {
             DaemonErrorKind::NotReady => StatusCode::ServiceUnavailable,
+            DaemonErrorKind::Unsupported => StatusCode::NotImplemented,
             _ => StatusCode::InternalServerError,
-        }
-    } else {
-        StatusCode::InternalServerError
+        },
+        _ => StatusCode::InternalServerError,
     }
 }
 
