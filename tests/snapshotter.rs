@@ -117,11 +117,16 @@ impl Snapshotter {
         let config_path = self.work_dir.join(config_name);
         fs::write(self.work_dir.join(config_path.clone()), config.to_string()).unwrap();
         let mount_info = json!({
-            "mountpoint": mount_point,
             "source": self.work_dir.join(source_name),
             "config": config_path,
         });
-        self.request(apisock, "POST", "/mount", Some(mount_info.to_string()))
-            .unwrap()
+        let endpoint = format!("/mount?mountpoint={}", mount_point);
+        self.request(
+            apisock,
+            "POST",
+            endpoint.as_str(),
+            Some(mount_info.to_string()),
+        )
+        .unwrap()
     }
 }

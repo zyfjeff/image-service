@@ -14,7 +14,7 @@ use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
 use nydus_api::http_endpoint::{
     ApiError, ApiRequest, ApiResponse, ApiResponsePayload, ApiResult, DaemonConf, DaemonErrorKind,
-    DaemonInfo, RafsMountInfo, RafsUmountInfo,
+    DaemonInfo, RafsMountInfo,
 };
 use nydus_utils::{epipe, last_error};
 use rafs::io_stats;
@@ -68,9 +68,9 @@ impl ApiServer {
 
         let resp = match request {
             ApiRequest::DaemonInfo => self.daemon_info(),
-            ApiRequest::Mount(info) => self.do_mount(info),
-            ApiRequest::UpdateMount(info) => self.do_update_mount(info),
-            ApiRequest::Umount(info) => self.do_umount(info),
+            ApiRequest::Mount((mountpoint, info)) => self.do_mount(mountpoint, info),
+            ApiRequest::UpdateMount((mountpoint, info)) => self.do_update_mount(mountpoint, info),
+            ApiRequest::Umount(mountpoint) => self.do_umount(mountpoint),
             ApiRequest::ConfigureDaemon(conf) => self.configure_daemon(conf),
             ApiRequest::ExportGlobalMetrics(id) => Self::export_global_metrics(id),
             ApiRequest::ExportFilesMetrics(id) => Self::export_files_metrics(id),
@@ -178,11 +178,11 @@ impl ApiServer {
         Ok(ApiResponsePayload::Empty)
     }
 
-    fn do_mount(&self, info: RafsMountInfo) -> ApiResponse {
+    fn do_mount(&self, mountpoint: String, info: RafsMountInfo) -> ApiResponse {
         self.daemon
             .mount(
                 DaemonRafsMountInfo {
-                    mountpoint: info.mountpoint,
+                    mountpoint,
                     config: info.config,
                     source: info.source,
                 },
@@ -192,10 +192,10 @@ impl ApiServer {
             .map_err(ApiError::MountFailure)
     }
 
-    fn do_update_mount(&self, info: RafsMountInfo) -> ApiResponse {
+    fn do_update_mount(&self, mountpoint: String, info: RafsMountInfo) -> ApiResponse {
         self.daemon
             .update_mount(DaemonRafsMountInfo {
-                mountpoint: info.mountpoint,
+                mountpoint,
                 config: info.config,
                 source: info.source,
             })
@@ -203,11 +203,9 @@ impl ApiServer {
             .map_err(ApiError::MountFailure)
     }
 
-    fn do_umount(&self, info: RafsUmountInfo) -> ApiResponse {
+    fn do_umount(&self, mountpoint: String) -> ApiResponse {
         self.daemon
-            .umount(DaemonRafsUmountInfo {
-                mountpoint: info.mountpoint,
-            })
+            .umount(DaemonRafsUmountInfo { mountpoint })
             .map(|_| ApiResponsePayload::Empty)
             .map_err(ApiError::MountFailure)
     }

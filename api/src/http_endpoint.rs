@@ -69,9 +69,9 @@ pub type HttpResult = std::result::Result<Response, HttpError>;
 #[derive(Debug)]
 pub enum ApiRequest {
     DaemonInfo,
-    Mount(RafsMountInfo),
-    UpdateMount(RafsMountInfo),
-    Umount(RafsUmountInfo),
+    Mount((String, RafsMountInfo)),
+    UpdateMount((String, RafsMountInfo)),
+    Umount(String),
     ConfigureDaemon(DaemonConf),
     ExportGlobalMetrics(Option<String>),
     ExportFilesMetrics(Option<String>),
@@ -106,7 +106,6 @@ pub struct MountInfo {
 pub struct RafsMountInfo {
     pub source: String,
     pub config: String,
-    pub mountpoint: String,
 }
 
 impl RafsMountInfo {
@@ -135,6 +134,7 @@ pub struct DaemonConf {
 #[derive(Debug)]
 pub enum HttpError {
     NoRoute,
+    BaqRequest(String),
     /// API request receive error
     SerdeJsonDeserialize(SerdeError),
     SerdeJsonSerialize(SerdeError),
@@ -254,20 +254,22 @@ impl EndpointHandler for MountHandler {
         req: &Request,
         kicker: &dyn Fn(ApiRequest) -> ApiResponse,
     ) -> HttpResult {
+        let mountpoint = extract_query_part(req, "mountpoint").ok_or_else(|| {
+            HttpError::BaqRequest("`mountpoint` should be specified in query string".to_string())
+        })?;
         match (req.method(), req.body.as_ref()) {
             (Method::Post, Some(body)) => {
                 let info = RafsMountInfo::parse(body)?;
-                let r = kicker(ApiRequest::Mount(info));
+                let r = kicker(ApiRequest::Mount((mountpoint, info)));
                 convert_to_response(r, HttpError::Mount)
             }
             (Method::Put, Some(body)) => {
                 let info = RafsMountInfo::parse(body)?;
-                let r = kicker(ApiRequest::UpdateMount(info));
+                let r = kicker(ApiRequest::UpdateMount((mountpoint, info)));
                 convert_to_response(r, HttpError::Mount)
             }
-            (Method::Delete, Some(body)) => {
-                let info = RafsUmountInfo::parse(body)?;
-                let r = kicker(ApiRequest::Umount(info));
+            (Method::Delete, Some(_)) => {
+                let r = kicker(ApiRequest::Umount(mountpoint));
                 convert_to_response(r, HttpError::Mount)
             }
             _ => Ok(error_response(None, StatusCode::BadRequest)),
