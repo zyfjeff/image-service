@@ -268,7 +268,7 @@ impl EndpointHandler for MountHandler {
                 let r = kicker(ApiRequest::UpdateMount((mountpoint, info)));
                 convert_to_response(r, HttpError::Mount)
             }
-            (Method::Delete, Some(_)) => {
+            (Method::Delete, None) => {
                 let r = kicker(ApiRequest::Umount(mountpoint));
                 convert_to_response(r, HttpError::Mount)
             }

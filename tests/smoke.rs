@@ -372,6 +372,8 @@ fn integration_test_hot_upgrade_with_rafs_mount() -> Result<()> {
     let result_path = format!("repeatable/{}.result", COMPAT_BOOTSTRAPS[1]);
     new_nydusd.check(result_path.as_str(), "mnt/sub2")?;
 
+    snapshotter.umount(&new_nydusd.api_sock, "/sub2");
+
     // Stop new nydusd
     new_nydusd.umount("mnt");
 

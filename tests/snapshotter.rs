@@ -129,4 +129,10 @@ impl Snapshotter {
         )
         .unwrap()
     }
+
+    pub fn umount(&self, apisock: &PathBuf, mount_point: &str) -> String {
+        let endpoint = format!("/mount?mountpoint={}", mount_point);
+        self.request(apisock, "DELETE", endpoint.as_str(), None)
+            .unwrap()
+    }
 }
