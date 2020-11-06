@@ -138,7 +138,7 @@ fn main() -> Result<()> {
                 .long("config")
                 .help("config file")
                 .takes_value(true)
-                .required(true)
+                .required(false)
                 .min_values(1),
         )
         .arg(
@@ -285,9 +285,6 @@ fn main() -> Result<()> {
     // Retrieve arguments
     // shared-dir means fs passthrough
     let shared_dir = cmd_arguments_parsed.value_of("shared-dir");
-    let config = cmd_arguments_parsed
-        .value_of("config")
-        .ok_or_else(|| Error::InvalidArguments("config file is not provided".to_string()))?;
     // bootstrap means rafs only
     let bootstrap = cmd_arguments_parsed.value_of("bootstrap");
     // apisock means admin api socket support
@@ -297,9 +294,6 @@ fn main() -> Result<()> {
         .value_of("rlimit-nofile")
         .map(|n| n.parse().unwrap_or(rlimit_nofile_default))
         .unwrap_or(rlimit_nofile_default);
-
-    let rafs_conf =
-        RafsConfig::from_file(&config).map_err(|e| Error::InvalidConfig(e.to_string()))?;
 
     let vfs = Vfs::new(VfsOptions::default());
     if let Some(shared_dir) = shared_dir {
@@ -328,6 +322,13 @@ fn main() -> Result<()> {
     }
 
     if let Some(bootstrap) = bootstrap {
+        let config = cmd_arguments_parsed
+            .value_of("config")
+            .ok_or_else(|| Error::InvalidArguments("config file is not provided".to_string()))?;
+
+        let rafs_conf =
+            RafsConfig::from_file(&config).map_err(|e| Error::InvalidConfig(e.to_string()))?;
+
         let mut file = Box::new(File::open(bootstrap)?) as Box<dyn rafs::RafsIoRead>;
         let mut rafs = Rafs::new(rafs_conf.clone(), &"/".to_string(), &mut file)?;
         rafs.import(&mut file, Some(prefetch_files))?;
