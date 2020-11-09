@@ -470,7 +470,7 @@ impl<'a> Persist<'a> for &'a FusedevDaemon {
         daemon: Self::ConstructorArgs,
         opaque: &Self::State,
     ) -> std::result::Result<Self, Self::Error> {
-        daemon.conn.store(opaque.conn, Ordering::Relaxed);
+        daemon.conn.store(opaque.conn, Ordering::Release);
         Ok(daemon)
     }
 }
