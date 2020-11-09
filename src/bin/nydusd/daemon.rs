@@ -10,6 +10,7 @@ use std::convert::From;
 use std::fmt::{Display, Formatter};
 use std::io::{Error as IoError, ErrorKind as IoErrorKind, Result};
 use std::ops::Deref;
+use std::process::id;
 use std::sync::{
     atomic::Ordering,
     mpsc::{Receiver, Sender},
@@ -418,6 +419,7 @@ pub struct DaemonStateMachineContext {
     daemon: Arc<dyn NydusDaemon + Send + Sync>,
     event_collector: Receiver<DaemonStateMachineInput>,
     result_sender: Sender<DaemonResult<()>>,
+    pid: u32,
 }
 
 state_machine! {
@@ -452,6 +454,7 @@ impl DaemonStateMachineContext {
             daemon: d,
             event_collector: rx,
             result_sender,
+            pid: id(),
         }
     }
 
@@ -475,8 +478,8 @@ impl DaemonStateMachineContext {
                 let d = self.daemon.as_ref();
                 let cur = self.sm.state();
                 info!(
-                    "State machine: from {:?} to {:?}, input [{:?}], output [{:?}]",
-                    last, cur, input, &action
+                    "State machine(pid={}): from {:?} to {:?}, input [{:?}], output [{:?}]",
+                    &self.pid, last, cur, input, &action
                 );
                 let r = match action {
                     Some(a) => match a {
