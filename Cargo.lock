@@ -876,7 +876,6 @@ name = "nydus-rs"
 version = "0.1.0"
 dependencies = [
  "base64",
- "built",
  "clap",
  "epoll",
  "event-manager",
@@ -912,6 +911,7 @@ name = "nydus-utils"
 version = "0.1.0"
 dependencies = [
  "backtrace",
+ "built",
  "epoll",
  "fuse-rs",
  "libc",

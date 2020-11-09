@@ -40,7 +40,7 @@ use event_manager::{EventManager, EventSubscriber, SubscriberOps};
 use vmm_sys_util::eventfd::EventFd;
 
 use nydus_api::http::start_http_thread;
-use nydus_utils::{einval, log_level_to_verbosity, BuildTimeInfo};
+use nydus_utils::{dump_program_info, einval, log_level_to_verbosity, BuildTimeInfo};
 use rafs::fs::{Rafs, RafsConfig};
 
 mod daemon;
@@ -118,24 +118,8 @@ extern "C" fn sig_exit(_sig: std::os::raw::c_int) {
     }
 }
 
-pub mod built_info {
-    include!(concat!(env!("OUT_DIR"), "/built.rs"));
-}
-
-fn dump_program_info() {
-    info!(
-        "Git Commit: {:?}, Build Time: {:?}",
-        built_info::GIT_COMMIT_HASH.unwrap_or_default(),
-        built_info::BUILT_TIME_UTC
-    );
-}
-
 fn main() -> Result<()> {
-    let bti = BuildTimeInfo::dump(
-        crate_version!(),
-        built_info::GIT_COMMIT_HASH.unwrap_or_default(),
-        built_info::BUILT_TIME_UTC,
-    );
+    let bti = BuildTimeInfo::dump(crate_version!());
 
     let cmd_arguments = App::new("")
         .version(bti.as_str())

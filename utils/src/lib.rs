@@ -33,13 +33,31 @@ pub fn round_down_4k(x: u64) -> u64 {
     x & (!4095u64)
 }
 
+pub mod built_info {
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
+pub fn dump_program_info() {
+    info!(
+        "Git Commit: {:?}, Build Time: {:?}, Profile: {:?}, Rustc Version: {:?}",
+        built_info::GIT_COMMIT_HASH.unwrap_or_default(),
+        built_info::BUILT_TIME_UTC,
+        built_info::PROFILE,
+        built_info::RUSTC_VERSION,
+    );
+}
+
 pub struct BuildTimeInfo {}
 
 impl<'a> BuildTimeInfo {
-    pub fn dump(package_ver: &'a str, commit_hash: &'a str, build_time: &'a str) -> String {
+    pub fn dump(package_ver: &'a str) -> String {
         format!(
-            "\rVersion: \t{}\nGit Commit: \t{}\nBuild Time: \t{}",
-            package_ver, commit_hash, build_time
+            "\rVersion: \t{}\nGit Commit: \t{}\nBuild Time: \t{}\nProfile: \t{}\nRustc: \t\t{}\n",
+            package_ver,
+            built_info::GIT_COMMIT_HASH.unwrap_or_default(),
+            built_info::BUILT_TIME_UTC,
+            built_info::PROFILE,
+            built_info::RUSTC_VERSION,
         )
     }
 }
