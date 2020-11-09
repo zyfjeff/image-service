@@ -28,9 +28,7 @@ use vmm_sys_util::eventfd::EventFd;
 
 use crate::daemon;
 use crate::exit_event_manager;
-use daemon::{
-    DaemonError, DaemonResult, DaemonState, Error, NydusDaemon, RafsMountInfo, RafsMountsState,
-};
+use daemon::{DaemonError, DaemonResult, DaemonState, NydusDaemon, RafsMountInfo, RafsMountsState};
 use nydus_utils::{einval, eio, eother, FuseChannel, FuseSession};
 use upgrade_manager::backend::unix_domain_socket::UdsBackend;
 use upgrade_manager::{OpaqueKind, UpgradeManager};
@@ -70,7 +68,7 @@ impl FuseServer {
                             return Err(eio!("fuse session has been shut down"));
                         }
                         _ => {
-                            error!("Handling fuse message, {}", Error::ProcessQueue(e));
+                            error!("Handling fuse message, {}", DaemonError::ProcessQueue(e));
                             continue;
                         }
                     }
@@ -239,7 +237,7 @@ impl FusedevDaemon {
                 // Ignore fuse service error when joining them.
                 Ok(())
             })
-            .map_err(Error::ThreadSpawn)?;
+            .map_err(DaemonError::ThreadSpawn)?;
         // Safe to unwrap because it should be initialized as Some when daemon being created.
         self.thread_tx
             .lock()
@@ -293,7 +291,7 @@ impl NydusDaemon for FusedevDaemon {
     fn wait(&self) -> Result<()> {
         while let Ok(handle) = self.thread_rx.lock().unwrap().recv() {
             self.running_threads.fetch_sub(1, Ordering::AcqRel);
-            handle.join().map_err(|_| Error::WaitDaemon)??
+            handle.join().map_err(|_| DaemonError::WaitDaemon)??
         }
         if self.running_threads.load(Ordering::Acquire) != 0 {
             warn!("Not all threads are joined.");

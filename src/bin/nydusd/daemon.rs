@@ -64,10 +64,37 @@ impl From<i32> for DaemonState {
         }
     }
 }
-
-#[derive(Debug)]
 #[allow(dead_code)]
+#[derive(Debug)]
 pub enum DaemonError {
+    /// Invalid arguments provided.
+    InvalidArguments(String),
+    /// Invalid config provided
+    InvalidConfig(String),
+    /// Failed to handle event other than input event.
+    HandleEventNotEpollIn,
+    /// Failed to handle unknown event.
+    HandleEventUnknownEvent,
+    /// No memory configured.
+    NoMemoryConfigured,
+    /// Invalid Virtio descriptor chain.
+    #[cfg(feature = "virtiofs")]
+    InvalidDescriptorChain(FuseTransportError),
+    /// Processing queue failed.
+    ProcessQueue(VhostUserFsError),
+    /// Cannot create epoll context.
+    Epoll(io::Error),
+    /// Cannot clone event fd.
+    EventFdClone(io::Error),
+    /// Cannot spawn a new thread
+    ThreadSpawn(io::Error),
+    /// Failure to initialize file system
+    FsInitFailure(io::Error),
+    /// Daemon related error
+    DaemonFailure(String),
+    /// Wait daemon failure
+    WaitDaemon,
+
     Common(String),
     NotReady,
     NoResource,
@@ -88,9 +115,22 @@ pub enum DaemonError {
     FsTypeMismatch(String),
 }
 
-impl Display for DaemonError {
-    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+impl fmt::Display for DaemonError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidArguments(s) => write!(f, "Invalid argument: {}", s),
+            Self::InvalidConfig(s) => write!(f, "Invalid config: {}", s),
+            Self::DaemonFailure(s) => write!(f, "Daemon error: {}", s),
+            _ => write!(f, "{:?}", self),
+        }
+    }
+}
+
+impl error::Error for DaemonError {}
+
+impl convert::From<DaemonError> for io::Error {
+    fn from(e: DaemonError) -> Self {
+        einval!(e)
     }
 }
 
@@ -277,57 +317,6 @@ pub trait NydusDaemon {
         }
 
         Ok(())
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Debug)]
-pub enum Error {
-    /// Invalid arguments provided.
-    InvalidArguments(String),
-    /// Invalid config provided
-    InvalidConfig(String),
-    /// Failed to handle event other than input event.
-    HandleEventNotEpollIn,
-    /// Failed to handle unknown event.
-    HandleEventUnknownEvent,
-    /// No memory configured.
-    NoMemoryConfigured,
-    /// Invalid Virtio descriptor chain.
-    #[cfg(feature = "virtiofs")]
-    InvalidDescriptorChain(FuseTransportError),
-    /// Processing queue failed.
-    ProcessQueue(VhostUserFsError),
-    /// Cannot create epoll context.
-    Epoll(io::Error),
-    /// Cannot clone event fd.
-    EventFdClone(io::Error),
-    /// Cannot spawn a new thread
-    ThreadSpawn(io::Error),
-    /// Failure to initialize file system
-    FsInitFailure(io::Error),
-    /// Daemon related error
-    DaemonFailure(String),
-    /// Wait daemon failure
-    WaitDaemon,
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Error::InvalidArguments(s) => write!(f, "Invalid argument: {}", s),
-            Error::InvalidConfig(s) => write!(f, "Invalid config: {}", s),
-            Error::DaemonFailure(s) => write!(f, "Daemon error: {}", s),
-            _ => write!(f, "vhost_user_fs_error: {:?}", self),
-        }
-    }
-}
-
-impl error::Error for Error {}
-
-impl convert::From<Error> for io::Error {
-    fn from(e: Error) -> Self {
-        einval!(e)
     }
 }
 

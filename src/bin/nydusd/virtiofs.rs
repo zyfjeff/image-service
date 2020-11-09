@@ -23,7 +23,7 @@ use nydus_utils::einval;
 use upgrade_manager::UpgradeManager;
 
 use crate::daemon;
-use daemon::{DaemonError, DaemonResult, DaemonState, Error, NydusDaemon};
+use daemon::{DaemonError, DaemonResult, DaemonState, NydusDaemon};
 
 const VIRTIO_F_VERSION_1: u32 = 32;
 const QUEUE_SIZE: usize = 1024;
@@ -57,7 +57,7 @@ impl VhostUserFsBackendHandler {
     fn new(vfs: Arc<Vfs>) -> Result<Self> {
         let backend = VhostUserFsBackend {
             mem: None,
-            kill_evt: EventFd::new(EFD_NONBLOCK).map_err(Error::Epoll)?,
+            kill_evt: EventFd::new(EFD_NONBLOCK).map_err(DaemonError::Epoll)?,
             server: Arc::new(Server::new(vfs)),
             vu_req: None,
             used_descs: Vec::with_capacity(QUEUE_SIZE),
@@ -72,13 +72,14 @@ impl VhostUserFsBackend {
     // There's no way to recover if error happens during processing a virtq, let the caller
     // to handle it.
     fn process_queue(&mut self, vring: &mut Vring) -> Result<()> {
-        let mem = self.mem.as_ref().ok_or(Error::NoMemoryConfigured)?;
+        let mem = self.mem.as_ref().ok_or(DaemonError::NoMemoryConfigured)?;
 
         while let Some(avail_desc) = vring.mut_queue().iter(mem).next() {
             let head_index = avail_desc.index();
-            let reader =
-                Reader::new(mem, avail_desc.clone()).map_err(Error::InvalidDescriptorChain)?;
-            let writer = Writer::new(mem, avail_desc).map_err(Error::InvalidDescriptorChain)?;
+            let reader = Reader::new(mem, avail_desc.clone())
+                .map_err(DaemonError::InvalidDescriptorChain)?;
+            let writer =
+                Writer::new(mem, avail_desc).map_err(DaemonError::InvalidDescriptorChain)?;
 
             let total = self
                 .server
@@ -89,7 +90,7 @@ impl VhostUserFsBackend {
                         .as_mut()
                         .map(|x| x as &mut dyn FsCacheReqHandler),
                 )
-                .map_err(Error::ProcessQueue)?;
+                .map_err(DaemonError::ProcessQueue)?;
 
             self.used_descs.push((head_index, total as u32));
         }
@@ -144,7 +145,7 @@ impl VhostUserBackend for VhostUserFsBackendHandler {
         _thread_id: usize,
     ) -> VhostUserBackendResult<bool> {
         if evset != epoll::Events::EPOLLIN {
-            return Err(Error::HandleEventNotEpollIn.into());
+            return Err(DaemonError::HandleEventNotEpollIn.into());
         }
 
         match index {
@@ -158,7 +159,7 @@ impl VhostUserBackend for VhostUserFsBackendHandler {
                 let mut vring = vrings[x as usize].write().unwrap();
                 self.backend.lock().unwrap().process_queue(&mut vring)?;
             }
-            _ => return Err(Error::HandleEventUnknownEvent.into()),
+            _ => return Err(DaemonError::HandleEventUnknownEvent.into()),
         }
 
         Ok(false)
@@ -255,7 +256,7 @@ pub fn create_nydus_daemon(
         String::from("vhost-user-fs-backend"),
         Arc::new(RwLock::new(VhostUserFsBackendHandler::new(vfs.clone())?)),
     )
-    .map_err(|e| Error::DaemonFailure(format!("{:?}", e)))?;
+    .map_err(|e| DaemonError::DaemonFailure(format!("{:?}", e)))?;
 
     let daemon = Arc::new(VirtiofsDaemon {
         vfs,
@@ -272,7 +273,7 @@ pub fn create_nydus_daemon(
         .spawn(move || {
             d.start().expect("Failed to start virtiofs daemon");
         })
-        .map_err(Error::ThreadSpawn)?;
+        .map_err(DaemonError::ThreadSpawn)?;
 
     Ok(daemon)
 }

@@ -44,7 +44,7 @@ use nydus_utils::{dump_program_info, einval, log_level_to_verbosity, BuildTimeIn
 use rafs::fs::{Rafs, RafsConfig};
 
 mod daemon;
-use daemon::{Error, NydusDaemonSubscriber};
+use daemon::{DaemonError, NydusDaemonSubscriber};
 
 #[cfg(feature = "virtiofs")]
 mod virtiofs;
@@ -82,9 +82,9 @@ fn get_default_rlimit_nofile() -> Result<rlim> {
     let file_max = file_max
         .trim()
         .parse::<rlim>()
-        .map_err(|_| Error::InvalidArguments("read fs.file-max sysctl wrong".to_string()))?;
+        .map_err(|_| DaemonError::InvalidArguments("read fs.file-max sysctl wrong".to_string()))?;
     if file_max < 2 * reserved_fds {
-        return Err(io::Error::from(Error::InvalidArguments(
+        return Err(io::Error::from(DaemonError::InvalidArguments(
             "The fs.file-max sysctl is too low to allow a reasonable number of open files."
                 .to_string(),
         )));
@@ -307,7 +307,7 @@ fn main() -> Result<()> {
             no_open: true,
             ..Default::default()
         };
-        let passthrough_fs = PassthroughFs::new(fs_cfg).map_err(Error::FsInitFailure)?;
+        let passthrough_fs = PassthroughFs::new(fs_cfg).map_err(DaemonError::FsInitFailure)?;
         passthrough_fs.import()?;
         vfs.mount(Box::new(passthrough_fs), "/")?;
         info!("vfs mounted");
@@ -451,7 +451,7 @@ fn main() -> Result<()> {
     }
 
     if let Err(e) = daemon.stop() {
-        error!("Error shutting down worker thread: {:?}", e)
+        error!("DaemonError shutting down worker thread: {:?}", e)
     }
 
     if let Err(e) = daemon.wait() {
