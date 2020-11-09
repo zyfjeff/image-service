@@ -15,7 +15,7 @@ use crate::http::{extract_query_part, EndpointHandler};
 #[derive(Debug)]
 pub enum DaemonErrorKind {
     NotReady,
-    NoResource,
+    UpgradeManager,
     Unsupported,
     Connect(io::Error),
     SendFd,

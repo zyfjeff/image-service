@@ -92,26 +92,36 @@ pub enum DaemonError {
     FsInitFailure(io::Error),
     /// Daemon related error
     DaemonFailure(String),
-    /// Wait daemon failure
-    WaitDaemon(io::Error),
 
     Common(String),
+    /// Daemon does not reach the stable working state yet,
+    /// some capabilities may not be provided.
     NotReady,
-    NoResource,
+    /// Daemon can't fulfill external requests.
     Unsupported,
+    /// Errors encountered while calling services from Upgrade manager.
+    UpgradeManager,
+    /// For now, below *3* errors only come from upgrading procedure. We can move them
+    /// to upgrade manager crate when they are defined in the future.
     SendFd,
     RecvFd,
+    Opaque(io::Error),
+    /// State-machine related error codes if something bad happens when to communicate with state-machine
     ChannelSend(String),
     ChannelRecv(RecvError),
+    /// File system backend service related errors.
     StartService(String),
     ServiceStop,
+    /// Wait daemon failure
+    WaitDaemon(io::Error),
     SessionShutdown(io::Error),
+    /// When rafs or other types of backend can't be correctly configured.
     Config(io::Error),
+    /// Only for Rafs now, when its metadata can't be preloaded.
     Metadata(io::Error),
     Mount(io::Error),
     Vfs(io::Error),
     Downcast(String),
-    Opaque(io::Error),
     FsTypeMismatch(String),
 }
 

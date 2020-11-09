@@ -385,7 +385,7 @@ impl NydusDaemon for FusedevDaemon {
 
     fn restore(&self) -> DaemonResult<()> {
         if self.supervisor().is_none() {
-            return Err(DaemonError::NoResource);
+            return Err(DaemonError::UpgradeManager);
         }
 
         // Unwrap should be safe because it's in hot upgrade / failover workflow
@@ -398,7 +398,7 @@ impl NydusDaemon for FusedevDaemon {
             .map_err(|_| DaemonError::RecvFd)? as Option<&Self>)
             .is_none()
         {
-            return Err(DaemonError::NoResource);
+            return Err(DaemonError::UpgradeManager);
         }
 
         // Restore fuse fd
