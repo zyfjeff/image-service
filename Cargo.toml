@@ -27,7 +27,6 @@ lazy_static = "1.4.0"
 xattr = "0.2.2"
 nix = "0.17"
 base64 = { version = ">=0.12.0" }
-sendfd = "0.3.1"
 rust-fsm = "0.4.0"
 uuid = { version = "0.8", features = ["serde", "v4"] }
 rafs = { path = "rafs", features = ["backend-localfs", "backend-oss", "backend-registry"] }
@@ -43,6 +42,9 @@ vhost-user-backend = { git = "https://github.com/cloud-hypervisor/vhost-user-bac
 snapshot = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/snapshot.git", branch = "master" }
 versionize = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git", branch = "master" }
 versionize_derive = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize_derive.git", branch = "master" }
+
+[dev-dependencies]
+sendfd = "0.3.3"
 
 [features]
 fusedev = ["nydus-utils/fusedev", "fuse-rs/fusedev", "rafs/lz4_ipp"]

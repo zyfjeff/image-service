@@ -9,7 +9,7 @@ lazy_static = "1.4.0"
 libc = "0.2"
 nix = "0.17"
 log = "0.4"
-sendfd = "0.3.1"
+sendfd = "0.3.3"
 nydus-utils = { path = "../utils" }
 snapshot = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/snapshot.git", branch = "master" }
 versionize = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git", branch = "master" }

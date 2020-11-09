@@ -1275,9 +1275,9 @@ checksum = "388a1df253eca08550bef6c72392cfe7c30914bf41df5269b68cbd6ff8f570a3"
 
 [[package]]
 name = "sendfd"
-version = "0.3.1"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32c4a79c8114baae51ae211d0641ad0c483132e580a564044c4029331b70d5b8"
+checksum = "150f119d9abefb9138b9923127ab2bb7e4a74851dea4404c496e1188455867f1"
 dependencies = [
  "libc",
 ]
