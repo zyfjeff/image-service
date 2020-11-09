@@ -16,6 +16,7 @@ use std::fmt;
 use std::io::Result;
 use std::os::unix::io::RawFd;
 
+use fuse_rs::api::VersionMapGetter;
 use snapshot::{Persist, Snapshot};
 use versionize::{VersionMap, Versionize, VersionizeError, VersionizeResult};
 use versionize_derive::Versionize;
@@ -29,6 +30,7 @@ use nydus_utils::einval;
 pub enum OpaqueKind {
     FuseDevice,
     RafsMounts,
+    VfsState,
 }
 
 impl fmt::Display for OpaqueKind {
@@ -36,17 +38,8 @@ impl fmt::Display for OpaqueKind {
         match self {
             Self::FuseDevice => write!(f, "fuse_device"),
             Self::RafsMounts => write!(f, "rafs_mount"),
+            Self::VfsState => write!(f, "vfs_state"),
         }
-    }
-}
-
-// Use version map to mange resource version during serializing/deserializing,
-// here is a default implementation, returns the version map with only one version,
-// If you need to add a version 2 for resource, need to do like this:
-// `VersionMap::new().new_version().set_type_version(Self::type_id(), 2).clone()`
-pub trait VersionMapGetter {
-    fn version_map() -> VersionMap {
-        VersionMap::new()
     }
 }
 

@@ -358,7 +358,7 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 [[package]]
 name = "fuse-rs"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git#3108dafb8462b5068337f677d58e419c085d6b52"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=master#574c874fdff488a604220d4acb2900543f3daacf"
 dependencies = [
  "arc-swap",
  "bimap",
@@ -1655,6 +1655,7 @@ dependencies = [
 name = "upgrade-manager"
 version = "0.1.0"
 dependencies = [
+ "fuse-rs",
  "lazy_static 1.4.0",
  "libc",
  "log",

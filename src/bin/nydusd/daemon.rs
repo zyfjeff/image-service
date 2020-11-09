@@ -16,7 +16,7 @@ use std::sync::MutexGuard;
 use std::{convert, error, fmt, io};
 
 use event_manager::{EventOps, EventSubscriber, Events};
-use fuse_rs::api::Vfs;
+use fuse_rs::api::{VersionMapGetter, Vfs, VfsState};
 #[cfg(feature = "virtiofs")]
 use fuse_rs::transport::Error as FuseTransportError;
 use fuse_rs::Error as VhostUserFsError;
@@ -28,7 +28,7 @@ use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 use nydus_utils::{einval, eother, last_error};
 use rafs::fs::{Rafs, RafsConfig};
 use rafs::RafsIoRead;
-use upgrade_manager::{OpaqueKind, UpgradeManager, VersionMapGetter};
+use upgrade_manager::{OpaqueKind, UpgradeManager};
 
 use crate::SubscriberWrapper;
 use crate::EVENT_MANAGER_RUN;
@@ -158,7 +158,13 @@ pub trait NydusDaemon {
     fn get_vfs(&self) -> &Vfs;
     fn get_upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>>;
 
-    fn mount(&self, info: RafsMountInfo, persist: bool) -> Result<()> {
+    // FIXME: locking?
+    fn mount<'a>(
+        &self,
+        info: RafsMountInfo,
+        vfs_state: Option<&'a VfsState>,
+        persist: bool,
+    ) -> Result<()> {
         if self.get_vfs().get_rootfs(&info.mountpoint).is_ok() {
             return Err(einval!(format!(
                 "Failed to mount, mountpoint {} exists.",
@@ -172,7 +178,12 @@ pub trait NydusDaemon {
         let mut rafs = Rafs::new(rafs_config, &info.mountpoint, &mut bootstrap)?;
         rafs.import(&mut bootstrap, None)?;
 
-        self.get_vfs().mount(Box::new(rafs), &info.mountpoint)?;
+        if let Some(vfs_state) = vfs_state {
+            self.get_vfs()
+                .restore_mount(Box::new(rafs), &info.mountpoint, vfs_state)?;
+        } else {
+            self.get_vfs().mount(Box::new(rafs), &info.mountpoint)?;
+        }
 
         if persist {
             // Add mounts opaque to UpgradeManager

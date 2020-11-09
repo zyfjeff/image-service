@@ -14,6 +14,7 @@ nydus-utils = { path = "../utils" }
 snapshot = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/snapshot.git", branch = "master" }
 versionize = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git", branch = "master" }
 versionize_derive = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize_derive.git", branch = "master" }
+fuse-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.git" }
 
 [dev-dependencies]
 vmm-sys-util = ">=0.3.1"

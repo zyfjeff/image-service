@@ -19,7 +19,7 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 
-use fuse_rs::api::{server::Server, Vfs, VfsOptions, VfsOptionsState};
+use fuse_rs::api::{server::Server, VersionMapGetter, Vfs, VfsState};
 use rust_fsm::*;
 use snapshot::Persist;
 use versionize::{VersionMap, Versionize, VersionizeResult};
@@ -33,7 +33,7 @@ use daemon::{
 };
 use nydus_utils::{einval, eio, eother, FuseChannel, FuseSession};
 use upgrade_manager::backend::unix_domain_socket::UdsBackend;
-use upgrade_manager::{OpaqueKind, UpgradeManager, VersionMapGetter};
+use upgrade_manager::{OpaqueKind, UpgradeManager};
 
 struct FuseServer {
     server: Arc<Server<Arc<Vfs>>>,
@@ -268,6 +268,7 @@ impl FusedevDaemon {
 }
 
 impl NydusDaemon for FusedevDaemon {
+    #[inline]
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -306,22 +307,27 @@ impl NydusDaemon for FusedevDaemon {
             .map(|_| ())
     }
 
+    #[inline]
     fn id(&self) -> Option<String> {
         self.id.clone()
     }
 
+    #[inline]
     fn supervisor(&self) -> Option<String> {
         self.supervisor.clone()
     }
 
+    #[inline]
     fn interrupt(&self) {
         self.event_fd.write(1).expect("Stop fuse service loop");
     }
 
+    #[inline]
     fn set_state(&self, state: DaemonState) {
         self.state.store(state as i32, Ordering::Relaxed);
     }
 
+    #[inline]
     fn get_state(&self) -> DaemonState {
         self.state.load(Ordering::Relaxed).into()
     }
@@ -359,6 +365,10 @@ impl NydusDaemon for FusedevDaemon {
             .set_opaque(OpaqueKind::FuseDevice, &self)
             .map_err(|_| DaemonError::SendFd)?;
 
+        mgr_guard
+            .set_opaque_raw(OpaqueKind::VfsState, &self.get_vfs().save())
+            .map_err(|_| DaemonError::SendFd)?;
+
         mgr_guard.save().map_err(|_| DaemonError::SendFd)?;
 
         info!(
@@ -391,6 +401,17 @@ impl NydusDaemon for FusedevDaemon {
         let fds = mgr_guard.get_fds();
         self.session.lock().unwrap().set_fuse_fd(fds[0]);
 
+        // Restore vfs
+        let vfs_state = match mgr_guard
+            .get_opaque_raw(OpaqueKind::VfsState)
+            .map_err(|_| DaemonError::SendFd)? as Option<VfsState>
+        {
+            Some(state) => state,
+            None => return Err(DaemonError::NoResource),
+        };
+
+        <&Vfs>::restore(self.get_vfs(), &vfs_state).map_err(|_| DaemonError::RecvFd)?;
+
         // Restore RAFS mounts
         if let Some(mount_state) = mgr_guard
             .get_opaque_raw(OpaqueKind::RafsMounts)
@@ -403,6 +424,7 @@ impl NydusDaemon for FusedevDaemon {
                         source: item.source,
                         config: item.config,
                     },
+                    Some(&vfs_state),
                     false,
                 )
                 .map_err(|_| DaemonError::RecvFd)?;
@@ -421,10 +443,12 @@ impl NydusDaemon for FusedevDaemon {
         Ok(())
     }
 
+    #[inline]
     fn get_vfs(&self) -> &Vfs {
         &self.vfs
     }
 
+    #[inline]
     fn get_upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>> {
         self.upgrade_mgr.as_ref().map(|mgr| mgr.lock().unwrap())
     }
@@ -437,9 +461,7 @@ impl<'a> Persist<'a> for &'a FusedevDaemon {
     type Error = DaemonError;
 
     fn save(&self) -> Self::State {
-        let vfs_opts = self.vfs.get_opts();
         DaemonOpaque {
-            vfs_opts: vfs_opts.save(),
             conn: self.conn.load(Ordering::Acquire),
         }
     }
@@ -448,15 +470,12 @@ impl<'a> Persist<'a> for &'a FusedevDaemon {
         daemon: Self::ConstructorArgs,
         opaque: &Self::State,
     ) -> std::result::Result<Self, Self::Error> {
-        let vfs_opts =
-            VfsOptions::restore((), &opaque.vfs_opts).map_err(|()| DaemonError::RecvFd)?;
-        daemon.vfs.set_opts(vfs_opts);
         daemon.conn.store(opaque.conn, Ordering::Relaxed);
         Ok(daemon)
     }
 }
 
-// TODO: Perhaps, we can't reply on `/proc/self/mounts` to tell if it is mounted.
+// TODO: Perhaps, we can't rely on `/proc/self/mounts` to tell if it is mounted.
 fn is_mounted(mp: impl AsRef<Path>) -> Result<bool> {
     let mounts = CString::new("/proc/self/mounts").unwrap();
     let ty = CString::new("r").unwrap();
@@ -618,8 +637,6 @@ pub fn create_nydus_daemon(
 
 #[derive(Debug, Versionize)]
 pub struct DaemonOpaque {
-    // Negotiate with kernel when do mount
-    vfs_opts: VfsOptionsState,
     conn: u64,
 }
 
