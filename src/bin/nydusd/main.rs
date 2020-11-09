@@ -264,11 +264,11 @@ fn main() -> Result<()> {
     // can't change log level to a higher level than what is passed to `stderrlog`.
     log::set_max_level(v);
     dump_program_info();
-    // A string including multiple directories and regular files should be separated by white-space, e.g.
+    // A string including multiple directories and regular files should be separated by white-spaces, e.g.
     //      <path1> <path2> <path3>
     // And each path should be relative to rafs root, e.g.
     //      /foo1/bar1 /foo2/bar2
-    // Specifying both regular file and directory are supported.
+    // Specifying both regular file and directory simultaneously is supported.
     let prefetch_files: Vec<&Path>;
     if let Some(files) = cmd_arguments_parsed.values_of("prefetch-files") {
         prefetch_files = files.map(|s| Path::new(s)).collect();
