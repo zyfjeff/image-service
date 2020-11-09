@@ -104,7 +104,7 @@ pub enum DaemonError {
     /// For now, below *3* errors only come from upgrading procedure. We can move them
     /// to upgrade manager crate when they are defined in the future.
     SendFd,
-    RecvFd,
+    RecvFd(io::Error),
     Opaque(io::Error),
     /// State-machine related error codes if something bad happens when to communicate with state-machine
     ChannelSend(String),

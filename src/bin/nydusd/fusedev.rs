@@ -390,12 +390,12 @@ impl NydusDaemon for FusedevDaemon {
 
         // Unwrap should be safe because it's in hot upgrade / failover workflow
         let mut mgr_guard = self.get_upgrade_mgr().unwrap();
-        mgr_guard.restore().map_err(|_| DaemonError::RecvFd)?;
+        mgr_guard.restore().map_err(DaemonError::RecvFd)?;
 
         // Restore daemon opaque
         if (mgr_guard
             .get_opaque(OpaqueKind::FuseDevice, self)
-            .map_err(|_| DaemonError::RecvFd)? as Option<&Self>)
+            .map_err(DaemonError::RecvFd)? as Option<&Self>)
             .is_none()
         {
             return Err(DaemonError::UpgradeManager);
@@ -411,10 +411,10 @@ impl NydusDaemon for FusedevDaemon {
             .map_err(|_| DaemonError::SendFd)? as Option<VfsState>
         {
             Some(state) => state,
-            None => return Err(DaemonError::NoResource),
+            None => return Err(DaemonError::UpgradeManager),
         };
 
-        <&Vfs>::restore(self.get_vfs(), &vfs_state).map_err(|_| DaemonError::RecvFd)?;
+        <&Vfs>::restore(self.get_vfs(), &vfs_state).map_err(DaemonError::RecvFd)?;
 
         // Restore RAFS mounts
         if let Some(mount_state) = mgr_guard
@@ -430,8 +430,7 @@ impl NydusDaemon for FusedevDaemon {
                     },
                     Some(&vfs_state),
                     false,
-                )
-                .map_err(|_| DaemonError::RecvFd)?;
+                )?;
             }
         }
 
@@ -462,7 +461,7 @@ impl<'a> Persist<'a> for &'a FusedevDaemon {
     type State = DaemonOpaque;
     type ConstructorArgs = &'a FusedevDaemon;
     type LiveUpgradeConstructorArgs = &'a FusedevDaemon;
-    type Error = DaemonError;
+    type Error = ();
 
     fn save(&self) -> Self::State {
         DaemonOpaque {
