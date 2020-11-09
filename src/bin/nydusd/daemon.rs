@@ -93,7 +93,7 @@ pub enum DaemonError {
     /// Daemon related error
     DaemonFailure(String),
     /// Wait daemon failure
-    WaitDaemon,
+    WaitDaemon(io::Error),
 
     Common(String),
     NotReady,
@@ -190,8 +190,8 @@ pub struct RafsUmountInfo {
 
 pub trait NydusDaemon {
     fn start(&self) -> DaemonResult<()>;
-    fn wait(&self) -> Result<()>;
-    fn stop(&self) -> Result<()>;
+    fn wait(&self) -> DaemonResult<()>;
+    fn stop(&self) -> DaemonResult<()>;
     fn as_any(&self) -> &dyn Any;
     fn interrupt(&self) {}
     fn get_state(&self) -> DaemonState;

@@ -19,7 +19,7 @@ use vhost_user_backend::{VhostUserBackend, VhostUserDaemon, Vring};
 use vm_memory::GuestMemoryMmap;
 use vmm_sys_util::eventfd::EventFd;
 
-use nydus_utils::einval;
+use nydus_utils::eother;
 use upgrade_manager::UpgradeManager;
 
 use crate::daemon;
@@ -198,11 +198,15 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
             .map_err(|e| DaemonError::StartService(format!("{:?}", e)))
     }
 
-    fn wait(&self) -> Result<()> {
-        self.daemon.lock().unwrap().wait().map_err(|e| einval!(e))
+    fn wait(&self) -> DaemonResult<()> {
+        self.daemon
+            .lock()
+            .unwrap()
+            .wait()
+            .map_err(|e| DaemonError::WaitDaemon(eother!(e)))
     }
 
-    fn stop(&self) -> Result<()> {
+    fn stop(&self) -> DaemonResult<()> {
         /* TODO: find a way to kill backend
         let kill_evt = &backend.read().unwrap().kill_evt;
         if let Err(e) = kill_evt.write(1) {}

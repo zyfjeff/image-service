@@ -288,10 +288,18 @@ impl NydusDaemon for FusedevDaemon {
         Ok(())
     }
 
-    fn wait(&self) -> Result<()> {
+    fn wait(&self) -> DaemonResult<()> {
         while let Ok(handle) = self.thread_rx.lock().unwrap().recv() {
             self.running_threads.fetch_sub(1, Ordering::AcqRel);
-            handle.join().map_err(|_| DaemonError::WaitDaemon)??
+            handle
+                .join()
+                .map_err(|e| {
+                    DaemonError::WaitDaemon(
+                        *e.downcast::<std::io::Error>()
+                            .unwrap_or_else(|e| Box::new(eother!(e))),
+                    )
+                })?
+                .map_err(DaemonError::WaitDaemon)?
         }
         if self.running_threads.load(Ordering::Acquire) != 0 {
             warn!("Not all threads are joined.");
@@ -299,10 +307,8 @@ impl NydusDaemon for FusedevDaemon {
         Ok(())
     }
 
-    fn stop(&self) -> Result<()> {
+    fn stop(&self) -> DaemonResult<()> {
         self.on_event(FusedevStateMachineInput::Stop)
-            .map_err(|e| eother!(e))
-            .map(|_| ())
     }
 
     #[inline]

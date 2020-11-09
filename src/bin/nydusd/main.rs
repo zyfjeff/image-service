@@ -450,14 +450,8 @@ fn main() -> Result<()> {
         }
     }
 
-    if let Err(e) = daemon.stop() {
-        error!("DaemonError shutting down worker thread: {:?}", e)
-    }
-
-    if let Err(e) = daemon.wait() {
-        error!("Waiting for daemon failed: {:?}", e);
-    }
-
+    daemon.stop().unwrap_or_else(|e| error!("{}", e));
+    daemon.wait().unwrap_or_else(|e| error!("{}", e));
     info!("nydusd quits");
     Ok(())
 }
