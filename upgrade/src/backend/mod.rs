@@ -6,8 +6,20 @@
 pub mod shared_memory;
 pub mod unix_domain_socket;
 
-use std::io::Result;
+use std::io::{self};
 use std::os::unix::io::RawFd;
+
+#[derive(Debug)]
+pub enum BackendError {
+    FdCount(usize),
+    SharedMem(nix::Error),
+    File(io::Error),
+    NotExisted,
+    SendFd(io::Error),
+    RecvFd(io::Error),
+}
+
+pub type Result<T> = std::result::Result<T, BackendError>;
 
 pub trait Backend: Sync + Send {
     fn save(&mut self, fds: &[RawFd], opaque: &[u8]) -> Result<usize>;

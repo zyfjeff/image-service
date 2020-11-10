@@ -30,7 +30,7 @@ use rafs::{
     fs::{Rafs, RafsConfig},
     RafsError, RafsIoRead,
 };
-use upgrade_manager::{OpaqueKind, UpgradeManager};
+use upgrade_manager::{OpaqueKind, UpgradeManager, UpgradeMgrError};
 
 use crate::SubscriberWrapper;
 use crate::EVENT_MANAGER_RUN;
@@ -94,18 +94,13 @@ pub enum DaemonError {
     DaemonFailure(String),
 
     Common(String),
+    UpgradeManager(UpgradeMgrError),
     /// Daemon does not reach the stable working state yet,
     /// some capabilities may not be provided.
     NotReady,
     /// Daemon can't fulfill external requests.
     Unsupported,
-    /// Errors encountered while calling services from Upgrade manager.
-    UpgradeManager,
-    /// For now, below *3* errors only come from upgrading procedure. We can move them
-    /// to upgrade manager crate when they are defined in the future.
-    SendFd,
-    RecvFd(io::Error),
-    Opaque(io::Error),
+
     /// State-machine related error codes if something bad happens when to communicate with state-machine
     ChannelSend(String),
     ChannelRecv(RecvError),
@@ -256,12 +251,12 @@ pub trait NydusDaemon {
             if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
                 let mut state = mgr_guard
                     .get_opaque_raw(OpaqueKind::RafsMounts)
-                    .map_err(DaemonError::Opaque)?
+                    .map_err(DaemonError::UpgradeManager)?
                     .unwrap_or_else(RafsMountsState::new);
                 state.add(info);
                 mgr_guard
                     .set_opaque_raw(OpaqueKind::RafsMounts, &state)
-                    .map_err(DaemonError::Opaque)?;
+                    .map_err(DaemonError::UpgradeManager)?;
             }
         }
 
@@ -291,12 +286,12 @@ pub trait NydusDaemon {
         if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
             let mut state = mgr_guard
                 .get_opaque_raw(OpaqueKind::RafsMounts)
-                .map_err(DaemonError::Opaque)?
+                .map_err(DaemonError::UpgradeManager)?
                 .unwrap_or_else(RafsMountsState::new);
             state.add(info);
             mgr_guard
                 .set_opaque_raw(OpaqueKind::RafsMounts, &state)
-                .map_err(DaemonError::Opaque)?;
+                .map_err(DaemonError::UpgradeManager)?;
         }
 
         Ok(())
@@ -316,13 +311,13 @@ pub trait NydusDaemon {
         if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
             if let Some(mut state) = mgr_guard
                 .get_opaque_raw(OpaqueKind::RafsMounts)
-                .map_err(DaemonError::Opaque)?
+                .map_err(DaemonError::UpgradeManager)?
                 as Option<RafsMountsState>
             {
                 state.remove(info);
                 mgr_guard
                     .set_opaque_raw(OpaqueKind::RafsMounts, &state)
-                    .map_err(DaemonError::Opaque)?;
+                    .map_err(DaemonError::UpgradeManager)?;
             }
         }
 

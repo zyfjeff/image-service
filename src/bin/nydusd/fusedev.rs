@@ -31,7 +31,7 @@ use crate::exit_event_manager;
 use daemon::{DaemonError, DaemonResult, DaemonState, NydusDaemon, RafsMountInfo, RafsMountsState};
 use nydus_utils::{einval, eio, eother, FuseChannel, FuseSession};
 use upgrade_manager::backend::unix_domain_socket::UdsBackend;
-use upgrade_manager::{OpaqueKind, UpgradeManager};
+use upgrade_manager::{OpaqueKind, UpgradeManager, UpgradeMgrError};
 
 struct FuseServer {
     server: Arc<Server<Arc<Vfs>>>,
@@ -357,7 +357,7 @@ impl NydusDaemon for FusedevDaemon {
             return Err(DaemonError::NotReady);
         }
 
-        // Unwrap should be safe because it's in hot upgrade / failover workflow
+        // Unwrap should be safe because it's in live-upgrade/failover workflow
         let mut mgr_guard = self.get_upgrade_mgr().unwrap();
 
         // Save fuse fd
@@ -367,13 +367,13 @@ impl NydusDaemon for FusedevDaemon {
         // Save daemon opaque
         mgr_guard
             .set_opaque(OpaqueKind::FuseDevice, &self)
-            .map_err(|_| DaemonError::SendFd)?;
+            .map_err(DaemonError::UpgradeManager)?;
 
         mgr_guard
             .set_opaque_raw(OpaqueKind::VfsState, &self.get_vfs().save())
-            .map_err(|_| DaemonError::SendFd)?;
+            .map_err(DaemonError::UpgradeManager)?;
 
-        mgr_guard.save().map_err(|_| DaemonError::SendFd)?;
+        mgr_guard.save().map_err(DaemonError::UpgradeManager)?;
 
         info!(
             "Saved opaques {:?} to remote UDS server",
@@ -385,20 +385,20 @@ impl NydusDaemon for FusedevDaemon {
 
     fn restore(&self) -> DaemonResult<()> {
         if self.supervisor().is_none() {
-            return Err(DaemonError::UpgradeManager);
+            return Err(DaemonError::UpgradeManager(UpgradeMgrError::Disabled));
         }
 
         // Unwrap should be safe because it's in hot upgrade / failover workflow
         let mut mgr_guard = self.get_upgrade_mgr().unwrap();
-        mgr_guard.restore().map_err(DaemonError::RecvFd)?;
+        mgr_guard.restore().map_err(DaemonError::UpgradeManager)?;
 
         // Restore daemon opaque
         if (mgr_guard
             .get_opaque(OpaqueKind::FuseDevice, self)
-            .map_err(DaemonError::RecvFd)? as Option<&Self>)
+            .map_err(DaemonError::UpgradeManager)? as Option<&Self>)
             .is_none()
         {
-            return Err(DaemonError::UpgradeManager);
+            return Err(DaemonError::Common("Opaque does not exist".to_string()));
         }
 
         // Restore fuse fd
@@ -408,13 +408,14 @@ impl NydusDaemon for FusedevDaemon {
         // Restore vfs
         let vfs_state = match mgr_guard
             .get_opaque_raw(OpaqueKind::VfsState)
-            .map_err(|_| DaemonError::SendFd)? as Option<VfsState>
+            .map_err(DaemonError::UpgradeManager)? as Option<VfsState>
         {
             Some(state) => state,
-            None => return Err(DaemonError::UpgradeManager),
+            None => return Err(DaemonError::Common("Opaque does not exist".to_string())),
         };
 
-        <&Vfs>::restore(self.get_vfs(), &vfs_state).map_err(DaemonError::RecvFd)?;
+        <&Vfs>::restore(self.get_vfs(), &vfs_state)
+            .map_err(|_| DaemonError::Common("Fail in restoring".to_string()))?;
 
         // Restore RAFS mounts
         if let Some(mount_state) = mgr_guard

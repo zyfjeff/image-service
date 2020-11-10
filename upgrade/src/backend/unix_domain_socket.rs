@@ -3,15 +3,13 @@
 //
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
-use std::io::Result;
 use std::os::unix::io::RawFd;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
-use nydus_utils::{einval, last_error};
 use sendfd::{RecvWithFd, SendWithFd};
 
-use crate::backend::Backend;
+use crate::backend::{Backend, BackendError, Result};
 
 // UdsBackend is responsible for sending fd to a remote server, or receiving fd
 // from a remote server to save and restore fd via the unix domain socket (uds) server path.
@@ -29,16 +27,16 @@ impl UdsBackend {
 impl Backend for UdsBackend {
     fn save(&mut self, fds: &[RawFd], opaque: &[u8]) -> Result<usize> {
         if fds.is_empty() {
-            return Err(einval!("fd haven't be added to resource"));
+            return Err(BackendError::NotExisted);
         }
 
         let stream = UnixStream::connect(&self.uds_path).map_err(|err| {
             error!("connect to {:?} failed: {:?}", &self.uds_path, err);
-            err
+            BackendError::SendFd(err)
         })?;
         stream
             .send_with_fd(opaque, &fds)
-            .map_err(|e| last_error!(e))
+            .map_err(BackendError::SendFd)
     }
 
     fn restore(
@@ -48,15 +46,15 @@ impl Backend for UdsBackend {
     ) -> Result<(usize, usize)> {
         let stream = UnixStream::connect(&self.uds_path).map_err(|err| {
             error!("connect to {:?} failed: {:?}", &self.uds_path, err);
-            err
+            BackendError::SendFd(err)
         })?;
 
         let (opaque_size, fd_count) = stream
             .recv_with_fd(&mut opaque, &mut fds)
-            .map_err(|e| last_error!(e))?;
+            .map_err(BackendError::RecvFd)?;
 
         if fd_count < 1 {
-            return Err(einval!("fd not found in sock stream"));
+            return Err(BackendError::FdCount(fd_count));
         }
 
         Ok((opaque_size, fd_count))

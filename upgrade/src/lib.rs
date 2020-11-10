@@ -13,16 +13,25 @@ pub mod backend;
 
 use std::collections::HashMap;
 use std::fmt;
-use std::io::Result;
 use std::os::unix::io::RawFd;
 
 use fuse_rs::api::VersionMapGetter;
-use snapshot::{Persist, Snapshot};
+use snapshot::{self, Persist, Snapshot};
 use versionize::{VersionMap, Versionize, VersionizeError, VersionizeResult};
 use versionize_derive::Versionize;
 
-use backend::Backend;
-use nydus_utils::einval;
+use backend::{Backend, BackendError};
+
+#[derive(Debug)]
+pub enum UpgradeMgrError {
+    Disabled,
+    Serialize(snapshot::Error),
+    Deserialize(snapshot::Error),
+    Restore(String),
+    Backend(BackendError),
+}
+
+pub type Result<T> = std::result::Result<T, UpgradeMgrError>;
 
 // Use OpaqueKind to distinguish resource instances in
 // UpgradeManager, you can add more as you need.
@@ -45,7 +54,7 @@ impl fmt::Display for OpaqueKind {
 
 // Opaques stores all opaque data serialized by Snapshot,
 // use `OpaqueKind` to distinguish.
-#[derive(Clone, Debug, Versionize)]
+#[derive(Debug, Versionize)]
 struct Opaques {
     data: HashMap<OpaqueKind, Vec<u8>>,
 }
@@ -107,7 +116,7 @@ impl UpgradeManager {
 
         snapshot
             .save_with_crc64(&mut opaque, &state)
-            .map_err(|e| einval!(e))?;
+            .map_err(UpgradeMgrError::Serialize)?;
 
         self.opaques.data.insert(kind, opaque);
 
@@ -127,7 +136,7 @@ impl UpgradeManager {
 
         snapshot
             .save_with_crc64(&mut opaque, obj)
-            .map_err(|e| einval!(e))?;
+            .map_err(UpgradeMgrError::Serialize)?;
 
         self.opaques.data.insert(kind, opaque);
 
@@ -144,9 +153,10 @@ impl UpgradeManager {
         if let Some(opaque) = self.opaques.data.get(&kind) {
             let vm = V::version_map();
 
-            let state =
-                Snapshot::load_with_crc64(&mut opaque.as_slice(), vm).map_err(|e| einval!(e))?;
-            let opaque = O::restore(args, &state).map_err(|e| einval!(e))?;
+            let state = Snapshot::load_with_crc64(&mut opaque.as_slice(), vm)
+                .map_err(UpgradeMgrError::Deserialize)?;
+            let opaque = O::restore(args, &state)
+                .map_err(|e| UpgradeMgrError::Restore(format!("{:?}", e)))?;
 
             return Ok(Some(opaque));
         }
@@ -162,8 +172,8 @@ impl UpgradeManager {
         if let Some(opaque) = self.opaques.data.get(&kind) {
             let vm = V::version_map();
 
-            let opaque =
-                Snapshot::load_with_crc64(&mut opaque.as_slice(), vm).map_err(|e| einval!(e))?;
+            let opaque = Snapshot::load_with_crc64(&mut opaque.as_slice(), vm)
+                .map_err(UpgradeMgrError::Deserialize)?;
 
             return Ok(Some(opaque));
         }
@@ -182,9 +192,11 @@ impl UpgradeManager {
 
         snapshot
             .save_with_crc64(&mut opaque, &self.opaques)
-            .map_err(|e| einval!(e))?;
+            .map_err(UpgradeMgrError::Serialize)?;
 
-        self.backend.save(self.fds.as_slice(), opaque.as_slice())?;
+        self.backend
+            .save(self.fds.as_slice(), opaque.as_slice())
+            .map_err(UpgradeMgrError::Backend)?;
 
         Ok(())
     }
@@ -197,13 +209,16 @@ impl UpgradeManager {
         let mut opaque: Vec<u8> = vec![0u8; 256 << 10];
         let mut fds: Vec<RawFd> = vec![0; 8];
 
-        let (opaque_size, fd_count) = self.backend.restore(&mut fds, &mut opaque)?;
+        let (opaque_size, fd_count) = self
+            .backend
+            .restore(&mut fds, &mut opaque)
+            .map_err(UpgradeMgrError::Backend)?;
         opaque.truncate(opaque_size);
         fds.truncate(fd_count);
 
         self.fds = fds;
-        self.opaques =
-            Snapshot::load_with_crc64(&mut opaque.as_slice(), vm).map_err(|e| einval!(e))?;
+        self.opaques = Snapshot::load_with_crc64(&mut opaque.as_slice(), vm)
+            .map_err(UpgradeMgrError::Deserialize)?;
 
         Ok(())
     }
