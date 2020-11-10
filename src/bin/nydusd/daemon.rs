@@ -11,7 +11,6 @@ use std::fmt::{Display, Formatter};
 use std::io::{Error as IoError, ErrorKind as IoErrorKind, Result};
 use std::ops::Deref;
 use std::sync::atomic::Ordering;
-use std::sync::mpsc::RecvError;
 use std::sync::MutexGuard;
 use std::{convert, error, fmt, io};
 
@@ -113,8 +112,7 @@ pub enum DaemonError {
     /// Daemon can't fulfill external requests.
     Unsupported,
     /// State-machine related error codes if something bad happens when to communicate with state-machine
-    ChannelSend(String),
-    ChannelRecv(RecvError),
+    Channel(String),
     /// File system backend service related errors.
     StartService(String),
     ServiceStop,
