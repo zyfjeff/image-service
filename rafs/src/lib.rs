@@ -35,8 +35,14 @@ pub mod io_stats;
 pub enum RafsError {
     Unsupported,
     Uninitialized,
+    AlreadyMounted,
     ReadMetadata(Error),
+    LoadConfig(Error),
+    ParseConfig(serde_json::Error),
     SwapBackend(Error),
+    FillSuperblock(Error),
+    CreateDevice(Error),
+    Prefetch(Error),
 }
 
 pub type RafsResult<T> = std::result::Result<T, RafsError>;
@@ -76,9 +82,10 @@ impl dyn RafsIoRead {
         .unwrap();
     }
 
-    pub fn from_file(path: &str) -> Result<Box<dyn RafsIoRead>> {
+    pub fn from_file(path: &str) -> RafsResult<Box<dyn RafsIoRead>> {
         Ok(Box::new(File::open(path).map_err(|err| {
-            last_error!(format!("Failed to open file {:?}: {:?}", path, err))
+            last_error!(format!("Failed to open file {:?}: {:?}", path, err));
+            RafsError::ReadMetadata(err)
         })?))
     }
 }

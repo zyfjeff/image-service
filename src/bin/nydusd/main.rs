@@ -326,12 +326,13 @@ fn main() -> Result<()> {
             .value_of("config")
             .ok_or_else(|| Error::InvalidArguments("config file is not provided".to_string()))?;
 
-        let rafs_conf =
-            RafsConfig::from_file(&config).map_err(|e| Error::InvalidConfig(e.to_string()))?;
+        let rafs_conf = RafsConfig::from_file(&config).map_err(DaemonError::Rafs)?;
 
         let mut file = Box::new(File::open(bootstrap)?) as Box<dyn rafs::RafsIoRead>;
-        let mut rafs = Rafs::new(rafs_conf.clone(), &"/".to_string(), &mut file)?;
-        rafs.import(&mut file, Some(prefetch_files))?;
+        let mut rafs =
+            Rafs::new(rafs_conf.clone(), &"/".to_string(), &mut file).map_err(DaemonError::Rafs)?;
+        rafs.import(&mut file, Some(prefetch_files))
+            .map_err(DaemonError::Rafs)?;
         info!("rafs mounted: {}", rafs_conf);
         vfs.mount(Box::new(rafs), "/")?;
         info!("vfs mounted");

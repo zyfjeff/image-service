@@ -106,12 +106,12 @@ pub enum DaemonError {
     Common(String),
     UpgradeManager(UpgradeMgrError),
     Vfs(VfsErrorKind),
+    Rafs(RafsError),
     /// Daemon does not reach the stable working state yet,
     /// some capabilities may not be provided.
     NotReady,
     /// Daemon can't fulfill external requests.
     Unsupported,
-
     /// State-machine related error codes if something bad happens when to communicate with state-machine
     ChannelSend(String),
     ChannelRecv(RecvError),
@@ -121,10 +121,6 @@ pub enum DaemonError {
     /// Wait daemon failure
     WaitDaemon(io::Error),
     SessionShutdown(io::Error),
-    /// When rafs or other types of backend can't be correctly configured.
-    Config(io::Error),
-    /// Only for Rafs now, when its metadata can't be preloaded.
-    Metadata(io::Error),
     Downcast(String),
     FsTypeMismatch(String),
 }
@@ -237,13 +233,13 @@ pub trait NydusDaemon {
             ))));
         }
 
-        let rafs_config = RafsConfig::from_file(&info.config).map_err(DaemonError::Config)?;
-        let mut bootstrap = RafsIoRead::from_file(&info.source).map_err(DaemonError::Metadata)?;
+        let rafs_config = RafsConfig::from_file(&info.config).map_err(DaemonError::Rafs)?;
+        let mut bootstrap = RafsIoRead::from_file(&info.source).map_err(DaemonError::Rafs)?;
 
-        let mut rafs = Rafs::new(rafs_config, &info.mountpoint, &mut bootstrap)
-            .map_err(DaemonError::Metadata)?;
+        let mut rafs =
+            Rafs::new(rafs_config, &info.mountpoint, &mut bootstrap).map_err(DaemonError::Rafs)?;
         rafs.import(&mut bootstrap, None)
-            .map_err(DaemonError::Metadata)?;
+            .map_err(DaemonError::Rafs)?;
 
         if let Some(vfs_state) = vfs_state {
             self.get_vfs()
@@ -278,8 +274,8 @@ pub trait NydusDaemon {
             .get_rootfs(&info.mountpoint)
             .map_err(|e| DaemonError::Vfs(VfsErrorKind::Common(e)))?;
 
-        let rafs_config = RafsConfig::from_file(&&info.config).map_err(DaemonError::Config)?;
-        let mut bootstrap = RafsIoRead::from_file(&&info.source).map_err(DaemonError::Metadata)?;
+        let rafs_config = RafsConfig::from_file(&&info.config).map_err(DaemonError::Rafs)?;
+        let mut bootstrap = RafsIoRead::from_file(&&info.source).map_err(DaemonError::Rafs)?;
         let any_fs = rootfs.deref().as_any();
         let rafs = any_fs
             .downcast_ref::<Rafs>()
@@ -288,7 +284,7 @@ pub trait NydusDaemon {
         rafs.update(&mut bootstrap, rafs_config)
             .map_err(|e| match e {
                 RafsError::Unsupported => DaemonError::Unsupported,
-                e => DaemonError::Common(format!("{:?}", e)),
+                e => DaemonError::Rafs(e),
             })?;
 
         // Update mounts opaque from UpgradeManager
