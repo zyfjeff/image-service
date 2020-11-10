@@ -64,6 +64,16 @@ impl From<i32> for DaemonState {
         }
     }
 }
+
+//TODO: Hopefully, there is a day when we can move this to vfs crate and define its error code.
+#[derive(Debug)]
+pub enum VfsErrorKind {
+    Common(io::Error),
+    Mount(io::Error),
+    Umount(io::Error),
+    Restore(io::Error),
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum DaemonError {
@@ -95,6 +105,7 @@ pub enum DaemonError {
 
     Common(String),
     UpgradeManager(UpgradeMgrError),
+    Vfs(VfsErrorKind),
     /// Daemon does not reach the stable working state yet,
     /// some capabilities may not be provided.
     NotReady,
@@ -114,8 +125,6 @@ pub enum DaemonError {
     Config(io::Error),
     /// Only for Rafs now, when its metadata can't be preloaded.
     Metadata(io::Error),
-    Mount(io::Error),
-    Vfs(io::Error),
     Downcast(String),
     FsTypeMismatch(String),
 }
@@ -222,10 +231,10 @@ pub trait NydusDaemon {
         persist: bool,
     ) -> DaemonResult<()> {
         if self.get_vfs().get_rootfs(&info.mountpoint).is_ok() {
-            return Err(DaemonError::Vfs(IoError::new(
+            return Err(DaemonError::Vfs(VfsErrorKind::Common(IoError::new(
                 IoErrorKind::AlreadyExists,
                 "Already mounted",
-            )));
+            ))));
         }
 
         let rafs_config = RafsConfig::from_file(&info.config).map_err(DaemonError::Config)?;
@@ -239,11 +248,11 @@ pub trait NydusDaemon {
         if let Some(vfs_state) = vfs_state {
             self.get_vfs()
                 .restore_mount(Box::new(rafs), &info.mountpoint, vfs_state)
-                .map_err(DaemonError::Mount)?;
+                .map_err(|e| DaemonError::Vfs(VfsErrorKind::Restore(e)))?;
         } else {
             self.get_vfs()
                 .mount(Box::new(rafs), &info.mountpoint)
-                .map_err(DaemonError::Mount)?;
+                .map_err(|e| DaemonError::Vfs(VfsErrorKind::Mount(e)))?;
         }
 
         if persist {
@@ -267,7 +276,7 @@ pub trait NydusDaemon {
         let rootfs = self
             .get_vfs()
             .get_rootfs(&info.mountpoint)
-            .map_err(DaemonError::Vfs)?;
+            .map_err(|e| DaemonError::Vfs(VfsErrorKind::Common(e)))?;
 
         let rafs_config = RafsConfig::from_file(&&info.config).map_err(DaemonError::Config)?;
         let mut bootstrap = RafsIoRead::from_file(&&info.source).map_err(DaemonError::Metadata)?;
@@ -301,11 +310,11 @@ pub trait NydusDaemon {
         let _ = self
             .get_vfs()
             .get_rootfs(&info.mountpoint)
-            .map_err(DaemonError::Vfs)?;
+            .map_err(|e| DaemonError::Vfs(VfsErrorKind::Common(e)))?;
 
         self.get_vfs()
             .umount(&info.mountpoint)
-            .map_err(DaemonError::Vfs)?;
+            .map_err(|e| DaemonError::Vfs(VfsErrorKind::Umount(e)))?;
 
         // Remove mount opaque from UpgradeManager
         if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
