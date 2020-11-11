@@ -322,9 +322,9 @@ fn main() -> Result<()> {
     }
 
     if let Some(bootstrap) = bootstrap {
-        let config = cmd_arguments_parsed
-            .value_of("config")
-            .ok_or_else(|| Error::InvalidArguments("config file is not provided".to_string()))?;
+        let config = cmd_arguments_parsed.value_of("config").ok_or_else(|| {
+            DaemonError::InvalidArguments("config file is not provided".to_string())
+        })?;
 
         let rafs_conf = RafsConfig::from_file(&config).map_err(DaemonError::Rafs)?;
 
