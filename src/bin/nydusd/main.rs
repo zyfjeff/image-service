@@ -307,7 +307,7 @@ fn main() -> Result<()> {
             no_open: true,
             ..Default::default()
         };
-        let passthrough_fs = PassthroughFs::new(fs_cfg).map_err(DaemonError::FsInitFailure)?;
+        let passthrough_fs = PassthroughFs::new(fs_cfg).map_err(DaemonError::PassthroughFs)?;
         passthrough_fs.import()?;
         vfs.mount(Box::new(passthrough_fs), "/")?;
         info!("vfs mounted");

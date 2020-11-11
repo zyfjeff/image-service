@@ -109,8 +109,8 @@ pub enum DaemonError {
     EventFdClone(io::Error),
     /// Cannot spawn a new thread
     ThreadSpawn(io::Error),
-    /// Failure to initialize file system
-    FsInitFailure(io::Error),
+    /// Failure against Passthrough FS.
+    PassthroughFs(io::Error),
     /// Daemon related error
     DaemonFailure(String),
 
