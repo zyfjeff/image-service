@@ -365,15 +365,11 @@ impl NydusDaemon for FusedevDaemon {
         mgr_guard.set_fds(fds);
 
         // Save daemon opaque
-        mgr_guard
-            .set_opaque(OpaqueKind::FuseDevice, &self)
-            .map_err(DaemonError::UpgradeManager)?;
+        mgr_guard.set_opaque(OpaqueKind::FuseDevice, &self)?;
 
-        mgr_guard
-            .set_opaque_raw(OpaqueKind::VfsState, &self.get_vfs().save())
-            .map_err(DaemonError::UpgradeManager)?;
+        mgr_guard.set_opaque_raw(OpaqueKind::VfsState, &self.get_vfs().save())?;
 
-        mgr_guard.save().map_err(DaemonError::UpgradeManager)?;
+        mgr_guard.save()?;
 
         info!(
             "Saved opaques {:?} to remote UDS server",
@@ -390,14 +386,10 @@ impl NydusDaemon for FusedevDaemon {
 
         // Unwrap should be safe because it's in hot upgrade / failover workflow
         let mut mgr_guard = self.get_upgrade_mgr().unwrap();
-        mgr_guard.restore().map_err(DaemonError::UpgradeManager)?;
+        mgr_guard.restore()?;
 
         // Restore daemon opaque
-        if (mgr_guard
-            .get_opaque(OpaqueKind::FuseDevice, self)
-            .map_err(DaemonError::UpgradeManager)? as Option<&Self>)
-            .is_none()
-        {
+        if (mgr_guard.get_opaque(OpaqueKind::FuseDevice, self)? as Option<&Self>).is_none() {
             return Err(DaemonError::Common("Opaque does not exist".to_string()));
         }
 
@@ -406,10 +398,7 @@ impl NydusDaemon for FusedevDaemon {
         self.session.lock().unwrap().set_fuse_fd(fds[0]);
 
         // Restore vfs
-        let vfs_state = match mgr_guard
-            .get_opaque_raw(OpaqueKind::VfsState)
-            .map_err(DaemonError::UpgradeManager)? as Option<VfsState>
-        {
+        let vfs_state = match mgr_guard.get_opaque_raw(OpaqueKind::VfsState)? as Option<VfsState> {
             Some(state) => state,
             None => return Err(DaemonError::Common("Opaque does not exist".to_string())),
         };

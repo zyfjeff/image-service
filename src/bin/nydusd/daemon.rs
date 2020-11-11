@@ -73,6 +73,18 @@ pub enum VfsErrorKind {
     Restore(io::Error),
 }
 
+impl From<RafsError> for DaemonError {
+    fn from(error: RafsError) -> Self {
+        DaemonError::Rafs(error)
+    }
+}
+
+impl From<UpgradeMgrError> for DaemonError {
+    fn from(error: UpgradeMgrError) -> Self {
+        DaemonError::UpgradeManager(error)
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum DaemonError {
@@ -231,13 +243,11 @@ pub trait NydusDaemon {
             ))));
         }
 
-        let rafs_config = RafsConfig::from_file(&info.config).map_err(DaemonError::Rafs)?;
-        let mut bootstrap = RafsIoRead::from_file(&info.source).map_err(DaemonError::Rafs)?;
+        let rafs_config = RafsConfig::from_file(&info.config)?;
+        let mut bootstrap = RafsIoRead::from_file(&info.source)?;
 
-        let mut rafs =
-            Rafs::new(rafs_config, &info.mountpoint, &mut bootstrap).map_err(DaemonError::Rafs)?;
-        rafs.import(&mut bootstrap, None)
-            .map_err(DaemonError::Rafs)?;
+        let mut rafs = Rafs::new(rafs_config, &info.mountpoint, &mut bootstrap)?;
+        rafs.import(&mut bootstrap, None)?;
 
         if let Some(vfs_state) = vfs_state {
             self.get_vfs()
@@ -253,13 +263,10 @@ pub trait NydusDaemon {
             // Add mounts opaque to UpgradeManager
             if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
                 let mut state = mgr_guard
-                    .get_opaque_raw(OpaqueKind::RafsMounts)
-                    .map_err(DaemonError::UpgradeManager)?
+                    .get_opaque_raw(OpaqueKind::RafsMounts)?
                     .unwrap_or_else(RafsMountsState::new);
                 state.add(info);
-                mgr_guard
-                    .set_opaque_raw(OpaqueKind::RafsMounts, &state)
-                    .map_err(DaemonError::UpgradeManager)?;
+                mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
             }
         }
 
@@ -272,8 +279,8 @@ pub trait NydusDaemon {
             .get_rootfs(&info.mountpoint)
             .map_err(|e| DaemonError::Vfs(VfsErrorKind::Common(e)))?;
 
-        let rafs_config = RafsConfig::from_file(&&info.config).map_err(DaemonError::Rafs)?;
-        let mut bootstrap = RafsIoRead::from_file(&&info.source).map_err(DaemonError::Rafs)?;
+        let rafs_config = RafsConfig::from_file(&&info.config)?;
+        let mut bootstrap = RafsIoRead::from_file(&&info.source)?;
         let any_fs = rootfs.deref().as_any();
         let rafs = any_fs
             .downcast_ref::<Rafs>()
@@ -288,13 +295,10 @@ pub trait NydusDaemon {
         // Update mounts opaque from UpgradeManager
         if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
             let mut state = mgr_guard
-                .get_opaque_raw(OpaqueKind::RafsMounts)
-                .map_err(DaemonError::UpgradeManager)?
+                .get_opaque_raw(OpaqueKind::RafsMounts)?
                 .unwrap_or_else(RafsMountsState::new);
             state.add(info);
-            mgr_guard
-                .set_opaque_raw(OpaqueKind::RafsMounts, &state)
-                .map_err(DaemonError::UpgradeManager)?;
+            mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
         }
 
         Ok(())
@@ -312,15 +316,11 @@ pub trait NydusDaemon {
 
         // Remove mount opaque from UpgradeManager
         if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
-            if let Some(mut state) = mgr_guard
-                .get_opaque_raw(OpaqueKind::RafsMounts)
-                .map_err(DaemonError::UpgradeManager)?
-                as Option<RafsMountsState>
+            if let Some(mut state) =
+                mgr_guard.get_opaque_raw(OpaqueKind::RafsMounts)? as Option<RafsMountsState>
             {
                 state.remove(info);
-                mgr_guard
-                    .set_opaque_raw(OpaqueKind::RafsMounts, &state)
-                    .map_err(DaemonError::UpgradeManager)?;
+                mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
             }
         }
 
