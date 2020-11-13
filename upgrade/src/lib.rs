@@ -25,6 +25,7 @@ use backend::{Backend, BackendError};
 #[derive(Debug)]
 pub enum UpgradeMgrError {
     Disabled,
+    NotExisted(String),
     Serialize(snapshot::Error),
     Deserialize(snapshot::Error),
     Restore(String),
@@ -144,7 +145,7 @@ impl UpgradeManager {
     }
 
     // Get opaque (implemented Persist trait) from manager cache
-    pub fn get_opaque<'a, O, V, A, D>(&mut self, kind: OpaqueKind, args: A) -> Result<Option<O>>
+    pub fn get_opaque<'a, O, V, A, D>(&mut self, kind: OpaqueKind, args: A) -> Result<O>
     where
         O: Persist<'a, State = V, ConstructorArgs = A, Error = D>,
         V: Versionize + VersionMapGetter,
@@ -158,10 +159,10 @@ impl UpgradeManager {
             let opaque = O::restore(args, &state)
                 .map_err(|e| UpgradeMgrError::Restore(format!("{:?}", e)))?;
 
-            return Ok(Some(opaque));
+            Ok(opaque)
+        } else {
+            Err(UpgradeMgrError::NotExisted(kind.to_string()))
         }
-
-        Ok(None)
     }
 
     // Get opaque (implemented Versionize) from manager cache
@@ -386,11 +387,9 @@ pub mod tests {
 
         let restored_opaque1: Test = upgrade_mgr
             .get_opaque(OpaqueKind::FuseDevice, TestArgs { baz: 100 })
-            .unwrap()
             .unwrap();
         let restored_opaque2: Test = upgrade_mgr
             .get_opaque(OpaqueKind::RafsMounts, TestArgs { baz: 100 })
-            .unwrap()
             .unwrap();
         let restored_fds = upgrade_mgr.get_fds();
 

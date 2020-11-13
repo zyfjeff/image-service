@@ -258,14 +258,11 @@ impl NydusDaemon for FusedevDaemon {
             return Err(DaemonError::UpgradeManager(UpgradeMgrError::Disabled));
         }
 
-        // Unwrap should be safe because it's in hot upgrade / failover workflow
+        // Unwrap should be safe because it's in live-upgrade/failover workflow
         let mut mgr_guard = self.get_upgrade_mgr().unwrap();
         mgr_guard.restore()?;
 
-        // Restore daemon opaque
-        if (mgr_guard.get_opaque(OpaqueKind::FuseDevice, self)? as Option<&Self>).is_none() {
-            return Err(DaemonError::Common("Opaque does not exist".to_string()));
-        }
+        let _o: &FusedevDaemon = mgr_guard.get_opaque(OpaqueKind::FuseDevice, self)?;
 
         // Restore fuse fd
         let fds = mgr_guard.get_fds();
