@@ -278,9 +278,8 @@ impl NydusDaemon for FusedevDaemon {
             .map_err(|_| DaemonError::Common("Fail in restoring".to_string()))?;
 
         // Restore RAFS mounts
-        if let Some(mount_state) = mgr_guard
-            .get_opaque_raw(OpaqueKind::RafsMounts)
-            .unwrap_or_else(|_| Some(RafsMountsState::new()))
+        if let Some(mount_state) =
+            mgr_guard.get_opaque_raw(OpaqueKind::RafsMounts)? as Option<RafsMountsState>
         {
             for item in mount_state.items {
                 self.mount(
@@ -293,6 +292,9 @@ impl NydusDaemon for FusedevDaemon {
                     false,
                 )?;
             }
+        } else {
+            // TODO: To be discussed: Need return error to API?
+            warn!("No mount states was found!");
         }
 
         info!(
