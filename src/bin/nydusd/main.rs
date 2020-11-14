@@ -355,7 +355,9 @@ fn main() -> Result<()> {
     #[cfg(feature = "virtiofs")]
     let daemon = {
         // sock means vhost-user-backend only
-        let vu_sock = cmd_arguments_parsed.value_of("sock").unwrap_or_default();
+        let vu_sock = cmd_arguments_parsed.value_of("sock").ok_or_else(|| {
+            DaemonError::InvalidArguments("vhost socket must be provided!".to_string())
+        })?;
         create_nydus_daemon(daemon_id, vu_sock, vfs)?
     };
     #[cfg(feature = "fusedev")]
