@@ -193,10 +193,6 @@ impl NydusDaemon for FusedevDaemon {
         Ok(())
     }
 
-    fn stop(&self) -> DaemonResult<()> {
-        self.on_event(DaemonStateMachineInput::Stop)
-    }
-
     fn disconnect(&self) -> DaemonResult<()> {
         self.session
             .lock()
@@ -228,22 +224,6 @@ impl NydusDaemon for FusedevDaemon {
     #[inline]
     fn get_state(&self) -> DaemonState {
         self.state.load(Ordering::Relaxed).into()
-    }
-
-    fn trigger_exit(&self) -> DaemonResult<()> {
-        self.on_event(DaemonStateMachineInput::Exit)?;
-        // Ensure all fuse threads have be terminated thus this nydusd won't
-        // race fuse messages when upgrading.
-        self.wait().map_err(|_| DaemonError::ServiceStop)?;
-        Ok(())
-    }
-
-    fn trigger_takeover(&self) -> DaemonResult<()> {
-        // State machine won't reach `Negotiated` state until the first fuse message arrives.
-        // So we don't try to send InitMsg event from here.
-        self.on_event(DaemonStateMachineInput::Takeover)?;
-        self.on_event(DaemonStateMachineInput::Successful)?;
-        Ok(())
     }
 
     fn save(&self) -> DaemonResult<()> {

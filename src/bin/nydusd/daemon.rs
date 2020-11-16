@@ -216,16 +216,26 @@ pub struct RafsUmountInfo {
 pub trait NydusDaemon: DaemonStateMachineSubscriber {
     fn start(&self) -> DaemonResult<()>;
     fn wait(&self) -> DaemonResult<()>;
-    fn stop(&self) -> DaemonResult<()>;
+    fn stop(&self) -> DaemonResult<()> {
+        self.on_event(DaemonStateMachineInput::Stop)
+    }
     fn disconnect(&self) -> DaemonResult<()>;
     fn as_any(&self) -> &dyn Any;
     fn interrupt(&self) {}
     fn get_state(&self) -> DaemonState;
     fn set_state(&self, s: DaemonState);
     fn trigger_exit(&self) -> DaemonResult<()> {
+        self.on_event(DaemonStateMachineInput::Exit)?;
+        // Ensure all fuse threads have be terminated thus this nydusd won't
+        // race fuse messages when upgrading.
+        self.wait().map_err(|_| DaemonError::ServiceStop)?;
         Ok(())
     }
     fn trigger_takeover(&self) -> DaemonResult<()> {
+        // State machine won't reach `Negotiated` state until the first fuse message arrives.
+        // So we don't try to send InitMsg event from here.
+        self.on_event(DaemonStateMachineInput::Takeover)?;
+        self.on_event(DaemonStateMachineInput::Successful)?;
         Ok(())
     }
     fn id(&self) -> Option<String>;

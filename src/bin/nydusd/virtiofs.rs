@@ -6,7 +6,10 @@
 
 use std::any::Any;
 use std::io::Result;
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::sync::{
+    mpsc::{channel, Receiver},
+    Arc, Mutex, MutexGuard, RwLock,
+};
 use std::thread;
 
 use libc::EFD_NONBLOCK;
@@ -23,7 +26,10 @@ use nydus_utils::eother;
 use upgrade_manager::UpgradeManager;
 
 use crate::daemon;
-use daemon::{DaemonError, DaemonResult, DaemonState, NydusDaemon};
+use daemon::{
+    DaemonError, DaemonResult, DaemonState, DaemonStateMachineContext, DaemonStateMachineInput,
+    DaemonStateMachineSubscriber, NydusDaemon, Trigger,
+};
 
 const VIRTIO_F_VERSION_1: u32 = 32;
 const QUEUE_SIZE: usize = 1024;
@@ -179,11 +185,13 @@ impl VhostUserBackend for VhostUserFsBackendHandler {
 
 struct VirtiofsDaemon<S: VhostUserBackend> {
     vfs: Arc<Vfs>,
-    daemon: Mutex<VhostUserDaemon<S>>,
+    daemon: Arc<Mutex<VhostUserDaemon<S>>>,
     sock: String,
     id: Option<String>,
     supervisor: Option<String>,
     upgrade_mgr: Option<Mutex<UpgradeManager>>,
+    trigger: Arc<Mutex<Trigger>>,
+    result_receiver: Mutex<Receiver<DaemonResult<()>>>,
 }
 
 impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
@@ -191,11 +199,19 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
         let listener = Listener::new(&self.sock, true)
             .map_err(|e| DaemonError::StartService(format!("{:?}", e)))?;
 
-        self.daemon
-            .lock()
-            .unwrap()
-            .start(listener)
-            .map_err(|e| DaemonError::StartService(format!("{:?}", e)))
+        let vu_daemon = self.daemon.clone();
+        let _ = thread::Builder::new()
+            .name("vhost_user_listener".to_string())
+            .spawn(move || {
+                vu_daemon
+                    .lock()
+                    .unwrap()
+                    .start(listener)
+                    .unwrap_or_else(|e| error!("{:?}", e));
+            })
+            .map_err(DaemonError::ThreadSpawn)?;
+
+        Ok(())
     }
 
     fn wait(&self) -> DaemonResult<()> {
@@ -206,11 +222,7 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
             .map_err(|e| DaemonError::WaitDaemon(eother!(e)))
     }
 
-    fn stop(&self) -> DaemonResult<()> {
-        /* TODO: find a way to kill backend
-        let kill_evt = &backend.read().unwrap().kill_evt;
-        if let Err(e) = kill_evt.write(1) {}
-        */
+    fn disconnect(&self) -> DaemonResult<()> {
         Ok(())
     }
 
@@ -230,9 +242,7 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
         unimplemented!();
     }
 
-    fn set_state(&self, _state: DaemonState) {
-        unimplemented!();
-    }
+    fn set_state(&self, _state: DaemonState) {}
 
     fn save(&self) -> DaemonResult<()> {
         unimplemented!();
@@ -251,6 +261,22 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
     }
 }
 
+impl<S: VhostUserBackend> DaemonStateMachineSubscriber for VirtiofsDaemon<S> {
+    fn on_event(&self, event: DaemonStateMachineInput) -> DaemonResult<()> {
+        self.trigger
+            .lock()
+            .unwrap()
+            .send(event)
+            .map_err(|e| DaemonError::Channel(format!("send {:?}", e)))?;
+
+        self.result_receiver
+            .lock()
+            .expect("Not expect poisoned lock!")
+            .recv()
+            .map_err(|e| DaemonError::Channel(format!("recv {:?}", e)))?
+    }
+}
+
 pub fn create_nydus_daemon(
     id: Option<String>,
     supervisor: Option<String>,
@@ -263,22 +289,29 @@ pub fn create_nydus_daemon(
     )
     .map_err(|e| DaemonError::DaemonFailure(format!("{:?}", e)))?;
 
+    let (trigger, events_rx) = channel::<DaemonStateMachineInput>();
+    let (result_sender, result_receiver) = channel::<DaemonResult<()>>();
+
     let daemon = Arc::new(VirtiofsDaemon {
         vfs,
-        daemon: Mutex::new(vu_daemon),
+        daemon: Arc::new(Mutex::new(vu_daemon)),
         sock: sock.to_string(),
         id,
         supervisor,
         upgrade_mgr: None,
+        trigger: Arc::new(Mutex::new(trigger)),
+        result_receiver: Mutex::new(result_receiver),
     });
 
-    let d = daemon.clone();
-    thread::Builder::new()
-        .name("virtiofs_listener".to_string())
-        .spawn(move || {
-            d.start().expect("Failed to start virtiofs daemon");
-        })
-        .map_err(DaemonError::ThreadSpawn)?;
+    let machine = DaemonStateMachineContext::new(daemon.clone(), events_rx, result_sender);
+    machine.kick_state_machine()?;
+
+    // TODO: In fact, for virtiofs, below event triggers virtio-queue setup and some other
+    // preparation/connection work. So this event name `Mount` might not be suggestive.
+    // I'd like to rename it someday.
+    daemon
+        .on_event(DaemonStateMachineInput::Mount)
+        .map_err(|e| eother!(e))?;
 
     Ok(daemon)
 }
