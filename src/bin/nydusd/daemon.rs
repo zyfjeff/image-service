@@ -10,8 +10,12 @@ use std::convert::From;
 use std::fmt::{Display, Formatter};
 use std::io::{Error as IoError, ErrorKind as IoErrorKind, Result};
 use std::ops::Deref;
-use std::sync::atomic::Ordering;
-use std::sync::MutexGuard;
+use std::sync::{
+    atomic::Ordering,
+    mpsc::{Receiver, Sender},
+    Arc, MutexGuard,
+};
+use std::thread;
 use std::{convert, error, fmt, io};
 
 use event_manager::{EventOps, EventSubscriber, Events};
@@ -19,6 +23,7 @@ use fuse_rs::api::{VersionMapGetter, Vfs, VfsState};
 #[cfg(feature = "virtiofs")]
 use fuse_rs::transport::Error as FuseTransportError;
 use fuse_rs::Error as VhostUserFsError;
+use rust_fsm::*;
 use serde::{Deserialize, Serialize};
 use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
@@ -208,10 +213,11 @@ pub struct RafsUmountInfo {
     pub mountpoint: String,
 }
 
-pub trait NydusDaemon {
+pub trait NydusDaemon: DaemonStateMachineSubscriber {
     fn start(&self) -> DaemonResult<()>;
     fn wait(&self) -> DaemonResult<()>;
     fn stop(&self) -> DaemonResult<()>;
+    fn disconnect(&self) -> DaemonResult<()>;
     fn as_any(&self) -> &dyn Any;
     fn interrupt(&self) {}
     fn get_state(&self) -> DaemonState;
@@ -377,6 +383,125 @@ impl EventSubscriber for NydusDaemonSubscriber {
     fn init(&self, ops: &mut EventOps) {
         ops.add(Events::new(&self.event_fd, EventSet::IN))
             .expect("Cannot register event")
+    }
+}
+
+pub type Trigger = Sender<DaemonStateMachineInput>;
+
+/// Nydus daemon workflow is controlled by this state-machine.
+/// `Init` means nydusd is just started and potentially configured well but not
+/// yet negotiate with kernel the capabilities of both sides. It even does not try
+/// to set up fuse session by mounting `/fuse/dev`(in case of `fusedev` backend).
+/// `Running` means nydusd has successfully prepared all the stuff needed to work as a
+/// user-space fuse filesystem, however, the essential capabilities negotiation might not be
+/// done yet. It relies on `fuse-rs` to tell if capability negotiation is done.
+/// Nydusd can as well transit to `Upgrade` state from `Running` when getting started, which
+/// only happens during live upgrade progress. Then we don't have to do kernel mount again
+/// to set up a session but try to reuse a fuse fd from somewhere else. In this state, we
+/// try to push `Successful` event to state machine to trigger state transition.
+/// `Interrupt` state means nydusd has shutdown fuse server, which means no more message will
+/// be read from kernel and handled and no pending and in-flight fuse message exists. But the
+/// nydusd daemon should be alive and wait for coming events.
+/// `Die` state means the whole nydusd process is going to die.
+pub struct DaemonStateMachineContext {
+    sm: StateMachine<DaemonStateMachine>,
+    daemon: Arc<dyn NydusDaemon + Send + Sync>,
+    event_collector: Receiver<DaemonStateMachineInput>,
+    result_sender: Sender<DaemonResult<()>>,
+}
+
+state_machine! {
+    derive(Debug, Clone)
+    pub DaemonStateMachine(Init)
+
+    Init => {
+        Mount => Running [StartService],
+        Takeover => Upgrading [Restore],
+    },
+    Running => {
+        Exit => Interrupted [TerminateFuseService],
+        Stop => Die[Umount],
+    },
+    Upgrading(Successful) => Running [StartService],
+    // Quit from daemon but not disconnect from fuse front-end.
+    Interrupted(Stop) => Die,
+}
+
+pub trait DaemonStateMachineSubscriber {
+    fn on_event(&self, event: DaemonStateMachineInput) -> DaemonResult<()>;
+}
+
+impl DaemonStateMachineContext {
+    pub fn new(
+        d: Arc<dyn NydusDaemon + Send + Sync>,
+        rx: Receiver<DaemonStateMachineInput>,
+        result_sender: Sender<DaemonResult<()>>,
+    ) -> Self {
+        DaemonStateMachineContext {
+            sm: StateMachine::new(),
+            daemon: d,
+            event_collector: rx,
+            result_sender,
+        }
+    }
+
+    pub fn kick_state_machine(mut self) -> Result<()> {
+        thread::Builder::new()
+            .name("state_machine".to_string())
+            .spawn(move || loop {
+                use DaemonStateMachineOutput::*;
+                let event = self
+                    .event_collector
+                    .recv()
+                    .expect("Event channel can't be broken!");
+                let last = self.sm.state().clone();
+                let sm_rollback = StateMachine::<DaemonStateMachine>::from_state(last.clone());
+                let input = &event;
+                let action = self.sm.consume(&event).unwrap_or_else(|_| {
+                    error!("Event={:?}, CurrentState={:?}", input, &last);
+                    panic!("Daemon state machine goes insane, this is critical error!")
+                });
+
+                let d = self.daemon.as_ref();
+                let cur = self.sm.state();
+                info!(
+                    "State machine: from {:?} to {:?}, input [{:?}], output [{:?}]",
+                    last, cur, input, &action
+                );
+                let r = match action {
+                    Some(a) => match a {
+                        StartService => d.start().map(|r| {
+                            d.set_state(DaemonState::RUNNING);
+                            r
+                        }),
+                        TerminateFuseService => {
+                            d.interrupt();
+                            d.set_state(DaemonState::INTERRUPTED);
+                            Ok(())
+                        }
+                        Umount => d.disconnect().map(|r| {
+                            d.set_state(DaemonState::STOPPED);
+                            r
+                        }),
+                        Restore => {
+                            d.set_state(DaemonState::UPGRADING);
+                            d.restore()
+                        }
+                    },
+                    _ => Ok(()), // With no output action involved, caller should also have reply back
+                }
+                .map_err(|e| {
+                    error!(
+                        "Handle action failed, {:?}. Rollback machine to State {:?}",
+                        e,
+                        sm_rollback.state()
+                    );
+                    self.sm = sm_rollback;
+                    e
+                });
+                self.result_sender.send(r).unwrap();
+            })
+            .map(|_| ())
     }
 }
 

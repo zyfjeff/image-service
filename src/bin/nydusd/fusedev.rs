@@ -20,7 +20,7 @@ use std::sync::{
 use std::thread::{self, JoinHandle};
 
 use fuse_rs::api::{server::Server, VersionMapGetter, Vfs, VfsState};
-use rust_fsm::*;
+
 use snapshot::Persist;
 use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
@@ -28,7 +28,10 @@ use vmm_sys_util::eventfd::EventFd;
 
 use crate::daemon;
 use crate::exit_event_manager;
-use daemon::{DaemonError, DaemonResult, DaemonState, NydusDaemon, RafsMountInfo, RafsMountsState};
+use daemon::{
+    DaemonError, DaemonResult, DaemonState, DaemonStateMachineContext, DaemonStateMachineInput,
+    DaemonStateMachineSubscriber, NydusDaemon, RafsMountInfo, RafsMountsState, Trigger,
+};
 use nydus_utils::{einval, eio, eother, FuseChannel, FuseSession};
 use upgrade_manager::backend::unix_domain_socket::UdsBackend;
 use upgrade_manager::{OpaqueKind, UpgradeManager, UpgradeMgrError};
@@ -39,8 +42,6 @@ struct FuseServer {
     // read buffer for fuse requests
     buf: Vec<u8>,
 }
-
-type Trigger = Sender<FusedevStateMachineInput>;
 
 impl FuseServer {
     fn new(server: Arc<Server<Arc<Vfs>>>, se: &FuseSession, evtfd: EventFd) -> Result<FuseServer> {
@@ -103,123 +104,6 @@ pub struct FusedevDaemon {
     upgrade_mgr: Option<Mutex<UpgradeManager>>,
 }
 
-/// Fusedev daemon workflow is controlled by state machine.
-/// `Init` means nydusd is just started and potentially configured well but not
-/// yet negotiate with kernel the capabilities of both sides. It even does not try
-/// to set up fuse session by mounting `/fuse/dev`.
-/// `Running` means nydusd has successfully prepared all the stuff needed to work as a
-/// user-space fuse filesystem, however, the essential capabilities negotiation might not be
-/// done yet. It relies on `fuse-rs` to tell if capability negotiation is done.
-/// Nydusd can as well transit to `Upgrade` state from `Running` when getting started, which
-/// only happens during live upgrade progress. Then we don't have to do kernel mount again
-/// to set up a session but try to reuse a fuse fd from somewhere else. In this state, we
-/// try to push `Successful` event to state machine to trigger state transition.
-/// `Interrupt` state means nydusd has shutdown fuse server, which means no more message will
-/// be read from kernel and handled and no pending and in-flight fuse message exists. But the
-/// nydusd daemon should be alive and wait for coming events.
-/// `Die` state means the whole nydusd process is going to die.
-struct FusedevDaemonSM {
-    sm: StateMachine<FusedevStateMachine>,
-    daemon: Arc<FusedevDaemon>,
-    event_collector: Receiver<FusedevStateMachineInput>,
-    result_sender: Sender<DaemonResult<()>>,
-}
-
-state_machine! {
-    derive(Debug, Clone)
-    FusedevStateMachine(Init)
-
-    Init => {
-        Mount => Running [StartService],
-        Takeover => Upgrading [Restore],
-    },
-    Running => {
-        Exit => Interrupted [TerminateFuseService],
-        Stop => Die [Umount],
-    },
-    Upgrading(Successful) => Running [StartService],
-    Interrupted(Stop) => Die,
-}
-
-impl FusedevDaemonSM {
-    fn new(
-        d: Arc<FusedevDaemon>,
-        rx: Receiver<FusedevStateMachineInput>,
-        result_sender: Sender<DaemonResult<()>>,
-    ) -> Self {
-        Self {
-            sm: StateMachine::new(),
-            daemon: d,
-            event_collector: rx,
-            result_sender,
-        }
-    }
-
-    fn kick_state_machine(mut self) -> Result<()> {
-        thread::Builder::new()
-            .name("state_machine".to_string())
-            .spawn(move || loop {
-                use FusedevStateMachineOutput::*;
-                let event = self
-                    .event_collector
-                    .recv()
-                    .expect("Event channel can't be broken!");
-                let last = self.sm.state().clone();
-                let sm_rollback = StateMachine::<FusedevStateMachine>::from_state(last.clone());
-                let input = &event;
-                let action = self.sm.consume(&event).unwrap_or_else(|_| {
-                    error!("Event={:?}, CurrentState={:?}", input, &last);
-                    panic!("Daemon state machine goes insane, this is critical error!")
-                });
-
-                let d = self.daemon.as_ref();
-                let cur = self.sm.state();
-                info!(
-                    "State machine: from {:?} to {:?}, input [{:?}], output [{:?}]",
-                    last, cur, input, &action
-                );
-                let r = match action {
-                    Some(a) => match a {
-                        StartService => d.start().map(|r| {
-                            d.set_state(DaemonState::RUNNING);
-                            r
-                        }),
-                        Umount => d
-                            .session
-                            .lock()
-                            .expect("Not expect poisoned lock.")
-                            .umount()
-                            .map(|_| {
-                                d.set_state(DaemonState::STOPPED);
-                            })
-                            .map_err(DaemonError::SessionShutdown),
-                        TerminateFuseService => {
-                            d.interrupt();
-                            d.set_state(DaemonState::INTERRUPTED);
-                            Ok(())
-                        }
-                        Restore => {
-                            d.set_state(DaemonState::UPGRADING);
-                            d.restore()
-                        }
-                    },
-                    _ => Ok(()), // With no output action involved, caller should also have reply back
-                }
-                .map_err(|e| {
-                    error!(
-                        "Handle action failed, {:?}. Rollback machine to State {:?}",
-                        e,
-                        sm_rollback.state()
-                    );
-                    self.sm = sm_rollback;
-                    e
-                });
-                self.result_sender.send(r).unwrap();
-            })
-            .map(|_| ())
-    }
-}
-
 impl FusedevDaemon {
     fn kick_one_server(&self) -> Result<()> {
         let mut s = FuseServer::new(
@@ -249,8 +133,10 @@ impl FusedevDaemon {
         self.running_threads.fetch_add(1, Ordering::AcqRel);
         Ok(())
     }
+}
 
-    fn on_event(&self, event: FusedevStateMachineInput) -> DaemonResult<()> {
+impl DaemonStateMachineSubscriber for FusedevDaemon {
+    fn on_event(&self, event: DaemonStateMachineInput) -> DaemonResult<()> {
         self.trigger
             .lock()
             .unwrap()
@@ -308,7 +194,15 @@ impl NydusDaemon for FusedevDaemon {
     }
 
     fn stop(&self) -> DaemonResult<()> {
-        self.on_event(FusedevStateMachineInput::Stop)
+        self.on_event(DaemonStateMachineInput::Stop)
+    }
+
+    fn disconnect(&self) -> DaemonResult<()> {
+        self.session
+            .lock()
+            .expect("Not expect poisoned lock.")
+            .umount()
+            .map_err(DaemonError::SessionShutdown)
     }
 
     #[inline]
@@ -337,7 +231,7 @@ impl NydusDaemon for FusedevDaemon {
     }
 
     fn trigger_exit(&self) -> DaemonResult<()> {
-        self.on_event(FusedevStateMachineInput::Exit)?;
+        self.on_event(DaemonStateMachineInput::Exit)?;
         // Ensure all fuse threads have be terminated thus this nydusd won't
         // race fuse messages when upgrading.
         self.wait().map_err(|_| DaemonError::ServiceStop)?;
@@ -347,8 +241,8 @@ impl NydusDaemon for FusedevDaemon {
     fn trigger_takeover(&self) -> DaemonResult<()> {
         // State machine won't reach `Negotiated` state until the first fuse message arrives.
         // So we don't try to send InitMsg event from here.
-        self.on_event(FusedevStateMachineInput::Takeover)?;
-        self.on_event(FusedevStateMachineInput::Successful)?;
+        self.on_event(DaemonStateMachineInput::Takeover)?;
+        self.on_event(DaemonStateMachineInput::Successful)?;
         Ok(())
     }
 
@@ -578,7 +472,7 @@ pub fn create_nydus_daemon(
     upgrade: bool,
     fp: FailoverPolicy,
 ) -> Result<Arc<dyn NydusDaemon + Send>> {
-    let (trigger, events_rx) = channel::<FusedevStateMachineInput>();
+    let (trigger, events_rx) = channel::<DaemonStateMachineInput>();
     let session = FuseSession::new(Path::new(mountpoint), "rafs", "")?;
 
     // Create upgrade manager
@@ -612,7 +506,7 @@ pub fn create_nydus_daemon(
         upgrade_mgr,
     });
 
-    let machine = FusedevDaemonSM::new(daemon.clone(), events_rx, result_sender);
+    let machine = DaemonStateMachineContext::new(daemon.clone(), events_rx, result_sender);
     machine.kick_state_machine()?;
 
     // Without api socket, nydusd can't do neither live-upgrade nor failover, so the helper
@@ -624,7 +518,7 @@ pub fn create_nydus_daemon(
     {
         daemon.session.lock().unwrap().mount()?;
         daemon
-            .on_event(FusedevStateMachineInput::Mount)
+            .on_event(DaemonStateMachineInput::Mount)
             .map_err(|e| eother!(e))?;
         daemon
             .conn
