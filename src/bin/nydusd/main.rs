@@ -189,6 +189,7 @@ fn main() -> Result<()> {
                 .help("A socket by which communicate to external supervisor")
                 .takes_value(true)
                 .required(false)
+                .requires("id")
                 .global(true),
         )
         .arg(
@@ -197,6 +198,7 @@ fn main() -> Result<()> {
                 .help("Assigned ID to identify a daemon")
                 .takes_value(true)
                 .required(false)
+                .requires("supervisor")
                 .global(true),
         )
         .arg(
@@ -350,7 +352,11 @@ fn main() -> Result<()> {
         .unwrap()
         .get_event_fd()?;
 
+    // Basically, below two arguments are essential for live-upgrade/failover/ and external management.
     let daemon_id = cmd_arguments_parsed.value_of("id").map(|id| id.to_string());
+    let supervisor = cmd_arguments_parsed
+        .value_of("supervisor")
+        .map(|s| s.to_string());
 
     #[cfg(feature = "virtiofs")]
     let daemon = {
@@ -358,18 +364,10 @@ fn main() -> Result<()> {
         let vu_sock = cmd_arguments_parsed.value_of("sock").ok_or_else(|| {
             DaemonError::InvalidArguments("vhost socket must be provided!".to_string())
         })?;
-        create_nydus_daemon(daemon_id, vu_sock, vfs)?
+        create_nydus_daemon(daemon_id, supervisor, vu_sock, vfs)?
     };
     #[cfg(feature = "fusedev")]
     let daemon = {
-        let supervisor = cmd_arguments_parsed
-            .value_of("supervisor")
-            .map(|s| s.to_string());
-
-        if supervisor.is_some() && daemon_id.is_none() {
-            return Err(einval!("supervisor and id must be set at the same time"));
-        }
-
         // threads means number of fuse service threads
         let threads: u32 = cmd_arguments_parsed
             .value_of("threads")

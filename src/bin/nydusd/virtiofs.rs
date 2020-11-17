@@ -253,6 +253,7 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
 
 pub fn create_nydus_daemon(
     id: Option<String>,
+    supervisor: Option<String>,
     sock: &str,
     vfs: Arc<Vfs>,
 ) -> Result<Arc<dyn NydusDaemon + Send>> {
@@ -267,7 +268,7 @@ pub fn create_nydus_daemon(
         daemon: Mutex::new(vu_daemon),
         sock: sock.to_string(),
         id,
-        supervisor: None,
+        supervisor,
         upgrade_mgr: None,
     });
 
