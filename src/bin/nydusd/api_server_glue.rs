@@ -194,7 +194,7 @@ impl ApiServer {
 
     fn do_update_mount(&self, mountpoint: String, info: RafsMountInfo) -> ApiResponse {
         self.daemon
-            .update_mount(DaemonRafsMountInfo {
+            .remount(DaemonRafsMountInfo {
                 mountpoint,
                 config: info.config,
                 source: info.source,

@@ -273,7 +273,7 @@ pub trait NydusDaemon {
         Ok(())
     }
 
-    fn update_mount(&self, info: RafsMountInfo) -> DaemonResult<()> {
+    fn remount(&self, info: RafsMountInfo) -> DaemonResult<()> {
         let rootfs = self
             .get_vfs()
             .get_rootfs(&info.mountpoint)
