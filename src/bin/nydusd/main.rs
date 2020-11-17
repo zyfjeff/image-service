@@ -384,9 +384,10 @@ fn main() -> Result<()> {
             })?;
 
         // mountpoint means fuse device only
-        let mountpoint = cmd_arguments_parsed
-            .value_of("mountpoint")
-            .unwrap_or_default();
+        let mountpoint = cmd_arguments_parsed.value_of("mountpoint").ok_or_else(|| {
+            DaemonError::InvalidArguments("Mountpoint must be provided!".to_string())
+        })?;
+
         create_nydus_daemon(
             mountpoint,
             vfs,
