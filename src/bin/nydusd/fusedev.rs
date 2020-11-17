@@ -511,7 +511,7 @@ fn is_sock_residual(sock: impl AsRef<Path>) -> bool {
 /// When a nydusd starts, it checks the environment to see if a previous nydusd dies beyond expect.
 ///     1. See if the mount point is residual by retrieving `/proc/self/mounts`.
 ///     2. See if the API socket exists and the connection can established or not.
-fn is_crashed(path: impl AsRef<Path>, sock: impl AsRef<Path>) -> Result<bool> {
+fn is_crashed(path: impl AsRef<Path>, sock: &impl AsRef<Path>) -> Result<bool> {
     if is_mounted(path)? && is_sock_residual(sock) {
         warn!("A previous daemon crashed! Try to failover later.");
         return Ok(true);
@@ -574,7 +574,7 @@ pub fn create_nydus_daemon(
     supervisor: Option<String>,
     id: Option<String>,
     threads_cnt: u32,
-    api_sock: impl AsRef<Path>,
+    api_sock: Option<impl AsRef<Path>>,
     upgrade: bool,
     fp: FailoverPolicy,
 ) -> Result<Arc<dyn NydusDaemon + Send>> {
@@ -615,7 +615,13 @@ pub fn create_nydus_daemon(
     let machine = FusedevDaemonSM::new(daemon.clone(), events_rx, result_sender);
     machine.kick_state_machine()?;
 
-    if !upgrade && !is_crashed(mountpoint, api_sock)? {
+    // Without api socket, nydusd can't do neither live-upgrade nor failover, so the helper
+    // finding a victim is not necessary.
+    if (api_sock.as_ref().is_some()
+        && !upgrade
+        && !is_crashed(mountpoint, api_sock.as_ref().unwrap())?)
+        || api_sock.is_none()
+    {
         daemon.session.lock().unwrap().mount()?;
         daemon
             .on_event(FusedevStateMachineInput::Mount)

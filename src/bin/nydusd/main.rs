@@ -290,7 +290,7 @@ fn main() -> Result<()> {
     // bootstrap means rafs only
     let bootstrap = cmd_arguments_parsed.value_of("bootstrap");
     // apisock means admin api socket support
-    let apisock = cmd_arguments_parsed.value_of("apisock").unwrap_or_default();
+    let apisock = cmd_arguments_parsed.value_of("apisock");
     let rlimit_nofile_default = get_default_rlimit_nofile()?;
     let rlimit_nofile: rlim = cmd_arguments_parsed
         .value_of("rlimit-nofile")
@@ -406,7 +406,7 @@ fn main() -> Result<()> {
 
     let mut http_thread: Option<thread::JoinHandle<Result<()>>> = None;
     let http_exit_evtfd = EventFd::new(0).unwrap();
-    if apisock != "" {
+    if let Some(apisock) = apisock {
         let (to_api, from_http) = channel();
         let (to_http, from_api) = channel();
 
