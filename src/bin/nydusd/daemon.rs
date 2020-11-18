@@ -12,6 +12,7 @@ use std::io::{Error as IoError, ErrorKind as IoErrorKind, Result};
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::id;
+use std::str::FromStr;
 use std::sync::{
     atomic::Ordering,
     mpsc::{Receiver, Sender},
@@ -163,14 +164,16 @@ impl convert::From<DaemonError> for io::Error {
 
 pub type DaemonResult<T> = std::result::Result<T, DaemonError>;
 
-#[derive(Default, Debug, PartialEq, Serialize, Deserialize, Clone, Versionize)]
+#[derive(Default, PartialEq, Serialize, Deserialize, Versionize)]
 pub struct RafsMountStateSet {
     pub items: Vec<RafsMountState>,
 }
 
-#[derive(Versionize, Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Versionize, Serialize, Deserialize, PartialEq)]
 pub struct RafsMountState {
     pub mountpoint: String,
+    // A json string serialized from RafsConfig. The reason why we don't save `RafsConfig`
+    // instance here is it's impossible to implement Versionize for serde_json::Value
     pub config: String,
     pub bootstrap: String,
 }
@@ -215,12 +218,10 @@ impl RafsMountStateSet {
 
 impl VersionMapGetter for RafsMountStateSet {}
 
-#[derive(Clone, Deserialize, Serialize, PartialEq, Debug, Versionize)]
 pub struct RafsMountCmd {
     pub source: String,
     pub config: String,
     pub mountpoint: String,
-    #[serde(default)]
     pub prefetch_files: Option<Vec<String>>,
 }
 
@@ -273,7 +274,7 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
             ))));
         }
 
-        let rafs_config = RafsConfig::from_file(&cmd.config)?;
+        let rafs_config = RafsConfig::from_str(cmd.config.as_str())?;
         let mut bootstrap = RafsIoRead::from_file(&cmd.source)?;
 
         let mut rafs = Rafs::new(rafs_config, &cmd.mountpoint, &mut bootstrap)?;
@@ -427,6 +428,7 @@ impl EventSubscriber for NydusDaemonSubscriber {
 
 pub type Trigger = Sender<DaemonStateMachineInput>;
 
+//FIXME: This does not precisely describe how state machine work anymore.
 /// Nydus daemon workflow is controlled by this state-machine.
 /// `Init` means nydusd is just started and potentially configured well but not
 /// yet negotiate with kernel the capabilities of both sides. It even does not try

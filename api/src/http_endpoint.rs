@@ -107,6 +107,7 @@ pub struct MountInfo {
 pub struct ApiRafsMountCmd {
     pub source: String,
     pub config: String,
+    #[serde(default)]
     pub prefetch_files: Option<Vec<String>>,
 }
 
