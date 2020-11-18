@@ -91,21 +91,10 @@ pub struct DaemonInfo {
 }
 
 #[derive(Clone, Deserialize, Debug)]
-pub struct MountInfo {
-    /// Bootstrap path by which to import rafs
-    #[serde(default)]
-    pub source: Option<String>,
-    #[serde(default)]
-    pub fstype: Option<String>,
-    pub mountpoint: String,
-    #[serde(default)]
-    pub config: Option<String>,
-    pub ops: String,
-}
-
-#[derive(Clone, Deserialize, Debug)]
 pub struct ApiRafsMountCmd {
     pub source: String,
+    #[serde(default)]
+    pub fs_type: String,
     pub config: String,
     #[serde(default)]
     pub prefetch_files: Option<Vec<String>>,
