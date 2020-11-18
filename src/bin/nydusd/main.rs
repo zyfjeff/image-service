@@ -159,7 +159,7 @@ fn main() -> Result<()> {
         .arg(
             Arg::with_name("log-level")
                 .long("log-level")
-                .default_value("warn")
+                .default_value("info")
                 .help("Specify log level: trace, debug, info, warn, error")
                 .takes_value(true)
                 .required(false)
@@ -253,7 +253,7 @@ fn main() -> Result<()> {
         .value_of("log-level")
         .unwrap()
         .parse()
-        .unwrap_or(log::LevelFilter::Warn);
+        .unwrap_or(log::LevelFilter::Info);
 
     stderrlog::new()
         .quiet(false)
