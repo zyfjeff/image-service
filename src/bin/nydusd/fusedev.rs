@@ -30,7 +30,7 @@ use crate::daemon;
 use crate::exit_event_manager;
 use daemon::{
     DaemonError, DaemonResult, DaemonState, DaemonStateMachineContext, DaemonStateMachineInput,
-    DaemonStateMachineSubscriber, NydusDaemon, RafsMountInfo, RafsMountsState, Trigger,
+    DaemonStateMachineSubscriber, NydusDaemon, RafsMountCmd, RafsMountStateSet, Trigger,
 };
 use nydus_utils::{einval, eio, eother, FuseChannel, FuseSession};
 use upgrade_manager::backend::unix_domain_socket::UdsBackend;
@@ -279,14 +279,15 @@ impl NydusDaemon for FusedevDaemon {
 
         // Restore RAFS mounts
         if let Some(mount_state) =
-            mgr_guard.get_opaque_raw(OpaqueKind::RafsMounts)? as Option<RafsMountsState>
+            mgr_guard.get_opaque_raw(OpaqueKind::RafsMounts)? as Option<RafsMountStateSet>
         {
             for item in mount_state.items {
                 self.mount(
-                    RafsMountInfo {
+                    RafsMountCmd {
                         mountpoint: item.mountpoint,
-                        source: item.source,
+                        source: item.bootstrap,
                         config: item.config,
+                        prefetch_files: None,
                     },
                     Some(&vfs_state),
                     false,

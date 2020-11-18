@@ -13,16 +13,13 @@ use nix::unistd::Pid;
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
 use nydus_api::http_endpoint::{
-    ApiError, ApiRequest, ApiResponse, ApiResponsePayload, ApiResult, DaemonConf, DaemonErrorKind,
-    DaemonInfo, RafsMountInfo,
+    ApiError, ApiRafsMountCmd, ApiRequest, ApiResponse, ApiResponsePayload, ApiResult, DaemonConf,
+    DaemonErrorKind, DaemonInfo,
 };
 use nydus_utils::{epipe, last_error};
 use rafs::io_stats;
 
-use crate::daemon::{
-    DaemonError, NydusDaemon, RafsMountInfo as DaemonRafsMountInfo,
-    RafsUmountInfo as DaemonRafsUmountInfo,
-};
+use crate::daemon::{DaemonError, NydusDaemon, RafsMountCmd, RafsUmountCmd};
 #[cfg(fusedev)]
 use crate::fusedev::FusedevDaemon;
 use crate::SubscriberWrapper;
@@ -177,13 +174,14 @@ impl ApiServer {
         Ok(ApiResponsePayload::Empty)
     }
 
-    fn do_mount(&self, mountpoint: String, info: RafsMountInfo) -> ApiResponse {
+    fn do_mount(&self, mountpoint: String, cmd: ApiRafsMountCmd) -> ApiResponse {
         self.daemon
             .mount(
-                DaemonRafsMountInfo {
+                RafsMountCmd {
                     mountpoint,
-                    config: info.config,
-                    source: info.source,
+                    config: cmd.config,
+                    source: cmd.source,
+                    prefetch_files: cmd.prefetch_files,
                 },
                 None,
                 true,
@@ -192,12 +190,13 @@ impl ApiServer {
             .map_err(|e| ApiError::MountFailure(e.into()))
     }
 
-    fn do_remount(&self, mountpoint: String, info: RafsMountInfo) -> ApiResponse {
+    fn do_remount(&self, mountpoint: String, cmd: ApiRafsMountCmd) -> ApiResponse {
         self.daemon
-            .remount(DaemonRafsMountInfo {
+            .remount(RafsMountCmd {
                 mountpoint,
-                config: info.config,
-                source: info.source,
+                config: cmd.config,
+                source: cmd.source,
+                prefetch_files: cmd.prefetch_files,
             })
             .map(|_| ApiResponsePayload::Empty)
             .map_err(|e| ApiError::MountFailure(e.into()))
@@ -205,7 +204,7 @@ impl ApiServer {
 
     fn do_umount(&self, mountpoint: String) -> ApiResponse {
         self.daemon
-            .umount(DaemonRafsUmountInfo { mountpoint })
+            .umount(RafsUmountCmd { mountpoint })
             .map(|_| ApiResponsePayload::Empty)
             .map_err(|e| ApiError::MountFailure(e.into()))
     }

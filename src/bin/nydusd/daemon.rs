@@ -10,6 +10,7 @@ use std::convert::From;
 use std::fmt::{Display, Formatter};
 use std::io::{Error as IoError, ErrorKind as IoErrorKind, Result};
 use std::ops::Deref;
+use std::path::Path;
 use std::process::id;
 use std::sync::{
     atomic::Ordering,
@@ -163,33 +164,45 @@ impl convert::From<DaemonError> for io::Error {
 pub type DaemonResult<T> = std::result::Result<T, DaemonError>;
 
 #[derive(Default, Debug, PartialEq, Serialize, Deserialize, Clone, Versionize)]
-pub struct RafsMountsState {
-    pub items: Vec<RafsMountInfo>,
+pub struct RafsMountStateSet {
+    pub items: Vec<RafsMountState>,
 }
 
-impl RafsMountsState {
+#[derive(Versionize, Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct RafsMountState {
+    pub mountpoint: String,
+    pub config: String,
+    pub bootstrap: String,
+}
+
+impl From<RafsMountCmd> for RafsMountState {
+    fn from(c: RafsMountCmd) -> Self {
+        RafsMountState {
+            mountpoint: c.mountpoint,
+            config: c.config,
+            bootstrap: c.source,
+        }
+    }
+}
+
+impl RafsMountStateSet {
     pub fn new() -> Self {
         Self { items: vec![] }
     }
 
-    pub fn add(&mut self, info: RafsMountInfo) {
+    pub fn add(&mut self, cmd: RafsMountCmd) {
         if let Some(idx) = self
             .items
             .iter()
-            .position(|mount| mount.mountpoint == info.mountpoint)
+            .position(|m| m.mountpoint == cmd.mountpoint)
         {
-            self.items[idx].source = info.source;
-            self.items[idx].config = info.config;
+            self.items[idx] = cmd.into();
         } else {
-            self.items.push(RafsMountInfo {
-                source: info.source,
-                config: info.config,
-                mountpoint: info.mountpoint,
-            });
+            self.items.push(cmd.into());
         }
     }
 
-    pub fn remove(&mut self, info: RafsUmountInfo) {
+    pub fn remove(&mut self, info: RafsUmountCmd) {
         if let Some(idx) = self
             .items
             .iter()
@@ -200,17 +213,19 @@ impl RafsMountsState {
     }
 }
 
-impl VersionMapGetter for RafsMountsState {}
+impl VersionMapGetter for RafsMountStateSet {}
 
 #[derive(Clone, Deserialize, Serialize, PartialEq, Debug, Versionize)]
-pub struct RafsMountInfo {
+pub struct RafsMountCmd {
     pub source: String,
     pub config: String,
     pub mountpoint: String,
+    #[serde(default)]
+    pub prefetch_files: Option<Vec<String>>,
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
-pub struct RafsUmountInfo {
+pub struct RafsUmountCmd {
     pub mountpoint: String,
 }
 
@@ -233,8 +248,6 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
         Ok(())
     }
     fn trigger_takeover(&self) -> DaemonResult<()> {
-        // State machine won't reach `Negotiated` state until the first fuse message arrives.
-        // So we don't try to send InitMsg event from here.
         self.on_event(DaemonStateMachineInput::Takeover)?;
         self.on_event(DaemonStateMachineInput::Successful)?;
         Ok(())
@@ -249,30 +262,45 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
     // FIXME: locking?
     fn mount<'a>(
         &self,
-        info: RafsMountInfo,
+        cmd: RafsMountCmd,
         vfs_state: Option<&'a VfsState>,
         persist: bool,
     ) -> DaemonResult<()> {
-        if self.get_vfs().get_rootfs(&info.mountpoint).is_ok() {
+        if self.get_vfs().get_rootfs(&cmd.mountpoint).is_ok() {
             return Err(DaemonError::Vfs(VfsErrorKind::Common(IoError::new(
                 IoErrorKind::AlreadyExists,
                 "Already mounted",
             ))));
         }
 
-        let rafs_config = RafsConfig::from_file(&info.config)?;
-        let mut bootstrap = RafsIoRead::from_file(&info.source)?;
+        let rafs_config = RafsConfig::from_file(&cmd.config)?;
+        let mut bootstrap = RafsIoRead::from_file(&cmd.source)?;
 
-        let mut rafs = Rafs::new(rafs_config, &info.mountpoint, &mut bootstrap)?;
-        rafs.import(&mut bootstrap, None)?;
+        let mut rafs = Rafs::new(rafs_config, &cmd.mountpoint, &mut bootstrap)?;
+        let prefetch_files: Option<Vec<&Path>> = cmd
+            .prefetch_files
+            .as_ref()
+            .map(|files| files.iter().map(|f| Path::new(f)).collect());
+
+        // TODO: Unify below sanity check with prefetch while daemon starts
+        // after delayed execution mechanism is added.
+        if let Some(ref files) = prefetch_files {
+            for f in files.iter() {
+                if !f.starts_with(Path::new("/")) {
+                    return Err(DaemonError::Common("Illegal prefetch list".to_string()));
+                }
+            }
+        }
+
+        rafs.import(&mut bootstrap, prefetch_files)?;
 
         if let Some(vfs_state) = vfs_state {
             self.get_vfs()
-                .restore_mount(Box::new(rafs), &info.mountpoint, vfs_state)
+                .restore_mount(Box::new(rafs), &cmd.mountpoint, vfs_state)
                 .map_err(|e| DaemonError::Vfs(VfsErrorKind::Restore(e)))?;
         } else {
             self.get_vfs()
-                .mount(Box::new(rafs), &info.mountpoint)
+                .mount(Box::new(rafs), &cmd.mountpoint)
                 .map_err(|e| DaemonError::Vfs(VfsErrorKind::Mount(e)))?;
         }
 
@@ -281,8 +309,8 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
             if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
                 let mut state = mgr_guard
                     .get_opaque_raw(OpaqueKind::RafsMounts)?
-                    .unwrap_or_else(RafsMountsState::new);
-                state.add(info);
+                    .unwrap_or_else(RafsMountStateSet::new);
+                state.add(cmd);
                 mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
             }
         }
@@ -290,14 +318,14 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
         Ok(())
     }
 
-    fn remount(&self, info: RafsMountInfo) -> DaemonResult<()> {
+    fn remount(&self, cmd: RafsMountCmd) -> DaemonResult<()> {
         let rootfs = self
             .get_vfs()
-            .get_rootfs(&info.mountpoint)
+            .get_rootfs(&cmd.mountpoint)
             .map_err(|e| DaemonError::Vfs(VfsErrorKind::Common(e)))?;
 
-        let rafs_config = RafsConfig::from_file(&&info.config)?;
-        let mut bootstrap = RafsIoRead::from_file(&&info.source)?;
+        let rafs_config = RafsConfig::from_file(&&cmd.config)?;
+        let mut bootstrap = RafsIoRead::from_file(&&cmd.source)?;
         let any_fs = rootfs.deref().as_any();
         let rafs = any_fs
             .downcast_ref::<Rafs>()
@@ -313,30 +341,30 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
         if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
             let mut state = mgr_guard
                 .get_opaque_raw(OpaqueKind::RafsMounts)?
-                .unwrap_or_else(RafsMountsState::new);
-            state.add(info);
+                .unwrap_or_else(RafsMountStateSet::new);
+            state.add(cmd);
             mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
         }
 
         Ok(())
     }
 
-    fn umount(&self, info: RafsUmountInfo) -> DaemonResult<()> {
+    fn umount(&self, cmd: RafsUmountCmd) -> DaemonResult<()> {
         let _ = self
             .get_vfs()
-            .get_rootfs(&info.mountpoint)
+            .get_rootfs(&cmd.mountpoint)
             .map_err(|e| DaemonError::Vfs(VfsErrorKind::Common(e)))?;
 
         self.get_vfs()
-            .umount(&info.mountpoint)
+            .umount(&cmd.mountpoint)
             .map_err(|e| DaemonError::Vfs(VfsErrorKind::Umount(e)))?;
 
         // Remove mount opaque from UpgradeManager
         if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
             if let Some(mut state) =
-                mgr_guard.get_opaque_raw(OpaqueKind::RafsMounts)? as Option<RafsMountsState>
+                mgr_guard.get_opaque_raw(OpaqueKind::RafsMounts)? as Option<RafsMountStateSet>
             {
-                state.remove(info);
+                state.remove(cmd);
                 mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
             }
         }
@@ -534,28 +562,32 @@ pub mod tests {
         let backend = UdsBackend::new(PathBuf::from("fake"));
         let mut upgrade_mgr = UpgradeManager::new(String::from("test"), Box::new(backend));
 
-        let mut rafs_mount = RafsMountsState::new();
-        rafs_mount.add(RafsMountInfo {
+        let mut rafs_mount = RafsMountStateSet::new();
+        rafs_mount.add(RafsMountCmd {
             source: String::from("source-fake1"),
             config: String::from("config-fake1"),
             mountpoint: String::from("mountpoint-fake1"),
+            prefetch_files: None,
         });
-        rafs_mount.add(RafsMountInfo {
+        rafs_mount.add(RafsMountCmd {
             source: String::from("source-fake2"),
             config: String::from("config-fake2"),
             mountpoint: String::from("mountpoint-fake2"),
+            prefetch_files: None,
         });
-        rafs_mount.add(RafsMountInfo {
+        rafs_mount.add(RafsMountCmd {
             source: String::from("source-fake3"),
             config: String::from("config-fake3"),
             mountpoint: String::from("mountpoint-fake2"),
+            prefetch_files: None,
         });
-        rafs_mount.add(RafsMountInfo {
+        rafs_mount.add(RafsMountCmd {
             source: String::from("source-fake4"),
             config: String::from("config-fake4"),
             mountpoint: String::from("mountpoint-fake4"),
+            prefetch_files: None,
         });
-        rafs_mount.remove(RafsUmountInfo {
+        rafs_mount.remove(RafsUmountCmd {
             mountpoint: String::from("mountpoint-fake4"),
         });
 
@@ -563,22 +595,22 @@ pub mod tests {
             .set_opaque_raw(OpaqueKind::RafsMounts, &rafs_mount)
             .unwrap();
 
-        let expcted_rafs_mount: RafsMountsState = upgrade_mgr
+        let expcted_rafs_mount: RafsMountStateSet = upgrade_mgr
             .get_opaque_raw(OpaqueKind::RafsMounts)
             .unwrap()
             .unwrap();
 
         assert_eq!(
             expcted_rafs_mount,
-            RafsMountsState {
+            RafsMountStateSet {
                 items: vec![
-                    RafsMountInfo {
-                        source: String::from("source-fake1"),
+                    RafsMountState {
+                        bootstrap: String::from("source-fake1"),
                         config: String::from("config-fake1"),
                         mountpoint: String::from("mountpoint-fake1"),
                     },
-                    RafsMountInfo {
-                        source: String::from("source-fake3"),
+                    RafsMountState {
+                        bootstrap: String::from("source-fake3"),
                         config: String::from("config-fake3"),
                         mountpoint: String::from("mountpoint-fake2"),
                     }
