@@ -80,7 +80,7 @@ paths:
       summary: Creates a mount.
       x-codegen-request-body-name: info
     put:
-      operationId: updateMount
+      operationId: Remount
       requestBody:
         content:
           application/json:

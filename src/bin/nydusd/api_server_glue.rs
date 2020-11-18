@@ -68,7 +68,7 @@ impl ApiServer {
         let resp = match request {
             ApiRequest::DaemonInfo => self.daemon_info(),
             ApiRequest::Mount((mountpoint, info)) => self.do_mount(mountpoint, info),
-            ApiRequest::UpdateMount((mountpoint, info)) => self.do_update_mount(mountpoint, info),
+            ApiRequest::Remount((mountpoint, info)) => self.do_remount(mountpoint, info),
             ApiRequest::Umount(mountpoint) => self.do_umount(mountpoint),
             ApiRequest::ConfigureDaemon(conf) => self.configure_daemon(conf),
             ApiRequest::ExportGlobalMetrics(id) => Self::export_global_metrics(id),
@@ -192,7 +192,7 @@ impl ApiServer {
             .map_err(|e| ApiError::MountFailure(e.into()))
     }
 
-    fn do_update_mount(&self, mountpoint: String, info: RafsMountInfo) -> ApiResponse {
+    fn do_remount(&self, mountpoint: String, info: RafsMountInfo) -> ApiResponse {
         self.daemon
             .remount(DaemonRafsMountInfo {
                 mountpoint,

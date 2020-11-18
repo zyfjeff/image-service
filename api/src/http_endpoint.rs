@@ -71,7 +71,7 @@ pub type HttpResult = std::result::Result<Response, HttpError>;
 pub enum ApiRequest {
     DaemonInfo,
     Mount((String, RafsMountInfo)),
-    UpdateMount((String, RafsMountInfo)),
+    Remount((String, RafsMountInfo)),
     Umount(String),
     ConfigureDaemon(DaemonConf),
     ExportGlobalMetrics(Option<String>),
@@ -266,7 +266,7 @@ impl EndpointHandler for MountHandler {
             }
             (Method::Put, Some(body)) => {
                 let info = RafsMountInfo::parse(body)?;
-                let r = kicker(ApiRequest::UpdateMount((mountpoint, info)));
+                let r = kicker(ApiRequest::Remount((mountpoint, info)));
                 convert_to_response(r, HttpError::Mount)
             }
             (Method::Delete, None) => {
