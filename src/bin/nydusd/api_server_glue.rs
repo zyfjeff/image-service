@@ -39,10 +39,10 @@ impl From<DaemonError> for DaemonErrorKind {
     fn from(e: DaemonError) -> Self {
         use DaemonError::*;
         match e {
-            UpgradeManager(_e) => DaemonErrorKind::UpgradeManager,
+            UpgradeManager(_) => DaemonErrorKind::UpgradeManager,
             NotReady => DaemonErrorKind::NotReady,
             Unsupported => DaemonErrorKind::Unsupported,
-            _ => DaemonErrorKind::Other,
+            o => DaemonErrorKind::Other(o.to_string()),
         }
     }
 }

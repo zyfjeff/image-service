@@ -22,7 +22,7 @@ pub enum DaemonErrorKind {
     RecvFd,
     Disconnect(io::Error),
     Channel,
-    Other,
+    Other(String),
 }
 
 /// API errors are sent back from the VMM API server through the ApiResponse.
