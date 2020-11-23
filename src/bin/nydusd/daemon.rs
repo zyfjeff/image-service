@@ -426,6 +426,8 @@ state_machine! {
     derive(Debug, Clone)
     pub DaemonStateMachine(Init)
 
+    // FIXME: It's possible that failover does not succeed or resource is not capable to
+    // be passed. To handle event `Stop` when being `Init`.
     Init => {
         Mount => Running [StartService],
         Takeover => Upgrading [Restore],
