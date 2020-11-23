@@ -10,7 +10,7 @@ use std::convert::From;
 use std::fmt::{Display, Formatter};
 use std::io::{Error as IoError, ErrorKind as IoErrorKind, Result};
 use std::ops::Deref;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::id;
 use std::sync::{
     atomic::Ordering,
@@ -277,10 +277,10 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
         let mut bootstrap = RafsIoRead::from_file(&cmd.source)?;
 
         let mut rafs = Rafs::new(rafs_config, &cmd.mountpoint, &mut bootstrap)?;
-        let prefetch_files: Option<Vec<&Path>> = cmd
+        let prefetch_files: Option<Vec<PathBuf>> = cmd
             .prefetch_files
             .as_ref()
-            .map(|files| files.iter().map(|f| Path::new(f)).collect());
+            .map(|files| files.iter().map(PathBuf::from).collect());
 
         // TODO: Unify below sanity check with prefetch while daemon starts
         // after delayed execution mechanism is added.
