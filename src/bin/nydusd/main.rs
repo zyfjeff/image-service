@@ -18,7 +18,7 @@ use std::convert::TryInto;
 use std::fs::File;
 use std::io::{Read, Result};
 use std::ops::DerefMut;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::channel,
@@ -271,9 +271,9 @@ fn main() -> Result<()> {
     // And each path should be relative to rafs root, e.g.
     //      /foo1/bar1 /foo2/bar2
     // Specifying both regular file and directory simultaneously is supported.
-    let prefetch_files: Vec<&Path>;
+    let prefetch_files: Vec<PathBuf>;
     if let Some(files) = cmd_arguments_parsed.values_of("prefetch-files") {
-        prefetch_files = files.map(|s| Path::new(s)).collect();
+        prefetch_files = files.map(PathBuf::from).collect();
         // Sanity check
         for d in &prefetch_files {
             if !d.starts_with(Path::new("/")) {
