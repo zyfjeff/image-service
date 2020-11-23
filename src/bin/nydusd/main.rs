@@ -258,7 +258,7 @@ fn main() -> Result<()> {
     stderrlog::new()
         .quiet(false)
         .verbosity(log_level_to_verbosity(log::LevelFilter::Trace))
-        .timestamp(stderrlog::Timestamp::Second)
+        .timestamp(stderrlog::Timestamp::Millisecond)
         .init()
         .unwrap();
     // We rely on `log` macro to limit current log level rather than `stderrlog`
