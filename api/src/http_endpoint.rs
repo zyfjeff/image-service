@@ -70,8 +70,8 @@ pub type HttpResult = std::result::Result<Response, HttpError>;
 #[derive(Debug)]
 pub enum ApiRequest {
     DaemonInfo,
-    Mount((String, ApiRafsMountCmd)),
-    Remount((String, ApiRafsMountCmd)),
+    Mount((String, ApiMountCmd)),
+    Remount((String, ApiMountCmd)),
     Umount(String),
     ConfigureDaemon(DaemonConf),
     ExportGlobalMetrics(Option<String>),
@@ -91,7 +91,7 @@ pub struct DaemonInfo {
 }
 
 #[derive(Clone, Deserialize, Debug)]
-pub struct ApiRafsMountCmd {
+pub struct ApiMountCmd {
     pub source: String,
     #[serde(default)]
     pub fs_type: String,
@@ -100,20 +100,20 @@ pub struct ApiRafsMountCmd {
     pub prefetch_files: Option<Vec<String>>,
 }
 
-impl ApiRafsMountCmd {
-    pub fn parse(body: &Body) -> Result<ApiRafsMountCmd, HttpError> {
-        serde_json::from_slice::<ApiRafsMountCmd>(body.raw()).map_err(HttpError::ParseBody)
+impl ApiMountCmd {
+    pub fn parse(body: &Body) -> Result<ApiMountCmd, HttpError> {
+        serde_json::from_slice::<ApiMountCmd>(body.raw()).map_err(HttpError::ParseBody)
     }
 }
 
 #[derive(Clone, Deserialize, Debug)]
-pub struct ApiRafsUmountCmd {
+pub struct ApiUmountCmd {
     pub mountpoint: String,
 }
 
-impl ApiRafsUmountCmd {
-    pub fn parse(body: &Body) -> Result<ApiRafsUmountCmd, HttpError> {
-        serde_json::from_slice::<ApiRafsUmountCmd>(body.raw()).map_err(HttpError::ParseBody)
+impl ApiUmountCmd {
+    pub fn parse(body: &Body) -> Result<ApiUmountCmd, HttpError> {
+        serde_json::from_slice::<ApiUmountCmd>(body.raw()).map_err(HttpError::ParseBody)
     }
 }
 
@@ -251,12 +251,12 @@ impl EndpointHandler for MountHandler {
         })?;
         match (req.method(), req.body.as_ref()) {
             (Method::Post, Some(body)) => {
-                let cmd = ApiRafsMountCmd::parse(body)?;
+                let cmd = ApiMountCmd::parse(body)?;
                 let r = kicker(ApiRequest::Mount((mountpoint, cmd)));
                 convert_to_response(r, HttpError::Mount)
             }
             (Method::Put, Some(body)) => {
-                let cmd = ApiRafsMountCmd::parse(body)?;
+                let cmd = ApiMountCmd::parse(body)?;
                 let r = kicker(ApiRequest::Remount((mountpoint, cmd)));
                 convert_to_response(r, HttpError::Mount)
             }

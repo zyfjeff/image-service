@@ -13,7 +13,7 @@ use nix::unistd::Pid;
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
 use nydus_api::http_endpoint::{
-    ApiError, ApiRafsMountCmd, ApiRequest, ApiResponse, ApiResponsePayload, ApiResult, DaemonConf,
+    ApiError, ApiMountCmd, ApiRequest, ApiResponse, ApiResponsePayload, ApiResult, DaemonConf,
     DaemonErrorKind, DaemonInfo,
 };
 use nydus_utils::{epipe, last_error};
@@ -174,7 +174,7 @@ impl ApiServer {
         Ok(ApiResponsePayload::Empty)
     }
 
-    fn do_mount(&self, mountpoint: String, cmd: ApiRafsMountCmd) -> ApiResponse {
+    fn do_mount(&self, mountpoint: String, cmd: ApiMountCmd) -> ApiResponse {
         self.daemon
             .mount(
                 RafsMountCmd {
@@ -190,7 +190,7 @@ impl ApiServer {
             .map_err(|e| ApiError::MountFailure(e.into()))
     }
 
-    fn do_remount(&self, mountpoint: String, cmd: ApiRafsMountCmd) -> ApiResponse {
+    fn do_remount(&self, mountpoint: String, cmd: ApiMountCmd) -> ApiResponse {
         self.daemon
             .remount(RafsMountCmd {
                 mountpoint,
