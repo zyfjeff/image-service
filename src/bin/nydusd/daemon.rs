@@ -325,7 +325,7 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
             .get_rootfs(&cmd.mountpoint)
             .map_err(|e| DaemonError::Vfs(VfsErrorKind::Common(e)))?;
 
-        let rafs_config = RafsConfig::from_file(&&cmd.config)?;
+        let rafs_config = RafsConfig::from_str(&&cmd.config)?;
         let mut bootstrap = RafsIoRead::from_file(&&cmd.source)?;
         let any_fs = rootfs.deref().as_any();
         let rafs = any_fs
