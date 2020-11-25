@@ -164,12 +164,12 @@ impl convert::From<DaemonError> for io::Error {
 
 pub type DaemonResult<T> = std::result::Result<T, DaemonError>;
 
-#[derive(Default, PartialEq, Serialize, Deserialize, Versionize)]
+#[derive(Default, PartialEq, Serialize, Deserialize, Versionize, Debug)]
 pub struct RafsMountStateSet {
     pub items: Vec<RafsMountState>,
 }
 
-#[derive(Versionize, Serialize, Deserialize, PartialEq)]
+#[derive(Versionize, Serialize, Deserialize, PartialEq, Debug)]
 pub struct RafsMountState {
     pub mountpoint: String,
     // A json string serialized from RafsConfig. The reason why we don't save `RafsConfig`

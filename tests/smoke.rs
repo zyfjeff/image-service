@@ -324,22 +324,10 @@ fn integration_test_hot_upgrade_with_rafs_mount() -> Result<()> {
     old_nydusd.start(None, "mnt")?;
 
     // Add RAFS mountpoint
-    snapshotter.mount(
-        &old_nydusd.api_sock,
-        "blobs",
-        "/sub1",
-        "hot-upgrade-test-config",
-        COMPAT_BOOTSTRAPS[0],
-    );
+    snapshotter.mount(&old_nydusd.api_sock, "blobs", "/sub1", COMPAT_BOOTSTRAPS[0]);
 
     // Add RAFS mountpoint
-    snapshotter.mount(
-        &old_nydusd.api_sock,
-        "blobs",
-        "/sub2",
-        "hot-upgrade-test-config",
-        COMPAT_BOOTSTRAPS[1],
-    );
+    snapshotter.mount(&old_nydusd.api_sock, "blobs", "/sub2", COMPAT_BOOTSTRAPS[1]);
 
     // Old nydusd's state should be RUNNING
     assert_eq!(snapshotter.get_status(&old_nydusd.api_sock), "RUNNING");

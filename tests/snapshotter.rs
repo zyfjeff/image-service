@@ -2,7 +2,6 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use std::fs;
 use std::io::Result;
 use std::os::unix::io::RawFd;
 use std::os::unix::net::UnixListener;
@@ -98,7 +97,6 @@ impl Snapshotter {
         apisock: &PathBuf,
         blobs_dir: &str,
         mount_point: &str,
-        config_name: &str,
         source_name: &str,
     ) -> String {
         let config = json!(
@@ -114,11 +112,9 @@ impl Snapshotter {
                 "mode": "direct"
             }
         );
-        let config_path = self.work_dir.join(config_name);
-        fs::write(self.work_dir.join(config_path.clone()), config.to_string()).unwrap();
         let mount_info = json!({
             "source": self.work_dir.join(source_name),
-            "config": config_path,
+            "config": config.to_string(),
         });
         let endpoint = format!("/mount?mountpoint={}", mount_point);
         self.request(
