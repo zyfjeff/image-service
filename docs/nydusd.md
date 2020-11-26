@@ -181,8 +181,11 @@ mount -t virtiofs nydus /mnt
         "scheme": "http",
         "host": "my-registry:5000",
         "repo": "test/repo",
-        // Base64(username:password)
-        "auth": "<base64_encoded_auth>"
+        // Username and password for auth
+        // base64(username:password), optional
+        "auth": "<base64_encoded_auth>",
+        // Bearer token for auth, optional
+        "registry_token": "<bearer_token>"
       }
     },
     ...
