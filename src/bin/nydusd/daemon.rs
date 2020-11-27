@@ -178,8 +178,8 @@ pub struct RafsMountState {
     pub bootstrap: String,
 }
 
-impl From<RafsMountCmd> for RafsMountState {
-    fn from(c: RafsMountCmd) -> Self {
+impl From<FsBackendMountCmd> for RafsMountState {
+    fn from(c: FsBackendMountCmd) -> Self {
         RafsMountState {
             mountpoint: c.mountpoint,
             config: c.config,
@@ -193,7 +193,7 @@ impl RafsMountStateSet {
         Self { items: vec![] }
     }
 
-    pub fn add(&mut self, cmd: RafsMountCmd) {
+    pub fn add(&mut self, cmd: FsBackendMountCmd) {
         if let Some(idx) = self
             .items
             .iter()
@@ -205,7 +205,7 @@ impl RafsMountStateSet {
         }
     }
 
-    pub fn remove(&mut self, info: RafsUmountCmd) {
+    pub fn remove(&mut self, info: FsBackendUmountCmd) {
         if let Some(idx) = self
             .items
             .iter()
@@ -218,7 +218,26 @@ impl RafsMountStateSet {
 
 impl VersionMapGetter for RafsMountStateSet {}
 
-pub struct RafsMountCmd {
+#[derive(Clone)]
+pub enum FsBackendType {
+    Rafs,
+    PassthroughFs,
+}
+
+impl FromStr for FsBackendType {
+    type Err = DaemonError;
+    fn from_str(s: &str) -> DaemonResult<FsBackendType> {
+        match s {
+            "rafs" => Ok(FsBackendType::Rafs),
+            "passthrough_fs" => Ok(FsBackendType::PassthroughFs),
+            o => Err(DaemonError::InvalidArguments(o.to_string())),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct FsBackendMountCmd {
+    pub fs_type: FsBackendType,
     pub source: String,
     pub config: String,
     pub mountpoint: String,
@@ -226,7 +245,7 @@ pub struct RafsMountCmd {
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
-pub struct RafsUmountCmd {
+pub struct FsBackendUmountCmd {
     pub mountpoint: String,
 }
 
@@ -263,10 +282,11 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
     // FIXME: locking?
     fn mount<'a>(
         &self,
-        cmd: RafsMountCmd,
+        cmd: FsBackendMountCmd,
         vfs_state: Option<&'a VfsState>,
-        persist: bool,
     ) -> DaemonResult<()> {
+        // TODO: Fuse-rs and Vfs should be capable to handle that the mountpoint is already mounted.
+        // Otherwise vfs' clients will suffer a lot  :-(. So try to add this capability to it.
         if self.get_vfs().get_rootfs(&cmd.mountpoint).is_ok() {
             return Err(DaemonError::Vfs(VfsErrorKind::Common(IoError::new(
                 IoErrorKind::AlreadyExists,
@@ -274,52 +294,32 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
             ))));
         }
 
-        let rafs_config = RafsConfig::from_str(cmd.config.as_str())?;
-        let mut bootstrap = RafsIoRead::from_file(&cmd.source)?;
-
-        let mut rafs = Rafs::new(rafs_config, &cmd.mountpoint, &mut bootstrap)?;
-        let prefetch_files: Option<Vec<PathBuf>> = cmd
-            .prefetch_files
-            .as_ref()
-            .map(|files| files.iter().map(PathBuf::from).collect());
-
-        // TODO: Unify below sanity check with prefetch while daemon starts
-        // after delayed execution mechanism is added.
-        if let Some(ref files) = prefetch_files {
-            for f in files.iter() {
-                if !f.starts_with(Path::new("/")) {
-                    return Err(DaemonError::Common("Illegal prefetch list".to_string()));
-                }
-            }
-        }
-
-        rafs.import(&mut bootstrap, prefetch_files)?;
+        let backend = fs_backend_factory(&cmd)?;
 
         if let Some(vfs_state) = vfs_state {
             self.get_vfs()
-                .restore_mount(Box::new(rafs), &cmd.mountpoint, vfs_state)
+                .restore_mount(backend, &cmd.mountpoint, vfs_state)
                 .map_err(|e| DaemonError::Vfs(VfsErrorKind::Restore(e)))?;
         } else {
             self.get_vfs()
-                .mount(Box::new(rafs), &cmd.mountpoint)
+                .mount(backend, &cmd.mountpoint)
                 .map_err(|e| DaemonError::Vfs(VfsErrorKind::Mount(e)))?;
         }
+        info!("vfs mounted");
 
-        if persist {
-            // Add mounts opaque to UpgradeManager
-            if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
-                let mut state = mgr_guard
-                    .get_opaque_raw(OpaqueKind::RafsMounts)?
-                    .unwrap_or_else(RafsMountStateSet::new);
-                state.add(cmd);
-                mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
-            }
+        // Add mounts opaque to UpgradeManager
+        if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
+            let mut state = mgr_guard
+                .get_opaque_raw(OpaqueKind::RafsMounts)?
+                .unwrap_or_else(RafsMountStateSet::new);
+            state.add(cmd);
+            mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
         }
 
         Ok(())
     }
 
-    fn remount(&self, cmd: RafsMountCmd) -> DaemonResult<()> {
+    fn remount(&self, cmd: FsBackendMountCmd) -> DaemonResult<()> {
         let rootfs = self
             .get_vfs()
             .get_rootfs(&cmd.mountpoint)
@@ -350,7 +350,7 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
         Ok(())
     }
 
-    fn umount(&self, cmd: RafsUmountCmd) -> DaemonResult<()> {
+    fn umount(&self, cmd: FsBackendUmountCmd) -> DaemonResult<()> {
         let _ = self
             .get_vfs()
             .get_rootfs(&cmd.mountpoint)
@@ -371,6 +371,65 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
         }
 
         Ok(())
+    }
+}
+
+use fuse_rs::api::BackendFileSystem;
+use fuse_rs::passthrough::{Config, PassthroughFs};
+
+/// A string including multiple directories and regular files should be separated by white-spaces, e.g.
+///      <path1> <path2> <path3>
+/// And each path should be relative to rafs root, e.g.
+///      /foo1/bar1 /foo2/bar2
+/// Specifying both regular file and directory simultaneously is supported.
+fn input_prefetch_files_verify(input: &Option<Vec<String>>) -> DaemonResult<Option<Vec<PathBuf>>> {
+    let prefetch_files: Option<Vec<PathBuf>> = input
+        .as_ref()
+        .map(|files| files.iter().map(PathBuf::from).collect());
+
+    if let Some(ref files) = prefetch_files {
+        for f in files.iter() {
+            if !f.starts_with(Path::new("/")) {
+                return Err(DaemonError::Common("Illegal prefetch list".to_string()));
+            }
+        }
+    }
+
+    Ok(prefetch_files)
+}
+fn fs_backend_factory(
+    cmd: &FsBackendMountCmd,
+) -> DaemonResult<Box<dyn BackendFileSystem<Inode = u64, Handle = u64> + Send + Sync>> {
+    let prefetch_files = input_prefetch_files_verify(&cmd.prefetch_files)?;
+    match cmd.fs_type {
+        FsBackendType::Rafs => {
+            let rafs_config = RafsConfig::from_str(cmd.config.as_str())?;
+            let mut bootstrap = RafsIoRead::from_file(&cmd.source)?;
+            let mut rafs = Rafs::new(rafs_config, &cmd.mountpoint, &mut bootstrap)?;
+            rafs.import(&mut bootstrap, prefetch_files)?;
+            info!("Rafs imported");
+            Ok(Box::new(rafs))
+        }
+        FsBackendType::PassthroughFs => {
+            // Vfs by default enables no_open and writeback, passthroughfs
+            // needs to specify them explicitly.
+            // TODO(liubo): enable no_open_dir.
+            let fs_cfg = Config {
+                root_dir: cmd.source.to_string(),
+                do_import: false,
+                writeback: true,
+                no_open: true,
+                ..Default::default()
+            };
+            // TODO: Passthrough Fs needs to enlarge rlimit against host. We can exploit `MountCmd`
+            // `config` field to pass such a configuration into here.
+            let passthrough_fs = PassthroughFs::new(fs_cfg).map_err(DaemonError::PassthroughFs)?;
+            passthrough_fs
+                .import()
+                .map_err(DaemonError::PassthroughFs)?;
+            info!("PassthroughFs imported");
+            Ok(Box::new(passthrough_fs))
+        }
     }
 }
 
@@ -565,31 +624,35 @@ pub mod tests {
         let mut upgrade_mgr = UpgradeManager::new(String::from("test"), Box::new(backend));
 
         let mut rafs_mount = RafsMountStateSet::new();
-        rafs_mount.add(RafsMountCmd {
+        rafs_mount.add(FsBackendMountCmd {
+            fs_type: FsBackendType::Rafs,
             source: String::from("source-fake1"),
             config: String::from("config-fake1"),
             mountpoint: String::from("mountpoint-fake1"),
             prefetch_files: None,
         });
-        rafs_mount.add(RafsMountCmd {
+        rafs_mount.add(FsBackendMountCmd {
+            fs_type: FsBackendType::Rafs,
             source: String::from("source-fake2"),
             config: String::from("config-fake2"),
             mountpoint: String::from("mountpoint-fake2"),
             prefetch_files: None,
         });
-        rafs_mount.add(RafsMountCmd {
+        rafs_mount.add(FsBackendMountCmd {
+            fs_type: FsBackendType::Rafs,
             source: String::from("source-fake3"),
             config: String::from("config-fake3"),
             mountpoint: String::from("mountpoint-fake2"),
             prefetch_files: None,
         });
-        rafs_mount.add(RafsMountCmd {
+        rafs_mount.add(FsBackendMountCmd {
+            fs_type: FsBackendType::Rafs,
             source: String::from("source-fake4"),
             config: String::from("config-fake4"),
             mountpoint: String::from("mountpoint-fake4"),
             prefetch_files: None,
         });
-        rafs_mount.remove(RafsUmountCmd {
+        rafs_mount.remove(FsBackendUmountCmd {
             mountpoint: String::from("mountpoint-fake4"),
         });
 
@@ -597,13 +660,13 @@ pub mod tests {
             .set_opaque_raw(OpaqueKind::RafsMounts, &rafs_mount)
             .unwrap();
 
-        let expcted_rafs_mount: RafsMountStateSet = upgrade_mgr
+        let expected_rafs_mount: RafsMountStateSet = upgrade_mgr
             .get_opaque_raw(OpaqueKind::RafsMounts)
             .unwrap()
             .unwrap();
 
         assert_eq!(
-            expcted_rafs_mount,
+            expected_rafs_mount,
             RafsMountStateSet {
                 items: vec![
                     RafsMountState {

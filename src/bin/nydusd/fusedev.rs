@@ -19,7 +19,7 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 
-use fuse_rs::api::{server::Server, VersionMapGetter, Vfs, VfsState};
+use fuse_rs::api::{server::Server, VersionMapGetter, Vfs};
 
 use snapshot::Persist;
 use versionize::{VersionMap, Versionize, VersionizeResult};
@@ -30,7 +30,8 @@ use crate::daemon;
 use crate::exit_event_manager;
 use daemon::{
     DaemonError, DaemonResult, DaemonState, DaemonStateMachineContext, DaemonStateMachineInput,
-    DaemonStateMachineSubscriber, NydusDaemon, RafsMountCmd, RafsMountStateSet, Trigger,
+    DaemonStateMachineSubscriber, FsBackendMountCmd, FsBackendType, NydusDaemon, RafsMountStateSet,
+    Trigger,
 };
 use nydus_utils::{einval, eio, eother, FuseChannel, FuseSession};
 use upgrade_manager::backend::unix_domain_socket::UdsBackend;
@@ -269,39 +270,37 @@ impl NydusDaemon for FusedevDaemon {
         self.session.lock().unwrap().set_fuse_fd(fds[0]);
 
         // Restore vfs
-        let vfs_state = match mgr_guard.get_opaque_raw(OpaqueKind::VfsState)? as Option<VfsState> {
-            Some(state) => state,
-            None => return Err(DaemonError::Common("Opaque does not exist".to_string())),
-        };
+        let vfs_state = mgr_guard
+            .get_opaque_raw(OpaqueKind::VfsState)?
+            .ok_or_else(|| DaemonError::Common("Opaque does not exist".to_string()))?;
+
+        let mount_state: RafsMountStateSet = mgr_guard
+            .get_opaque_raw(OpaqueKind::RafsMounts)?
+            .ok_or_else(|| DaemonError::Common("Opaque RafsMounts does not exist".to_string()))?;
+
+        let trace_kinds = mgr_guard.get_opaque_kinds();
+
+        drop(mgr_guard);
 
         <&Vfs>::restore(self.get_vfs(), &vfs_state)
             .map_err(|_| DaemonError::Common("Fail in restoring".to_string()))?;
 
         // Restore RAFS mounts
-        if let Some(mount_state) =
-            mgr_guard.get_opaque_raw(OpaqueKind::RafsMounts)? as Option<RafsMountStateSet>
-        {
-            for item in mount_state.items {
-                self.mount(
-                    RafsMountCmd {
-                        mountpoint: item.mountpoint,
-                        source: item.bootstrap,
-                        config: item.config,
-                        prefetch_files: None,
-                    },
-                    Some(&vfs_state),
-                    false,
-                )?;
-            }
-        } else {
-            // TODO: To be discussed: Need return error to API?
-            warn!("No mount states was found!");
+        for item in mount_state.items {
+            // Only support Rafs live-upgrade right now.
+            self.mount(
+                FsBackendMountCmd {
+                    fs_type: FsBackendType::Rafs,
+                    mountpoint: item.mountpoint,
+                    source: item.bootstrap,
+                    config: item.config,
+                    prefetch_files: None,
+                },
+                Some(&vfs_state),
+            )?;
         }
 
-        info!(
-            "Restored opaques {:?} from remote UDS server",
-            mgr_guard.get_opaque_kinds()
-        );
+        info!("Restored opaques {:?} from remote UDS server", trace_kinds);
 
         // Start to serve fuse request
         let conn = self.conn.load(Ordering::Acquire);
@@ -451,6 +450,7 @@ pub fn create_nydus_daemon(
     api_sock: Option<impl AsRef<Path>>,
     upgrade: bool,
     fp: FailoverPolicy,
+    mount_cmd: Option<FsBackendMountCmd>,
 ) -> Result<Arc<dyn NydusDaemon + Send>> {
     let (trigger, events_rx) = channel::<DaemonStateMachineInput>();
     let session = FuseSession::new(Path::new(mountpoint), "rafs", "")?;
@@ -496,6 +496,9 @@ pub fn create_nydus_daemon(
         && !is_crashed(mountpoint, api_sock.as_ref().unwrap())?)
         || api_sock.is_none()
     {
+        if let Some(cmd) = mount_cmd {
+            daemon.mount(cmd, None)?;
+        }
         daemon.session.lock().unwrap().mount()?;
         daemon
             .on_event(DaemonStateMachineInput::Mount)

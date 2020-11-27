@@ -28,7 +28,7 @@ use upgrade_manager::UpgradeManager;
 use crate::daemon;
 use daemon::{
     DaemonError, DaemonResult, DaemonState, DaemonStateMachineContext, DaemonStateMachineInput,
-    DaemonStateMachineSubscriber, NydusDaemon, Trigger,
+    DaemonStateMachineSubscriber, FsBackendMountCmd, NydusDaemon, Trigger,
 };
 
 const VIRTIO_F_VERSION_1: u32 = 32;
@@ -282,6 +282,7 @@ pub fn create_nydus_daemon(
     supervisor: Option<String>,
     sock: &str,
     vfs: Arc<Vfs>,
+    mount_cmd: Option<FsBackendMountCmd>,
 ) -> Result<Arc<dyn NydusDaemon + Send>> {
     let vu_daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),
@@ -305,6 +306,10 @@ pub fn create_nydus_daemon(
 
     let machine = DaemonStateMachineContext::new(daemon.clone(), events_rx, result_sender);
     machine.kick_state_machine()?;
+
+    if let Some(cmd) = mount_cmd {
+        daemon.mount(cmd, None)?;
+    }
 
     // TODO: In fact, for virtiofs, below event triggers virtio-queue setup and some other
     // preparation/connection work. So this event name `Mount` might not be suggestive.

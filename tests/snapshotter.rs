@@ -115,6 +115,7 @@ impl Snapshotter {
         let mount_info = json!({
             "source": self.work_dir.join(source_name),
             "config": config.to_string(),
+            "fs_type": "rafs",
         });
         let endpoint = format!("/mount?mountpoint={}", mount_point);
         self.request(

@@ -224,8 +224,8 @@ impl UpgradeManager {
         Ok(())
     }
 
-    pub fn get_opaque_kinds(&mut self) -> Vec<&OpaqueKind> {
-        self.opaques.data.keys().collect()
+    pub fn get_opaque_kinds(&self) -> Vec<OpaqueKind> {
+        self.opaques.data.keys().cloned().collect()
     }
 }
 

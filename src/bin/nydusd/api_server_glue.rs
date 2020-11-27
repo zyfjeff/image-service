@@ -4,6 +4,7 @@
 // SPDX-License-Identifier: (Apache-2.0 AND BSD-3-Clause)
 
 use std::convert::From;
+use std::str::FromStr;
 use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
 
@@ -19,7 +20,9 @@ use nydus_api::http_endpoint::{
 use nydus_utils::{epipe, last_error};
 use rafs::io_stats;
 
-use crate::daemon::{DaemonError, NydusDaemon, RafsMountCmd, RafsUmountCmd};
+use crate::daemon::{
+    DaemonError, FsBackendMountCmd, FsBackendType, FsBackendUmountCmd, NydusDaemon,
+};
 #[cfg(fusedev)]
 use crate::fusedev::FusedevDaemon;
 use crate::SubscriberWrapper;
@@ -175,24 +178,29 @@ impl ApiServer {
     }
 
     fn do_mount(&self, mountpoint: String, cmd: ApiMountCmd) -> ApiResponse {
+        let fs_type =
+            FsBackendType::from_str(&cmd.fs_type).map_err(|e| ApiError::MountFailure(e.into()))?;
         self.daemon
             .mount(
-                RafsMountCmd {
+                FsBackendMountCmd {
+                    fs_type,
                     mountpoint,
                     config: cmd.config,
                     source: cmd.source,
                     prefetch_files: cmd.prefetch_files,
                 },
                 None,
-                true,
             )
             .map(|_| ApiResponsePayload::Empty)
             .map_err(|e| ApiError::MountFailure(e.into()))
     }
 
     fn do_remount(&self, mountpoint: String, cmd: ApiMountCmd) -> ApiResponse {
+        let fs_type =
+            FsBackendType::from_str(&cmd.fs_type).map_err(|e| ApiError::MountFailure(e.into()))?;
         self.daemon
-            .remount(RafsMountCmd {
+            .remount(FsBackendMountCmd {
+                fs_type,
                 mountpoint,
                 config: cmd.config,
                 source: cmd.source,
@@ -204,7 +212,7 @@ impl ApiServer {
 
     fn do_umount(&self, mountpoint: String) -> ApiResponse {
         self.daemon
-            .umount(RafsUmountCmd { mountpoint })
+            .umount(FsBackendUmountCmd { mountpoint })
             .map(|_| ApiResponsePayload::Empty)
             .map_err(|e| ApiError::MountFailure(e.into()))
     }

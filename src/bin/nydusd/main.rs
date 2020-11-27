@@ -18,7 +18,6 @@ use std::convert::TryInto;
 use std::fs::File;
 use std::io::{Read, Result};
 use std::ops::DerefMut;
-use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::channel,
@@ -31,20 +30,16 @@ use nix::sys::signal;
 use rlimit::{rlim, Resource};
 
 use clap::{App, Arg};
-use fuse_rs::{
-    api::{Vfs, VfsOptions},
-    passthrough::{Config, PassthroughFs},
-};
+use fuse_rs::api::{Vfs, VfsOptions};
 
 use event_manager::{EventManager, EventSubscriber, SubscriberOps};
 use vmm_sys_util::eventfd::EventFd;
 
 use nydus_api::http::start_http_thread;
-use nydus_utils::{dump_program_info, einval, log_level_to_verbosity, BuildTimeInfo};
-use rafs::fs::{Rafs, RafsConfig};
+use nydus_utils::{dump_program_info, log_level_to_verbosity, BuildTimeInfo};
 
 mod daemon;
-use daemon::{DaemonError, NydusDaemonSubscriber};
+use daemon::{DaemonError, FsBackendMountCmd, FsBackendType, NydusDaemonSubscriber};
 
 #[cfg(feature = "virtiofs")]
 mod virtiofs;
@@ -277,23 +272,6 @@ fn main() -> Result<()> {
     // can't change log level to a higher level than what is passed to `stderrlog`.
     log::set_max_level(v);
     dump_program_info();
-    // A string including multiple directories and regular files should be separated by white-spaces, e.g.
-    //      <path1> <path2> <path3>
-    // And each path should be relative to rafs root, e.g.
-    //      /foo1/bar1 /foo2/bar2
-    // Specifying both regular file and directory simultaneously is supported.
-    let prefetch_files: Vec<PathBuf>;
-    if let Some(files) = cmd_arguments_parsed.values_of("prefetch-files") {
-        prefetch_files = files.map(PathBuf::from).collect();
-        // Sanity check
-        for d in &prefetch_files {
-            if !d.starts_with(Path::new("/")) {
-                return Err(einval!(format!("Illegal prefetch files input {:?}", d)));
-            }
-        }
-    } else {
-        prefetch_files = Vec::new();
-    }
 
     // Retrieve arguments
     // shared-dir means fs passthrough
@@ -309,47 +287,49 @@ fn main() -> Result<()> {
         .unwrap_or(rlimit_nofile_default);
 
     let vfs = Vfs::new(VfsOptions::default());
-    if let Some(shared_dir) = shared_dir {
-        // Vfs by default enables no_open and writeback, passthroughfs
-        // needs to specify them explicitly.
-        // TODO(liubo): enable no_open_dir.
-        let fs_cfg = Config {
-            root_dir: shared_dir.to_string(),
-            do_import: false,
-            writeback: true,
-            no_open: true,
-            ..Default::default()
-        };
-        let passthrough_fs = PassthroughFs::new(fs_cfg).map_err(DaemonError::PassthroughFs)?;
-        passthrough_fs.import()?;
-        vfs.mount(Box::new(passthrough_fs), "/")?;
-        info!("vfs mounted");
-
+    let mount_cmd = if let Some(shared_dir) = shared_dir {
         info!(
             "set rlimit {}, default {}",
             rlimit_nofile, rlimit_nofile_default
         );
+
         if rlimit_nofile != 0 {
             Resource::NOFILE.set(rlimit_nofile, rlimit_nofile)?;
         }
-    }
 
-    if let Some(bootstrap) = bootstrap {
+        let cmd = FsBackendMountCmd {
+            fs_type: FsBackendType::PassthroughFs,
+            source: shared_dir.to_string(),
+            config: "".to_string(),
+            mountpoint: "/".to_string(),
+            prefetch_files: None,
+        };
+
+        Some(cmd)
+    } else if let Some(b) = bootstrap {
         let config = cmd_arguments_parsed.value_of("config").ok_or_else(|| {
             DaemonError::InvalidArguments("config file is not provided".to_string())
         })?;
 
-        let rafs_conf = RafsConfig::from_file(&config).map_err(DaemonError::Rafs)?;
+        let prefetch_files: Option<Vec<String>> =
+            if let Some(files) = cmd_arguments_parsed.values_of("prefetch-files") {
+                Some(files.map(|s| s.to_string()).collect())
+            } else {
+                None
+            };
 
-        let mut file = Box::new(File::open(bootstrap)?) as Box<dyn rafs::RafsIoRead>;
-        let mut rafs =
-            Rafs::new(rafs_conf.clone(), &"/".to_string(), &mut file).map_err(DaemonError::Rafs)?;
-        rafs.import(&mut file, Some(prefetch_files))
-            .map_err(DaemonError::Rafs)?;
-        info!("rafs mounted: {}", rafs_conf);
-        vfs.mount(Box::new(rafs), "/")?;
-        info!("vfs mounted");
-    }
+        let cmd = FsBackendMountCmd {
+            fs_type: FsBackendType::Rafs,
+            source: b.to_string(),
+            config: std::fs::read_to_string(config)?,
+            mountpoint: "/".to_string(),
+            prefetch_files,
+        };
+
+        Some(cmd)
+    } else {
+        None
+    };
 
     let mut event_manager = EventManager::<Arc<dyn SubscriberWrapper>>::new().unwrap();
 
@@ -375,7 +355,7 @@ fn main() -> Result<()> {
         let vu_sock = cmd_arguments_parsed.value_of("sock").ok_or_else(|| {
             DaemonError::InvalidArguments("vhost socket must be provided!".to_string())
         })?;
-        create_nydus_daemon(daemon_id, supervisor, vu_sock, vfs)?
+        create_nydus_daemon(daemon_id, supervisor, vu_sock, vfs, mount_cmd)?
     };
     #[cfg(feature = "fusedev")]
     let daemon = {
@@ -408,6 +388,7 @@ fn main() -> Result<()> {
             apisock,
             cmd_arguments_parsed.is_present("upgrade"),
             p,
+            mount_cmd,
         )
         .map(|d| {
             info!("Fuse daemon started!");
