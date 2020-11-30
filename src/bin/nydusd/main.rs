@@ -235,7 +235,18 @@ fn main() -> Result<()> {
                 .help("Specify the number of fuse service threads")
                 .takes_value(true)
                 .required(false)
-                .global(true),
+                .global(true)
+                .validator(|v| {
+                    if let Ok(t) = v.parse::<i32>() {
+                        if t > 0 {
+                            Ok(())
+                        } else {
+                            Err("Zero thread count is not allowed".to_string())
+                        }
+                    } else {
+                        Err("Input thread number is not legal".to_string())
+                    }
+                }),
         );
 
     #[cfg(feature = "virtiofs")]
