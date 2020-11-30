@@ -32,7 +32,7 @@ nydus-api = { path = "api" }
 upgrade-manager = { path = "upgrade" }
 vm-memory = { version = ">=0.2.0", optional = true }
 
-event-manager = { git = "https://github.com/rust-vmm/event-manager.git", branch = "master"}
+event-manager = { git = "https://github.com/rust-vmm/event-manager.git", tag = "v0.2.0"}
 fuse-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.git", optional = true }
 vhost-rs = { git = "https://github.com/cloud-hypervisor/vhost.git", branch = "dragonball", package = "vhost", optional = true }
 vhost-user-backend = { git = "https://github.com/cloud-hypervisor/vhost-user-backend.git", package="vhost_user_backend", optional = true }

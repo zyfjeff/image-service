@@ -299,7 +299,7 @@ dependencies = [
 [[package]]
 name = "event-manager"
 version = "0.2.0"
-source = "git+https://github.com/rust-vmm/event-manager.git#abac92899908e6a23a6927b5c1c9d4d53bc4f59e"
+source = "git+https://github.com/rust-vmm/event-manager.git?tag=v0.2.0#abac92899908e6a23a6927b5c1c9d4d53bc4f59e"
 dependencies = [
  "libc",
  "vmm-sys-util",
