@@ -8,6 +8,7 @@ use std::io;
 use std::sync::mpsc::{RecvError, SendError};
 
 use micro_http::{Body, Method, Request, Response, StatusCode, Version};
+use serde::Deserialize;
 use serde_json::Error as SerdeError;
 
 use crate::http::{extract_query_part, EndpointHandler};
@@ -100,21 +101,13 @@ pub struct ApiMountCmd {
     pub prefetch_files: Option<Vec<String>>,
 }
 
-impl ApiMountCmd {
-    pub fn parse(body: &Body) -> Result<ApiMountCmd, HttpError> {
-        serde_json::from_slice::<ApiMountCmd>(body.raw()).map_err(HttpError::ParseBody)
-    }
-}
-
 #[derive(Clone, Deserialize, Debug)]
 pub struct ApiUmountCmd {
     pub mountpoint: String,
 }
 
-impl ApiUmountCmd {
-    pub fn parse(body: &Body) -> Result<ApiUmountCmd, HttpError> {
-        serde_json::from_slice::<ApiUmountCmd>(body.raw()).map_err(HttpError::ParseBody)
-    }
+fn parse_body<'a, F: Deserialize<'a>>(b: &'a Body) -> Result<F, HttpError> {
+    serde_json::from_slice::<F>(b.raw()).map_err(HttpError::ParseBody)
 }
 
 #[derive(Clone, Deserialize, Debug)]
@@ -213,10 +206,6 @@ fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(
     }
 }
 
-fn parse_configure_daemon_request(body: &Body) -> Result<DaemonConf, HttpError> {
-    serde_json::from_slice::<DaemonConf>(body.raw()).map_err(HttpError::ParseBody)
-}
-
 pub struct InfoHandler {}
 impl EndpointHandler for InfoHandler {
     fn handle_request(
@@ -230,7 +219,7 @@ impl EndpointHandler for InfoHandler {
                 convert_to_response(r, HttpError::Info)
             }
             (Method::Put, Some(body)) => {
-                let conf = parse_configure_daemon_request(body)?;
+                let conf = parse_body(body)?;
                 let r = kicker(ApiRequest::ConfigureDaemon(conf));
                 convert_to_response(r, HttpError::Configure)
             }
@@ -251,12 +240,12 @@ impl EndpointHandler for MountHandler {
         })?;
         match (req.method(), req.body.as_ref()) {
             (Method::Post, Some(body)) => {
-                let cmd = ApiMountCmd::parse(body)?;
+                let cmd = parse_body(body)?;
                 let r = kicker(ApiRequest::Mount((mountpoint, cmd)));
                 convert_to_response(r, HttpError::Mount)
             }
             (Method::Put, Some(body)) => {
-                let cmd = ApiMountCmd::parse(body)?;
+                let cmd = parse_body(body)?;
                 let r = kicker(ApiRequest::Remount((mountpoint, cmd)));
                 convert_to_response(r, HttpError::Mount)
             }
