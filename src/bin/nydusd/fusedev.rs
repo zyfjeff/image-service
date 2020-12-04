@@ -274,9 +274,10 @@ impl NydusDaemon for FusedevDaemon {
             .get_opaque_raw(OpaqueKind::VfsState)?
             .ok_or_else(|| DaemonError::Common("Opaque does not exist".to_string()))?;
 
-        let mount_state: RafsMountStateSet = mgr_guard
-            .get_opaque_raw(OpaqueKind::RafsMounts)?
-            .ok_or_else(|| DaemonError::Common("Opaque RafsMounts does not exist".to_string()))?;
+        // Mounts state set is allowed to be empty since nydusd can have no fs backend.
+        // The resource correction is already guaranteed by `Versionize`.
+        let mounts_set: Option<RafsMountStateSet> =
+            mgr_guard.get_opaque_raw(OpaqueKind::RafsMounts)?;
 
         let trace_kinds = mgr_guard.get_opaque_kinds();
 
@@ -286,18 +287,20 @@ impl NydusDaemon for FusedevDaemon {
             .map_err(|_| DaemonError::Common("Fail in restoring".to_string()))?;
 
         // Restore RAFS mounts
-        for item in mount_state.items {
-            // Only support Rafs live-upgrade right now.
-            self.mount(
-                FsBackendMountCmd {
-                    fs_type: FsBackendType::Rafs,
-                    mountpoint: item.mountpoint,
-                    source: item.bootstrap,
-                    config: item.config,
-                    prefetch_files: None,
-                },
-                Some(&vfs_state),
-            )?;
+        if let Some(set) = mounts_set {
+            for item in set.items {
+                // Only support Rafs live-upgrade right now.
+                self.mount(
+                    FsBackendMountCmd {
+                        fs_type: FsBackendType::Rafs,
+                        mountpoint: item.mountpoint,
+                        source: item.bootstrap,
+                        config: item.config,
+                        prefetch_files: None,
+                    },
+                    Some(&vfs_state),
+                )?;
+            }
         }
 
         info!("Restored opaques {:?} from remote UDS server", trace_kinds);
