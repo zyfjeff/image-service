@@ -230,7 +230,10 @@ impl FromStr for FsBackendType {
         match s {
             "rafs" => Ok(FsBackendType::Rafs),
             "passthrough_fs" => Ok(FsBackendType::PassthroughFs),
-            o => Err(DaemonError::InvalidArguments(o.to_string())),
+            o => Err(DaemonError::InvalidArguments(format!(
+                "Fs backend type only accepts 'rafs' and 'passthrough_fs', but {} was specified",
+                o
+            ))),
         }
     }
 }
