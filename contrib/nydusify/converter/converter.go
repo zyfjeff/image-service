@@ -42,7 +42,7 @@ func New(option Option) (*Converter, error) {
 	if err := os.RemoveAll(sourceDir); err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(sourceDir, 0666); err != nil {
+	if err := os.MkdirAll(sourceDir, 0770); err != nil {
 		return nil, err
 	}
 
