@@ -252,6 +252,50 @@ pub struct FsBackendUmountCmd {
     pub mountpoint: String,
 }
 
+#[serde_as]
+#[derive(Serialize, Clone)]
+pub struct FsBackendDesc {
+    backend_type: FsBackendType,
+    mountpoint: String,
+    #[serde_as(as = "DisplayFromStr")]
+    mounted_time: DateTime<Local>,
+    config: serde_json::Value,
+}
+
+#[derive(Default, Serialize, Clone)]
+pub struct FsBackendCollection(HashMap<String, FsBackendDesc>);
+
+impl FsBackendCollection {
+    fn add(&mut self, id: &str, cmd: &FsBackendMountCmd) -> DaemonResult<()> {
+        // TODO: This is ugly now. Use Rust `proc_macro` to wrap this wash.
+        let mut config: serde_json::Value =
+            serde_json::from_str(&cmd.config).map_err(DaemonError::Serde)?;
+
+        if config["device"]["backend"]["type"] == "oss" {
+            config["device"]["backend"]["config"]["access_key_id"].take();
+            config["device"]["backend"]["config"]["access_key_secret"].take();
+        } else if config["device"]["backend"]["type"] == "registry" {
+            config["device"]["backend"]["config"]["auth"].take();
+            config["device"]["backend"]["config"]["registry_token"].take();
+        }
+
+        let desc = FsBackendDesc {
+            backend_type: cmd.fs_type.clone(),
+            mountpoint: cmd.mountpoint.clone(),
+            mounted_time: chrono::Local::now(),
+            config,
+        };
+
+        self.0.insert(id.to_string(), desc);
+
+        Ok(())
+    }
+
+    fn del(&mut self, id: &str) {
+        self.0.remove(id);
+    }
+}
+
 pub trait NydusDaemon: DaemonStateMachineSubscriber {
     fn start(&self) -> DaemonResult<()>;
     fn wait(&self) -> DaemonResult<()>;
@@ -309,6 +353,7 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
                 .map_err(|e| DaemonError::Vfs(VfsErrorKind::Mount(e)))?;
         }
         info!("vfs mounted");
+        self.backend_collection().add(&cmd.mountpoint, &cmd)?;
 
         // Add mounts opaque to UpgradeManager
         if let Some(mut mgr_guard) = self.get_upgrade_mgr() {

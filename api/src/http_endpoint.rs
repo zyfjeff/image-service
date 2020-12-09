@@ -61,6 +61,7 @@ pub enum ApiResponsePayload {
     /// Nydus filesystem per-file metrics
     FsFilesMetrics(String),
     FsFilesPatterns(String),
+    BackendMetrics(String),
 }
 
 /// This is the response sent by the API server through the mpsc channel.
@@ -78,6 +79,7 @@ pub enum ApiRequest {
     ExportGlobalMetrics(Option<String>),
     ExportFilesMetrics(Option<String>),
     ExportAccessPatterns(Option<String>),
+    ExportBackendMetrics(Option<String>),
     SendFuseFd,
     Takeover,
     Exit,
@@ -195,6 +197,7 @@ fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(
                 FsFilesMetrics(d) => success_response(Some(d)),
                 FsGlobalMetrics(d) => success_response(Some(d)),
                 FsFilesPatterns(d) => success_response(Some(d)),
+                BackendMetrics(d) => success_response(Some(d)),
             };
 
             Ok(resp)
@@ -267,7 +270,7 @@ impl EndpointHandler for MetricsHandler {
     ) -> HttpResult {
         match (req.method(), req.body.as_ref()) {
             (Method::Get, None) => {
-                let id = extract_query_part(req, &"id");
+                let id = extract_query_part(req, "id");
                 let r = kicker(ApiRequest::ExportGlobalMetrics(id));
                 convert_to_response(r, HttpError::GlobalMetrics)
             }
@@ -285,7 +288,7 @@ impl EndpointHandler for MetricsFilesHandler {
     ) -> HttpResult {
         match (req.method(), req.body.as_ref()) {
             (Method::Get, None) => {
-                let id = extract_query_part(req, &"id");
+                let id = extract_query_part(req, "id");
                 let r = kicker(ApiRequest::ExportFilesMetrics(id));
                 convert_to_response(r, HttpError::FsFilesMetrics)
             }
@@ -303,8 +306,26 @@ impl EndpointHandler for MetricsPatternHandler {
     ) -> HttpResult {
         match (req.method(), req.body.as_ref()) {
             (Method::Get, None) => {
-                let id = extract_query_part(req, &"id");
+                let id = extract_query_part(req, "id");
                 let r = kicker(ApiRequest::ExportAccessPatterns(id));
+                convert_to_response(r, HttpError::Pattern)
+            }
+            _ => Err(HttpError::BadRequest),
+        }
+    }
+}
+
+pub struct MetricsBackendHandler {}
+impl EndpointHandler for MetricsBackendHandler {
+    fn handle_request(
+        &self,
+        req: &Request,
+        kicker: &dyn Fn(ApiRequest) -> ApiResponse,
+    ) -> HttpResult {
+        match (req.method(), req.body.as_ref()) {
+            (Method::Get, None) => {
+                let id = extract_query_part(req, "id");
+                let r = kicker(ApiRequest::ExportBackendMetrics(id));
                 convert_to_response(r, HttpError::Pattern)
             }
             _ => Err(HttpError::BadRequest),

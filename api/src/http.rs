@@ -20,8 +20,8 @@ use vmm_sys_util::eventfd::EventFd;
 
 use crate::http_endpoint::{
     error_response, ApiError, ApiRequest, ApiResponse, ExitHandler, HttpError, HttpResult,
-    InfoHandler, MetricsFilesHandler, MetricsHandler, MetricsPatternHandler, MountHandler,
-    SendFuseFdHandler, TakeoverHandler,
+    InfoHandler, MetricsBackendHandler, MetricsFilesHandler, MetricsHandler, MetricsPatternHandler,
+    MountHandler, SendFuseFdHandler, TakeoverHandler,
 };
 
 const HTTP_ROOT: &str = "/api/v1";
@@ -64,6 +64,7 @@ lazy_static! {
         r.routes.insert(endpoint!("/metrics"), Box::new(MetricsHandler{}));
         r.routes.insert(endpoint!("/metrics/files"), Box::new(MetricsFilesHandler{}));
         r.routes.insert(endpoint!("/metrics/pattern"), Box::new(MetricsPatternHandler{}));
+        r.routes.insert(endpoint!("/metrics/backend"), Box::new(MetricsBackendHandler{}));
         r.routes.insert(endpoint!("/daemon/fuse/sendfd"), Box::new(SendFuseFdHandler{}));
         r.routes.insert(endpoint!("/daemon/fuse/takeover"), Box::new(TakeoverHandler{}));
         r.routes.insert(endpoint!("/daemon/exit"), Box::new(ExitHandler{}));

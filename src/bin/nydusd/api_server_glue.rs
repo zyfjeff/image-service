@@ -74,6 +74,7 @@ impl ApiServer {
             ApiRequest::ExportGlobalMetrics(id) => Self::export_global_metrics(id),
             ApiRequest::ExportFilesMetrics(id) => Self::export_files_metrics(id),
             ApiRequest::ExportAccessPatterns(id) => Self::export_access_patterns(id),
+            ApiRequest::ExportBackendMetrics(id) => Self::export_backend_metrics(id),
             ApiRequest::SendFuseFd => self.send_fuse_fd(),
             ApiRequest::Takeover => self.do_takeover(),
             ApiRequest::Exit => self.do_exit(),
@@ -132,6 +133,12 @@ impl ApiServer {
     fn export_access_patterns(id: Option<String>) -> ApiResponse {
         io_stats::export_files_access_pattern(&id)
             .map(ApiResponsePayload::FsFilesPatterns)
+            .map_err(|e| ApiError::Metrics(format!("{:?}", e)))
+    }
+
+    fn export_backend_metrics(id: Option<String>) -> ApiResponse {
+        io_stats::export_backend_metrics(&id)
+            .map(ApiResponsePayload::BackendMetrics)
             .map_err(|e| ApiError::Metrics(format!("{:?}", e)))
     }
 
