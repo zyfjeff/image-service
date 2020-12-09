@@ -63,27 +63,23 @@ impl<'a> Builder<'a> {
     fn create_whiteout_file(&mut self, path: &PathBuf) -> Result<()> {
         match self.whiteout_spec {
             "overlayfs" => {
-                // get real path form oci whiteout file path
-                let wh_name = path.file_name().unwrap();
-                let real_name = &wh_name.to_str().unwrap()[".wh.".len()..];
-
-                let mut real_path = PathBuf::new();
-                real_path.push(path.parent().unwrap());
-                real_path.push(real_name);
-
                 let dev: dev_t = makedev(0, 0);
                 if let Err(nix::Error::Sys(errno)) = mknod(
-                    &real_path,
+                    path.to_str().unwrap(),
                     SFlag::S_IFCHR,
                     Mode::S_IRUSR | Mode::S_IWUSR,
                     dev,
                 ) {
-                    println!("mknod failed: {}", errno.desc());
+                    println!("mknod failed: {} {:?}", errno.desc(), path);
                     return Err(errno.into());
                 }
             }
             "oci" => {
-                self.create_file(path, b"")?;
+                let file_name = PathBuf::from(format!(
+                    ".wh.{}",
+                    path.file_name().unwrap().to_str().unwrap()
+                ));
+                self.create_file(&path.parent().unwrap().join(file_name), b"")?;
             }
             _ => {
                 return Err(Error::new(ErrorKind::InvalidInput, "invalid whiteout spec"));
@@ -96,14 +92,10 @@ impl<'a> Builder<'a> {
     fn create_opaque_entry(&mut self, path: &PathBuf) -> Result<()> {
         match self.whiteout_spec {
             "overlayfs" => {
-                self.set_xattr(
-                    &path.parent().unwrap().to_path_buf(),
-                    "trusted.overlay.opaque",
-                    "y".as_bytes(),
-                )?;
+                self.set_xattr(path, "trusted.overlay.opaque", "y".as_bytes())?;
             }
             "oci" => {
-                self.create_file(path, b"")?;
+                self.create_file(&path.join(".wh..wh..opq"), b"")?;
             }
             _ => {
                 return Err(Error::new(ErrorKind::InvalidInput, "invalid whiteout spec"));
@@ -180,31 +172,22 @@ impl<'a> Builder<'a> {
         let dir = self.work_dir.join("upper");
         self.create_dir(&dir)?;
 
-        self.create_large_file(&dir.join("root-large"), 13)?;
-        self.create_whiteout_file(&dir.join(".wh.root-large"))?;
-        self.create_file(&dir.join("root-2"), b"upper:root-2")?;
-        self.create_whiteout_file(&dir.join(".wh.root-2"))?;
+        self.create_whiteout_file(&dir.join("root-large"))?;
+        self.create_whiteout_file(&dir.join("root-2"))?;
 
         self.create_dir(&dir.join("sub"))?;
         self.create_file(&dir.join("sub/sub-1"), b"upper:sub-1")?;
-        self.create_whiteout_file(&dir.join("sub/.wh.some"))?;
-        self.create_file(&dir.join("sub/.wh.sub-2"), b"")?;
-        self.create_file(&dir.join("sub/.wh.sub-root-large-copy-hardlink-1"), b"")?;
+        self.create_whiteout_file(&dir.join("sub/some"))?;
+        self.create_whiteout_file(&dir.join("sub/sub-2"))?;
+        self.create_whiteout_file(&dir.join("sub/sub-root-large-copy-hardlink-1"))?;
 
         self.create_dir(&dir.join("sub/more"))?;
         self.create_file(&dir.join("sub/more/more-1"), b"upper:more-1")?;
-        self.create_opaque_entry(&dir.join("sub/more/.wh..wh..opq"))?;
+        self.create_opaque_entry(&dir.join("sub/more"))?;
         self.create_dir(&dir.join("sub/more/more-sub"))?;
         self.create_file(
             &dir.join("sub/more/more-sub/more-sub-2"),
             b"upper:more-sub-2",
-        )?;
-
-        self.create_dir(&dir.join("sub/some"))?;
-        self.create_dir(&dir.join("sub/some/some-sub"))?;
-        self.create_file(
-            &dir.join("sub/some/some-sub/some-sub-1"),
-            b"upper:some-sub-1",
         )?;
 
         Ok(())

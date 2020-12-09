@@ -55,10 +55,23 @@ fn test(
         compressor, enable_cache, cache_compressed, rafs_mode
     );
 
-    let tmp_dir = TempDir::new().map_err(|e| eother!(e))?;
+    // If the smoke test run in container based on overlayfs storage driver,
+    // the test will failed because we can't call `mknod` to create char device file.
+    // So please provide the env `TEST_WORKDIR_PREFIX` to specify a host path, allow
+    // `mknod` to create char device file in the non-overlayfs filesystem.
+    let tmp_dir_prefix =
+        std::env::var("TEST_WORKDIR_PREFIX").expect("Please specify `TEST_WORKDIR_PREFIX` env");
+    let tmp_dir = {
+        let path = if tmp_dir_prefix.ends_with("/") {
+            tmp_dir_prefix
+        } else {
+            format!("{}/", tmp_dir_prefix)
+        };
+        TempDir::new_with_prefix(path).map_err(|e| eother!(e))?
+    };
     let work_dir = tmp_dir.as_path().to_path_buf();
-    let lower_texture = format!("directory/{}/lower.result", whiteout_spec);
-    let overlay_texture = format!("directory/{}/overlay.result", whiteout_spec);
+    let lower_texture = format!("directory/lower.result");
+    let overlay_texture = format!("directory/overlay.result");
 
     let mut builder = builder::new(&work_dir, whiteout_spec);
 
@@ -221,7 +234,7 @@ fn integration_test_stargz() -> Result<()> {
     )?;
 
     nydusd.start(Some("bootstrap-overlay"), "mnt")?;
-    nydusd.check("directory/oci/overlay.result", "mnt")?;
+    nydusd.check("directory/overlay.result", "mnt")?;
     nydusd.umount("mnt");
 
     Ok(())
