@@ -2,8 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use nix::sys::stat::{dev_t, makedev, mknod, Mode, SFlag};
 use std::fs::{self, File};
-use std::io::{Result, Write};
+use std::io::{Error, ErrorKind, Result, Write};
 use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 
@@ -13,10 +14,14 @@ const NYDUS_IMAGE: &str = "./target-fusedev/debug/nydus-image";
 
 pub struct Builder<'a> {
     work_dir: &'a PathBuf,
+    whiteout_spec: &'a str,
 }
 
-pub fn new<'a>(work_dir: &'a PathBuf) -> Builder<'a> {
-    Builder { work_dir }
+pub fn new<'a>(work_dir: &'a PathBuf, whiteout_spec: &'a str) -> Builder<'a> {
+    Builder {
+        work_dir,
+        whiteout_spec,
+    }
 }
 
 impl<'a> Builder<'a> {
@@ -50,6 +55,59 @@ impl<'a> Builder<'a> {
         for i in 1..size_in_mb + 1 {
             // Write 1MB data
             file.write_all(&vec![i; 1024 * 1024])?;
+        }
+
+        Ok(())
+    }
+
+    fn create_whiteout_file(&mut self, path: &PathBuf) -> Result<()> {
+        match self.whiteout_spec {
+            "overlayfs" => {
+                // get real path form oci whiteout file path
+                let wh_name = path.file_name().unwrap();
+                let real_name = &wh_name.to_str().unwrap()[".wh.".len()..];
+
+                let mut real_path = PathBuf::new();
+                real_path.push(path.parent().unwrap());
+                real_path.push(real_name);
+
+                let dev: dev_t = makedev(0, 0);
+                if let Err(nix::Error::Sys(errno)) = mknod(
+                    &real_path,
+                    SFlag::S_IFCHR,
+                    Mode::S_IRUSR | Mode::S_IWUSR,
+                    dev,
+                ) {
+                    println!("mknod failed: {}", errno.desc());
+                    return Err(errno.into());
+                }
+            }
+            "oci" => {
+                self.create_file(path, b"")?;
+            }
+            _ => {
+                return Err(Error::new(ErrorKind::InvalidInput, "invalid whiteout spec"));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn create_opaque_entry(&mut self, path: &PathBuf) -> Result<()> {
+        match self.whiteout_spec {
+            "overlayfs" => {
+                self.set_xattr(
+                    &path.parent().unwrap().to_path_buf(),
+                    "trusted.overlay.opaque",
+                    "y".as_bytes(),
+                )?;
+            }
+            "oci" => {
+                self.create_file(path, b"")?;
+            }
+            _ => {
+                return Err(Error::new(ErrorKind::InvalidInput, "invalid whiteout spec"));
+            }
         }
 
         Ok(())
@@ -123,19 +181,19 @@ impl<'a> Builder<'a> {
         self.create_dir(&dir)?;
 
         self.create_large_file(&dir.join("root-large"), 13)?;
-        self.create_file(&dir.join(".wh.root-large"), b"")?;
+        self.create_whiteout_file(&dir.join(".wh.root-large"))?;
         self.create_file(&dir.join("root-2"), b"upper:root-2")?;
-        self.create_file(&dir.join(".wh.root-2"), b"")?;
+        self.create_whiteout_file(&dir.join(".wh.root-2"))?;
 
         self.create_dir(&dir.join("sub"))?;
         self.create_file(&dir.join("sub/sub-1"), b"upper:sub-1")?;
-        self.create_file(&dir.join("sub/.wh.some"), b"")?;
+        self.create_whiteout_file(&dir.join("sub/.wh.some"))?;
         self.create_file(&dir.join("sub/.wh.sub-2"), b"")?;
         self.create_file(&dir.join("sub/.wh.sub-root-large-copy-hardlink-1"), b"")?;
 
         self.create_dir(&dir.join("sub/more"))?;
         self.create_file(&dir.join("sub/more/more-1"), b"upper:more-1")?;
-        self.create_file(&dir.join("sub/more/.wh..wh..opq"), b"")?;
+        self.create_opaque_entry(&dir.join("sub/more/.wh..wh..opq"))?;
         self.create_dir(&dir.join("sub/more/more-sub"))?;
         self.create_file(
             &dir.join("sub/more/more-sub/more-sub-2"),
@@ -159,11 +217,12 @@ impl<'a> Builder<'a> {
 
         exec(
             format!(
-                "{:?} create --bootstrap {:?} --backend-type localfs --backend-config '{{\"dir\": {:?}}}' --log-level info --compressor {} {:?}",
+                "{:?} create --bootstrap {:?} --backend-type localfs --backend-config '{{\"dir\": {:?}}}' --log-level info --compressor {} --whiteout-spec {} {:?}",
                 NYDUS_IMAGE,
                 self.work_dir.join("bootstrap-lower"),
                 self.work_dir.join("blobs"),
                 compressor,
+                self.whiteout_spec,
                 lower_dir,
             )
             .as_str(),
@@ -178,12 +237,13 @@ impl<'a> Builder<'a> {
 
         exec(
             format!(
-                "{:?} create --parent-bootstrap {:?} --bootstrap {:?} --backend-type localfs --backend-config '{{\"dir\": {:?}}}' --log-level info --compressor {} {:?}",
+                "{:?} create --parent-bootstrap {:?} --bootstrap {:?} --backend-type localfs --backend-config '{{\"dir\": {:?}}}' --log-level info --compressor {} --whiteout-spec {} {:?}",
                 NYDUS_IMAGE,
                 self.work_dir.join("bootstrap-lower"),
                 self.work_dir.join("bootstrap-overlay"),
                 self.work_dir.join("blobs"),
                 compressor,
+                self.whiteout_spec,
                 upper_dir,
             )
             .as_str(),

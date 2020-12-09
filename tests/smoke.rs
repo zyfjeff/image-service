@@ -46,6 +46,7 @@ fn test(
     enable_cache: bool,
     cache_compressed: bool,
     rafs_mode: &str,
+    whiteout_spec: &str,
 ) -> Result<()> {
     // std::thread::sleep(std::time::Duration::from_secs(1000));
 
@@ -56,8 +57,10 @@ fn test(
 
     let tmp_dir = TempDir::new().map_err(|e| eother!(e))?;
     let work_dir = tmp_dir.as_path().to_path_buf();
+    let lower_texture = format!("directory/{}/lower.result", whiteout_spec);
+    let overlay_texture = format!("directory/{}/overlay.result", whiteout_spec);
 
-    let mut builder = builder::new(&work_dir);
+    let mut builder = builder::new(&work_dir, whiteout_spec);
 
     {
         // Create & build lower rootfs
@@ -74,7 +77,7 @@ fn test(
             true,
         )?;
         nydusd.start(Some("bootstrap-lower"), "mnt")?;
-        nydusd.check("directory/lower.result", "mnt")?;
+        nydusd.check(&lower_texture, "mnt")?;
         nydusd.umount("mnt");
     }
 
@@ -94,7 +97,7 @@ fn test(
             true,
         )?;
         nydusd.start(Some("bootstrap-overlay"), "mnt")?;
-        nydusd.check("directory/overlay.result", "mnt")?;
+        nydusd.check(&overlay_texture, "mnt")?;
         nydusd.umount("mnt");
     }
 
@@ -109,7 +112,7 @@ fn test(
             true,
         )?;
         nydusd.start(Some("bootstrap-overlay"), "mnt")?;
-        nydusd.check("directory/overlay.result", "mnt")?;
+        nydusd.check(&overlay_texture, "mnt")?;
         nydusd.umount("mnt");
     }
 
@@ -128,42 +131,47 @@ fn integration_test_init() -> Result<()> {
 
 #[test]
 fn integration_test_directory_1() -> Result<()> {
-    test("lz4_block", true, false, "direct")
+    test("lz4_block", true, false, "direct", "oci")
 }
 
 #[test]
 fn integration_test_directory_2() -> Result<()> {
-    test("lz4_block", false, false, "direct")
+    test("lz4_block", false, false, "direct", "oci")
 }
 
 #[test]
 fn integration_test_directory_3() -> Result<()> {
-    test("gzip", false, false, "direct")
+    test("gzip", false, false, "direct", "oci")
 }
 
 #[test]
 fn integration_test_directory_4() -> Result<()> {
-    test("none", true, false, "direct")
+    test("none", true, false, "direct", "oci")
 }
 
 #[test]
 fn integration_test_directory_5() -> Result<()> {
-    test("gzip", true, true, "cached")
+    test("gzip", true, true, "cached", "oci")
 }
 
 #[test]
 fn integration_test_directory_6() -> Result<()> {
-    test("none", false, true, "cached")
+    test("none", false, true, "cached", "oci")
 }
 
 #[test]
 fn integration_test_directory_7() -> Result<()> {
-    test("lz4_block", false, true, "cached")
+    test("lz4_block", false, true, "cached", "oci")
 }
 
 #[test]
 fn integration_test_directory_8() -> Result<()> {
-    test("lz4_block", true, true, "cached")
+    test("lz4_block", true, true, "cached", "oci")
+}
+
+#[test]
+fn integration_test_directory_9() -> Result<()> {
+    test("lz4_block", true, false, "direct", "overlayfs")
 }
 
 #[test]
@@ -198,7 +206,7 @@ fn integration_test_stargz() -> Result<()> {
         false,
     )?;
 
-    let mut builder = builder::new(&work_dir);
+    let mut builder = builder::new(&work_dir, "oci");
 
     builder.build_stargz_lower()?;
     builder.build_stargz_upper()?;
@@ -213,7 +221,7 @@ fn integration_test_stargz() -> Result<()> {
     )?;
 
     nydusd.start(Some("bootstrap-overlay"), "mnt")?;
-    nydusd.check("directory/overlay.result", "mnt")?;
+    nydusd.check("directory/oci/overlay.result", "mnt")?;
     nydusd.umount("mnt");
 
     Ok(())
