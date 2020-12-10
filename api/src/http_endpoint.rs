@@ -62,6 +62,7 @@ pub enum ApiResponsePayload {
     FsFilesMetrics(String),
     FsFilesPatterns(String),
     BackendMetrics(String),
+    BlobcacheMetrics(String),
 }
 
 /// This is the response sent by the API server through the mpsc channel.
@@ -80,6 +81,7 @@ pub enum ApiRequest {
     ExportFilesMetrics(Option<String>),
     ExportAccessPatterns(Option<String>),
     ExportBackendMetrics(Option<String>),
+    ExportBlobcacheMetrics(Option<String>),
     SendFuseFd,
     Takeover,
     Exit,
@@ -198,6 +200,7 @@ fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(
                 FsGlobalMetrics(d) => success_response(Some(d)),
                 FsFilesPatterns(d) => success_response(Some(d)),
                 BackendMetrics(d) => success_response(Some(d)),
+                BlobcacheMetrics(d) => success_response(Some(d)),
             };
 
             Ok(resp)
@@ -326,6 +329,24 @@ impl EndpointHandler for MetricsBackendHandler {
             (Method::Get, None) => {
                 let id = extract_query_part(req, "id");
                 let r = kicker(ApiRequest::ExportBackendMetrics(id));
+                convert_to_response(r, HttpError::Pattern)
+            }
+            _ => Err(HttpError::BadRequest),
+        }
+    }
+}
+
+pub struct MetricsBlobcacheHandler {}
+impl EndpointHandler for MetricsBlobcacheHandler {
+    fn handle_request(
+        &self,
+        req: &Request,
+        kicker: &dyn Fn(ApiRequest) -> ApiResponse,
+    ) -> HttpResult {
+        match (req.method(), req.body.as_ref()) {
+            (Method::Get, None) => {
+                let id = extract_query_part(req, "id");
+                let r = kicker(ApiRequest::ExportBlobcacheMetrics(id));
                 convert_to_response(r, HttpError::Pattern)
             }
             _ => Err(HttpError::BadRequest),
