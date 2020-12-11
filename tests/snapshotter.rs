@@ -10,8 +10,8 @@ use std::thread;
 
 use sendfd::{RecvWithFd, SendWithFd};
 use serde_json::json;
+use serde_json::value::Value;
 
-use nydus_api::http_endpoint::DaemonInfo;
 use nydus_utils::exec;
 
 pub struct Snapshotter {
@@ -79,8 +79,8 @@ impl Snapshotter {
 
     pub fn get_status(&self, apisock: &PathBuf) -> String {
         let resp = self.request(apisock, "GET", "/daemon", None).unwrap();
-        let info: DaemonInfo = serde_json::from_str(&resp).unwrap();
-        info.state
+        let info: Value = serde_json::from_str(&resp).unwrap();
+        info["state"].as_str().unwrap().to_string()
     }
 
     pub fn kill_nydusd(&self, apisock: &PathBuf) {

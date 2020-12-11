@@ -48,7 +48,7 @@ use crate::SubscriberWrapper;
 use crate::EVENT_MANAGER_RUN;
 
 #[allow(dead_code)]
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[derive(Debug, Hash, PartialEq, Eq, Serialize)]
 pub enum DaemonState {
     INIT = 1,
     RUNNING = 2,
@@ -249,7 +249,7 @@ pub struct DaemonInfo {
     pub version: BuildTimeInfo,
     pub id: Option<String>,
     pub supervisor: Option<String>,
-    pub state: String,
+    pub state: DaemonState,
     pub backend_collection: FsBackendCollection,
 }
 
@@ -347,7 +347,7 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
             version: self.version(),
             id: self.id(),
             supervisor: self.supervisor(),
-            state: self.get_state().to_string(),
+            state: self.get_state(),
             backend_collection: self.backend_collection().deref().clone(),
         };
 

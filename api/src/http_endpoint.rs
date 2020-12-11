@@ -130,10 +130,8 @@ pub enum HttpError {
     Pattern(ApiError),
     Configure(ApiError),
     Upgrade(ApiError),
-}
-
-fn to_string(d: &impl serde::Serialize) -> Result<String, HttpError> {
-    serde_json::to_string(d).map_err(HttpError::SerdeJsonSerialize)
+    BlobcacheMetrics(ApiError),
+    BackendMetrics(ApiError),
 }
 
 fn success_response(body: Option<String>) -> Response {
@@ -187,7 +185,7 @@ fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(
             use ApiResponsePayload::*;
             let resp = match r {
                 Empty => success_response(None),
-                DaemonInfo(d) => success_response(Some(to_string(&d)?)),
+                DaemonInfo(d) => success_response(Some(d)),
                 FsFilesMetrics(d) => success_response(Some(d)),
                 FsGlobalMetrics(d) => success_response(Some(d)),
                 FsFilesPatterns(d) => success_response(Some(d)),
@@ -321,7 +319,7 @@ impl EndpointHandler for MetricsBackendHandler {
             (Method::Get, None) => {
                 let id = extract_query_part(req, "id");
                 let r = kicker(ApiRequest::ExportBackendMetrics(id));
-                convert_to_response(r, HttpError::Pattern)
+                convert_to_response(r, HttpError::BackendMetrics)
             }
             _ => Err(HttpError::BadRequest),
         }
@@ -339,7 +337,7 @@ impl EndpointHandler for MetricsBlobcacheHandler {
             (Method::Get, None) => {
                 let id = extract_query_part(req, "id");
                 let r = kicker(ApiRequest::ExportBlobcacheMetrics(id));
-                convert_to_response(r, HttpError::Pattern)
+                convert_to_response(r, HttpError::BlobcacheMetrics)
             }
             _ => Err(HttpError::BadRequest),
         }
