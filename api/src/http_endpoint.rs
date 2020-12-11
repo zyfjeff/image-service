@@ -26,7 +26,7 @@ pub enum DaemonErrorKind {
     Other(String),
 }
 
-/// API errors are sent back from the VMM API server through the ApiResponse.
+/// API errors are sent back from the Nydusd API server through the ApiResponse.
 #[derive(Debug)]
 pub enum ApiError {
     /// Cannot write to EventFd.
@@ -55,7 +55,7 @@ pub enum ApiResponsePayload {
     /// No data is sent on the channel.
     Empty,
     /// Nydus daemon general working information.
-    DaemonInfo(DaemonInfo),
+    DaemonInfo(String),
     /// Nydus filesystem global metrics
     FsGlobalMetrics(String),
     /// Nydus filesystem per-file metrics
@@ -85,14 +85,6 @@ pub enum ApiRequest {
     SendFuseFd,
     Takeover,
     Exit,
-}
-
-#[derive(Clone, Deserialize, Serialize)]
-pub struct DaemonInfo {
-    pub id: Option<String>,
-    pub version: String,
-    pub supervisor: Option<String>,
-    pub state: String,
 }
 
 #[derive(Clone, Deserialize, Debug)]

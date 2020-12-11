@@ -114,10 +114,10 @@ extern "C" fn sig_exit(_sig: std::os::raw::c_int) {
 }
 
 fn main() -> Result<()> {
-    let bti = BuildTimeInfo::dump(crate_version!());
+    let (bti_string, bti) = BuildTimeInfo::dump(crate_version!());
 
     let cmd_arguments = App::new("")
-        .version(bti.as_str())
+        .version(bti_string.as_str())
         .author(crate_authors!())
         .about("Nydus image service")
         .arg(
@@ -355,7 +355,7 @@ fn main() -> Result<()> {
         let vu_sock = cmd_arguments_parsed.value_of("sock").ok_or_else(|| {
             DaemonError::InvalidArguments("vhost socket must be provided!".to_string())
         })?;
-        create_nydus_daemon(daemon_id, supervisor, vu_sock, vfs, mount_cmd)?
+        create_nydus_daemon(daemon_id, supervisor, vu_sock, vfs, mount_cmd, bti)?
     };
     #[cfg(feature = "fusedev")]
     let daemon = {
@@ -389,6 +389,7 @@ fn main() -> Result<()> {
             cmd_arguments_parsed.is_present("upgrade"),
             p,
             mount_cmd,
+            bti,
         )
         .map(|d| {
             info!("Fuse daemon started!");
@@ -402,11 +403,7 @@ fn main() -> Result<()> {
         let (to_api, from_http) = channel();
         let (to_http, from_api) = channel();
 
-        let api_server = ApiServer::new(
-            env!("CARGO_PKG_VERSION").to_string(),
-            to_http,
-            daemon.clone(),
-        )?;
+        let api_server = ApiServer::new(to_http, daemon.clone())?;
 
         let api_server_subscriber = Arc::new(ApiSeverSubscriber::new(api_server, from_http)?);
         let api_server_id = event_manager.add_subscriber(api_server_subscriber);

@@ -22,13 +22,13 @@ use vhost_user_backend::{VhostUserBackend, VhostUserDaemon, Vring};
 use vm_memory::GuestMemoryMmap;
 use vmm_sys_util::eventfd::EventFd;
 
-use nydus_utils::eother;
+use nydus_utils::{eother, BuildTimeInfo};
 use upgrade_manager::UpgradeManager;
 
 use crate::daemon;
 use daemon::{
     DaemonError, DaemonResult, DaemonState, DaemonStateMachineContext, DaemonStateMachineInput,
-    DaemonStateMachineSubscriber, FsBackendMountCmd, NydusDaemon, Trigger,
+    DaemonStateMachineSubscriber, FsBackendCollection, FsBackendMountCmd, NydusDaemon, Trigger,
 };
 
 const VIRTIO_F_VERSION_1: u32 = 32;
@@ -192,6 +192,8 @@ struct VirtiofsDaemon<S: VhostUserBackend> {
     upgrade_mgr: Option<Mutex<UpgradeManager>>,
     trigger: Arc<Mutex<Trigger>>,
     result_receiver: Mutex<Receiver<DaemonResult<()>>>,
+    backend_collection: Mutex<FsBackendCollection>,
+    bti: BuildTimeInfo,
 }
 
 impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
@@ -259,6 +261,14 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
     fn get_upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>> {
         self.upgrade_mgr.as_ref().map(|mgr| mgr.lock().unwrap())
     }
+
+    fn backend_collection(&self) -> MutexGuard<FsBackendCollection> {
+        self.backend_collection.lock().unwrap()
+    }
+
+    fn version(&self) -> BuildTimeInfo {
+        self.bti.clone()
+    }
 }
 
 impl<S: VhostUserBackend> DaemonStateMachineSubscriber for VirtiofsDaemon<S> {
@@ -283,6 +293,7 @@ pub fn create_nydus_daemon(
     sock: &str,
     vfs: Arc<Vfs>,
     mount_cmd: Option<FsBackendMountCmd>,
+    bti: BuildTimeInfo,
 ) -> Result<Arc<dyn NydusDaemon + Send>> {
     let vu_daemon = VhostUserDaemon::new(
         String::from("vhost-user-fs-backend"),
@@ -302,6 +313,8 @@ pub fn create_nydus_daemon(
         upgrade_mgr: None,
         trigger: Arc::new(Mutex::new(trigger)),
         result_receiver: Mutex::new(result_receiver),
+        bti,
+        backend_collection: Default::default(),
     });
 
     let machine = DaemonStateMachineContext::new(daemon.clone(), events_rx, result_sender);

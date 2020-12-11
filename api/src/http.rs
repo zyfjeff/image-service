@@ -30,7 +30,7 @@ const HTTP_ROOT: &str = "/api/v1";
 pub trait EndpointHandler: Sync + Send {
     /// Handles an HTTP request.
     /// After parsing the request, the handler could decide to send an
-    /// associated API request down to the VMM API server to e.g. create
+    /// associated API request down to the Nydusd API server to e.g. create
     /// or start a VM. The request will block waiting for an answer from the
     /// API server and translate that into an HTTP response.
     fn handle_request(

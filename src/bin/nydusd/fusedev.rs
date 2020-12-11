@@ -30,10 +30,10 @@ use crate::daemon;
 use crate::exit_event_manager;
 use daemon::{
     DaemonError, DaemonResult, DaemonState, DaemonStateMachineContext, DaemonStateMachineInput,
-    DaemonStateMachineSubscriber, FsBackendMountCmd, FsBackendType, NydusDaemon, RafsMountStateSet,
-    Trigger,
+    DaemonStateMachineSubscriber, FsBackendCollection, FsBackendMountCmd, FsBackendType,
+    NydusDaemon, RafsMountStateSet, Trigger,
 };
-use nydus_utils::{einval, eio, eother, FuseChannel, FuseSession};
+use nydus_utils::{einval, eio, eother, BuildTimeInfo, FuseChannel, FuseSession};
 use upgrade_manager::backend::unix_domain_socket::UdsBackend;
 use upgrade_manager::{OpaqueKind, UpgradeManager, UpgradeMgrError};
 
@@ -105,6 +105,8 @@ pub struct FusedevDaemon {
     conn: AtomicU64,
     failover_policy: FailoverPolicy,
     upgrade_mgr: Option<Mutex<UpgradeManager>>,
+    backend_collection: Mutex<FsBackendCollection>,
+    bti: BuildTimeInfo,
 }
 
 impl FusedevDaemon {
@@ -324,6 +326,14 @@ impl NydusDaemon for FusedevDaemon {
     fn get_upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>> {
         self.upgrade_mgr.as_ref().map(|mgr| mgr.lock().unwrap())
     }
+
+    fn backend_collection(&self) -> MutexGuard<FsBackendCollection> {
+        self.backend_collection.lock().unwrap()
+    }
+
+    fn version(&self) -> BuildTimeInfo {
+        self.bti.clone()
+    }
 }
 
 impl<'a> Persist<'a> for &'a FusedevDaemon {
@@ -471,6 +481,7 @@ pub fn create_nydus_daemon(
     upgrade: bool,
     fp: FailoverPolicy,
     mount_cmd: Option<FsBackendMountCmd>,
+    bti: BuildTimeInfo,
 ) -> Result<Arc<dyn NydusDaemon + Send>> {
     let (trigger, events_rx) = channel::<DaemonStateMachineInput>();
     let session = FuseSession::new(Path::new(mountpoint), "rafs", "")?;
@@ -504,6 +515,8 @@ pub fn create_nydus_daemon(
         conn: AtomicU64::new(0),
         failover_policy: fp,
         upgrade_mgr,
+        backend_collection: Default::default(),
+        bti,
     });
 
     let machine = DaemonStateMachineContext::new(daemon.clone(), events_rx, result_sender);

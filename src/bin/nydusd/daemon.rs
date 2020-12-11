@@ -6,6 +6,7 @@
 
 use std::any::Any;
 use std::cmp::PartialEq;
+use std::collections::HashMap;
 use std::convert::From;
 use std::fmt::{Display, Formatter};
 use std::io::{Error as IoError, ErrorKind as IoErrorKind, Result};
@@ -19,20 +20,24 @@ use std::sync::{
     Arc, MutexGuard,
 };
 use std::thread;
+use std::time::SystemTime;
 use std::{convert, error, fmt, io};
 
 use event_manager::{EventOps, EventSubscriber, Events};
-use fuse_rs::api::{VersionMapGetter, Vfs, VfsState};
+use fuse_rs::api::{BackendFileSystem, VersionMapGetter, Vfs, VfsState};
+use fuse_rs::passthrough::{Config, PassthroughFs};
 #[cfg(feature = "virtiofs")]
 use fuse_rs::transport::Error as FuseTransportError;
 use fuse_rs::Error as VhostUserFsError;
-use rust_fsm::*;
-use serde::{Deserialize, Serialize};
+
 use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
-use nydus_utils::{einval, last_error};
+use rust_fsm::*;
+use serde::{Deserialize, Serialize};
+
+use nydus_utils::{einval, last_error, BuildTimeInfo};
 use rafs::{
     fs::{Rafs, RafsConfig},
     RafsError, RafsIoRead,
@@ -218,7 +223,7 @@ impl RafsMountStateSet {
 
 impl VersionMapGetter for RafsMountStateSet {}
 
-#[derive(Clone)]
+#[derive(Clone, Serialize)]
 pub enum FsBackendType {
     Rafs,
     PassthroughFs,
@@ -236,6 +241,16 @@ impl FromStr for FsBackendType {
             ))),
         }
     }
+}
+
+/// Used to export daemon working state
+#[derive(Serialize)]
+pub struct DaemonInfo {
+    pub version: BuildTimeInfo,
+    pub id: Option<String>,
+    pub supervisor: Option<String>,
+    pub state: String,
+    pub backend_collection: FsBackendCollection,
 }
 
 #[derive(Clone)]
@@ -325,6 +340,19 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
     fn restore(&self) -> DaemonResult<()>;
     fn get_vfs(&self) -> &Vfs;
     fn get_upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>>;
+    fn backend_collection(&self) -> MutexGuard<FsBackendCollection>;
+    fn version(&self) -> BuildTimeInfo;
+    fn export_info(&self) -> String {
+        let response = DaemonInfo {
+            version: self.version(),
+            id: self.id(),
+            supervisor: self.supervisor(),
+            state: self.get_state().to_string(),
+            backend_collection: self.backend_collection().deref().clone(),
+        };
+
+        serde_json::to_string(&response).unwrap()
+    }
 
     // FIXME: locking?
     fn mount<'a>(
@@ -354,6 +382,13 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
         }
         info!("vfs mounted");
         self.backend_collection().add(&cmd.mountpoint, &cmd)?;
+
+        let desc = FsBackendDesc {
+            backend_type: cmd.fs_type.clone(),
+            mountpoint: cmd.mountpoint.clone(),
+            mounted_time: SystemTime::now(),
+        };
+        self.backend_collection().add(&cmd.mountpoint, desc);
 
         // Add mounts opaque to UpgradeManager
         if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
@@ -408,6 +443,8 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
             .umount(&cmd.mountpoint)
             .map_err(|e| DaemonError::Vfs(VfsErrorKind::Umount(e)))?;
 
+        self.backend_collection().del(&cmd.mountpoint);
+
         // Remove mount opaque from UpgradeManager
         if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
             if let Some(mut state) =
@@ -421,9 +458,6 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
         Ok(())
     }
 }
-
-use fuse_rs::api::BackendFileSystem;
-use fuse_rs::passthrough::{Config, PassthroughFs};
 
 /// A string including multiple directories and regular files should be separated by white-spaces, e.g.
 ///      <path1> <path2> <path3>

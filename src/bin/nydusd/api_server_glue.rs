@@ -15,7 +15,7 @@ use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
 use nydus_api::http_endpoint::{
     ApiError, ApiMountCmd, ApiRequest, ApiResponse, ApiResponsePayload, ApiResult, DaemonConf,
-    DaemonErrorKind, DaemonInfo,
+    DaemonErrorKind,
 };
 use nydus_utils::{epipe, last_error};
 use rafs::io_stats;
@@ -28,7 +28,6 @@ use crate::fusedev::FusedevDaemon;
 use crate::SubscriberWrapper;
 
 pub struct ApiServer {
-    version: String,
     to_http: Sender<ApiResponse>,
     daemon: Arc<dyn NydusDaemon>,
 }
@@ -49,15 +48,10 @@ impl From<DaemonError> for DaemonErrorKind {
 
 impl ApiServer {
     pub fn new(
-        version: String,
         to_http: Sender<ApiResponse>,
         daemon: Arc<dyn NydusDaemon>,
     ) -> std::io::Result<Self> {
-        Ok(ApiServer {
-            version,
-            to_http,
-            daemon,
-        })
+        Ok(ApiServer { to_http, daemon })
     }
 
     fn process_request(&self, from_http: &Receiver<ApiRequest>) -> std::io::Result<()> {
@@ -94,15 +88,8 @@ impl ApiServer {
 
     fn daemon_info(&self) -> ApiResponse {
         let d = self.daemon.as_ref();
-
-        let response = DaemonInfo {
-            version: self.version.to_string(),
-            id: d.id(),
-            supervisor: d.supervisor(),
-            state: d.get_state().to_string(),
-        };
-
-        Ok(ApiResponsePayload::DaemonInfo(response))
+        let info = d.export_info();
+        Ok(ApiResponsePayload::DaemonInfo(info))
     }
 
     fn configure_daemon(&self, conf: DaemonConf) -> ApiResponse {
