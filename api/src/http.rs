@@ -19,9 +19,10 @@ use micro_http::{HttpServer, MediaType, Request, Response, StatusCode};
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::http_endpoint::{
-    error_response, ApiError, ApiRequest, ApiResponse, ExitHandler, HttpError, HttpResult,
-    InfoHandler, MetricsBackendHandler, MetricsBlobcacheHandler, MetricsFilesHandler,
-    MetricsHandler, MetricsPatternHandler, MountHandler, SendFuseFdHandler, TakeoverHandler,
+    error_response, ApiError, ApiRequest, ApiResponse, EventsHandler, ExitHandler, FsBackendInfo,
+    HttpError, HttpResult, InfoHandler, MetricsBackendHandler, MetricsBlobcacheHandler,
+    MetricsFilesHandler, MetricsHandler, MetricsPatternHandler, MountHandler, SendFuseFdHandler,
+    TakeoverHandler,
 };
 
 const HTTP_ROOT: &str = "/api/v1";
@@ -60,6 +61,7 @@ lazy_static! {
         };
 
         r.routes.insert(endpoint!("/daemon"), Box::new(InfoHandler{}));
+        r.routes.insert(endpoint!("/daemon/events"), Box::new(EventsHandler{}));
         r.routes.insert(endpoint!("/mount"), Box::new(MountHandler{}));
         r.routes.insert(endpoint!("/metrics"), Box::new(MetricsHandler{}));
         r.routes.insert(endpoint!("/metrics/files"), Box::new(MetricsFilesHandler{}));

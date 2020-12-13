@@ -46,6 +46,8 @@ pub enum ApiError {
 
     DaemonAbnormal(DaemonErrorKind),
 
+    Events(String),
+
     Metrics(String),
 }
 pub type ApiResult<T> = std::result::Result<T, ApiError>;
@@ -56,6 +58,8 @@ pub enum ApiResponsePayload {
     Empty,
     /// Nydus daemon general working information.
     DaemonInfo(String),
+    Events(String),
+    FsBackendInfo(String),
     /// Nydus filesystem global metrics
     FsGlobalMetrics(String),
     /// Nydus filesystem per-file metrics
@@ -73,6 +77,7 @@ pub type HttpResult = std::result::Result<Response, HttpError>;
 #[derive(Debug)]
 pub enum ApiRequest {
     DaemonInfo,
+    Events,
     Mount((String, ApiMountCmd)),
     Remount((String, ApiMountCmd)),
     Umount(String),
@@ -123,6 +128,7 @@ pub enum HttpError {
     ParseBody(SerdeError),
     /// Could not query daemon info
     Info(ApiError),
+    Events(ApiError),
     /// Could not mount resource
     Mount(ApiError),
     GlobalMetrics(ApiError),
@@ -186,6 +192,7 @@ fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(
             let resp = match r {
                 Empty => success_response(None),
                 DaemonInfo(d) => success_response(Some(d)),
+                Events(d) => success_response(Some(d)),
                 FsFilesMetrics(d) => success_response(Some(d)),
                 FsGlobalMetrics(d) => success_response(Some(d)),
                 FsFilesPatterns(d) => success_response(Some(d)),
@@ -218,6 +225,23 @@ impl EndpointHandler for InfoHandler {
                 let conf = parse_body(body)?;
                 let r = kicker(ApiRequest::ConfigureDaemon(conf));
                 convert_to_response(r, HttpError::Configure)
+            }
+            _ => Err(HttpError::BadRequest),
+        }
+    }
+}
+
+pub struct EventsHandler {}
+impl EndpointHandler for EventsHandler {
+    fn handle_request(
+        &self,
+        req: &Request,
+        kicker: &dyn Fn(ApiRequest) -> ApiResponse,
+    ) -> HttpResult {
+        match (req.method(), req.body.as_ref()) {
+            (Method::Get, None) => {
+                let r = kicker(ApiRequest::Events);
+                convert_to_response(r, HttpError::Events)
             }
             _ => Err(HttpError::BadRequest),
         }

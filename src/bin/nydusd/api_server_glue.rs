@@ -61,6 +61,7 @@ impl ApiServer {
 
         let resp = match request {
             ApiRequest::DaemonInfo => self.daemon_info(),
+            ApiRequest::Events => Self::events(),
             ApiRequest::Mount((mountpoint, info)) => self.do_mount(mountpoint, info),
             ApiRequest::Remount((mountpoint, info)) => self.do_remount(mountpoint, info),
             ApiRequest::Umount(mountpoint) => self.do_umount(mountpoint),
@@ -90,6 +91,19 @@ impl ApiServer {
         let d = self.daemon.as_ref();
         let info = d.export_info();
         Ok(ApiResponsePayload::DaemonInfo(info))
+    }
+
+    fn events() -> ApiResponse {
+        let events = io_stats::export_events().map_err(|e| ApiError::Events(format!("{:?}", e)))?;
+        Ok(ApiResponsePayload::Events(events))
+    }
+
+    fn backend_info(&self, mountpoint: &str) -> ApiResponse {
+        let d = self.daemon.as_ref();
+        let info = d
+            .export_backend_info(mountpoint)
+            .map_err(|e| ApiError::Metrics(e.to_string()))?;
+        Ok(ApiResponsePayload::FsBackendInfo(info))
     }
 
     fn configure_daemon(&self, conf: DaemonConf) -> ApiResponse {
