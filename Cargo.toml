@@ -19,6 +19,7 @@ clap = "2.33"
 stderrlog = "0.4"
 serde = { version = ">=1.0.27", features = ["serde_derive", "rc"] }
 serde_json = "1.0.51"
+serde_with = { version="1.6.0", features = [ "macros" ] }
 sha2 = "0.9.1"
 lazy_static = "1.4.0"
 xattr = "0.2.2"
@@ -32,6 +33,7 @@ nydus-utils = { path = "utils" }
 nydus-api = { path = "api" }
 upgrade-manager = { path = "upgrade" }
 vm-memory = { version = ">=0.2.0", optional = true }
+chrono = "0.4.19"
 
 event-manager = { git = "https://github.com/rust-vmm/event-manager.git", tag = "v0.2.0"}
 fuse-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.git", optional = true }

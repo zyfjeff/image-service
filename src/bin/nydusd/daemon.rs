@@ -20,7 +20,6 @@ use std::sync::{
     Arc, MutexGuard,
 };
 use std::thread;
-use std::time::SystemTime;
 use std::{convert, error, fmt, io};
 
 use event_manager::{EventOps, EventSubscriber, Events};
@@ -34,8 +33,11 @@ use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
+use chrono::{self, DateTime, Local};
 use rust_fsm::*;
 use serde::{Deserialize, Serialize};
+use serde_json::Error as SerdeError;
+use serde_with::{serde_as, DisplayFromStr};
 
 use nydus_utils::{einval, last_error, BuildTimeInfo};
 use rafs::{
@@ -128,6 +130,7 @@ pub enum DaemonError {
     DaemonFailure(String),
 
     Common(String),
+    Serde(SerdeError),
     UpgradeManager(UpgradeMgrError),
     Vfs(VfsErrorKind),
     Rafs(RafsError),
@@ -342,7 +345,7 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
     fn get_upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>>;
     fn backend_collection(&self) -> MutexGuard<FsBackendCollection>;
     fn version(&self) -> BuildTimeInfo;
-    fn export_info(&self) -> String {
+    fn export_info(&self) -> DaemonResult<String> {
         let response = DaemonInfo {
             version: self.version(),
             id: self.id(),
@@ -351,7 +354,34 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
             backend_collection: self.backend_collection().deref().clone(),
         };
 
-        serde_json::to_string(&response).unwrap()
+        serde_json::to_string(&response).map_err(DaemonError::Serde)
+    }
+    fn export_backend_info(&self, mountpoint: &str) -> DaemonResult<String> {
+        let fs = self
+            .get_vfs()
+            .get_rootfs(&mountpoint)
+            .map_err(|e| DaemonError::Vfs(VfsErrorKind::Common(e)))?;
+        let any_fs = fs.deref().as_any();
+        use fuse_rs::api::BackendFileSystemType;
+
+        let resp = match fs.fstype() {
+            BackendFileSystemType::Rafs => {
+                let rafs = any_fs
+                    .downcast_ref::<Rafs>()
+                    .ok_or_else(|| DaemonError::FsTypeMismatch("to rafs".to_string()))?;
+
+                serde_json::to_string(&rafs.sb.meta).map_err(DaemonError::Serde)?
+            }
+            BackendFileSystemType::PassthroughFs => {
+                let _passthrough_fs = any_fs
+                    .downcast_ref::<PassthroughFs>()
+                    .ok_or_else(|| DaemonError::FsTypeMismatch("to passthrough_fs".to_string()))?;
+
+                return Err(DaemonError::Unsupported);
+            }
+        };
+
+        Ok(resp)
     }
 
     // FIXME: locking?
@@ -382,13 +412,6 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
         }
         info!("vfs mounted");
         self.backend_collection().add(&cmd.mountpoint, &cmd)?;
-
-        let desc = FsBackendDesc {
-            backend_type: cmd.fs_type.clone(),
-            mountpoint: cmd.mountpoint.clone(),
-            mounted_time: SystemTime::now(),
-        };
-        self.backend_collection().add(&cmd.mountpoint, desc);
 
         // Add mounts opaque to UpgradeManager
         if let Some(mut mgr_guard) = self.get_upgrade_mgr() {

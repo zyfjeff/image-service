@@ -71,6 +71,7 @@ impl ApiServer {
             ApiRequest::ExportAccessPatterns(id) => Self::export_access_patterns(id),
             ApiRequest::ExportBackendMetrics(id) => Self::export_backend_metrics(id),
             ApiRequest::ExportBlobcacheMetrics(id) => Self::export_blobcache_metrics(id),
+            ApiRequest::ExportFsBackendInfo(mountpoint) => self.backend_info(&mountpoint),
             ApiRequest::SendFuseFd => self.send_fuse_fd(),
             ApiRequest::Takeover => self.do_takeover(),
             ApiRequest::Exit => self.do_exit(),
@@ -89,7 +90,9 @@ impl ApiServer {
 
     fn daemon_info(&self) -> ApiResponse {
         let d = self.daemon.as_ref();
-        let info = d.export_info();
+        let info = d
+            .export_info()
+            .map_err(|e| ApiError::Metrics(e.to_string()))?;
         Ok(ApiResponsePayload::DaemonInfo(info))
     }
 

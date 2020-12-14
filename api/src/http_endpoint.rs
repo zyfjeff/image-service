@@ -87,6 +87,7 @@ pub enum ApiRequest {
     ExportAccessPatterns(Option<String>),
     ExportBackendMetrics(Option<String>),
     ExportBlobcacheMetrics(Option<String>),
+    ExportFsBackendInfo(String),
     SendFuseFd,
     Takeover,
     Exit,
@@ -138,6 +139,7 @@ pub enum HttpError {
     Upgrade(ApiError),
     BlobcacheMetrics(ApiError),
     BackendMetrics(ApiError),
+    FsBackendInfo(ApiError),
 }
 
 fn success_response(body: Option<String>) -> Response {
@@ -198,6 +200,7 @@ fn convert_to_response<O: FnOnce(ApiError) -> HttpError>(
                 FsFilesPatterns(d) => success_response(Some(d)),
                 BackendMetrics(d) => success_response(Some(d)),
                 BlobcacheMetrics(d) => success_response(Some(d)),
+                FsBackendInfo(d) => success_response(Some(d)),
             };
 
             Ok(resp)
@@ -413,6 +416,29 @@ impl EndpointHandler for ExitHandler {
             (Method::Put, None) => {
                 let r = kicker(ApiRequest::Exit);
                 convert_to_response(r, HttpError::Upgrade)
+            }
+            _ => Err(HttpError::BadRequest),
+        }
+    }
+}
+
+pub struct FsBackendInfo {}
+
+impl EndpointHandler for FsBackendInfo {
+    fn handle_request(
+        &self,
+        req: &Request,
+        kicker: &dyn Fn(ApiRequest) -> ApiResponse,
+    ) -> HttpResult {
+        match (req.method(), req.body.as_ref()) {
+            (Method::Get, None) => {
+                let mountpoint = extract_query_part(req, "mountpoint").ok_or_else(|| {
+                    HttpError::QueryString(
+                        "'mountpoint' should be specified in query string".to_string(),
+                    )
+                })?;
+                let r = kicker(ApiRequest::ExportFsBackendInfo(mountpoint));
+                convert_to_response(r, HttpError::FsBackendInfo)
             }
             _ => Err(HttpError::BadRequest),
         }
