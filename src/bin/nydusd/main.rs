@@ -207,7 +207,7 @@ fn main() -> Result<()> {
         .arg(
             Arg::with_name("failover-policy")
                 .long("failover-policy")
-                .default_value("flush")
+                .default_value("resend")
                 .help("`flush` or `resend`")
                 .takes_value(true)
                 .required(false)

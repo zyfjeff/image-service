@@ -37,6 +37,8 @@ use nydus_utils::{einval, eio, eother, FuseChannel, FuseSession};
 use upgrade_manager::backend::unix_domain_socket::UdsBackend;
 use upgrade_manager::{OpaqueKind, UpgradeManager, UpgradeMgrError};
 
+const CTRL_FS_CONN: &str = "/sys/fs/fuse/connections";
+
 struct FuseServer {
     server: Arc<Server<Arc<Vfs>>>,
     ch: FuseChannel,
@@ -307,7 +309,8 @@ impl NydusDaemon for FusedevDaemon {
 
         // Start to serve fuse request
         let conn = self.conn.load(Ordering::Acquire);
-        drain_fuse_requests(conn, &self.failover_policy);
+        drain_fuse_requests(conn, &self.failover_policy, CTRL_FS_CONN)
+            .unwrap_or_else(|e| error!("Failed in draining fuse requests. {}", e));
 
         Ok(())
     }
@@ -404,7 +407,9 @@ fn calc_fuse_conn(mp: impl AsRef<Path>) -> Result<u64> {
 /// There might be some in-flight fuse requests when nydusd terminates out of sudden.
 /// According to FLUSH policy, those requests will be abandoned which means kernel
 /// no longer waits for their responses.
-fn drain_fuse_requests(conn: u64, p: &FailoverPolicy) {
+/// RESEND policy commands kernel fuse to re-queue those fuse requests back to *Pending*
+/// queue, so nydus can re-read those messages.
+fn drain_fuse_requests(conn: u64, p: &FailoverPolicy, control_fs_conn: &str) -> Result<()> {
     let f = match p {
         FailoverPolicy::Flush => "flush",
         FailoverPolicy::Resend => "reset",
@@ -412,20 +417,32 @@ fn drain_fuse_requests(conn: u64, p: &FailoverPolicy) {
 
     // TODO: If `flush` or `reset` file does not exists, we continue the failover progress but
     // should throw alarm out.
+    let mut control_fs_path = format!("{}/{}/{}", control_fs_conn, conn, f);
 
-    let control_fs_path = format!("/sys/fs/fuse/connections/{}/{}", conn, f);
+    // Kernel may not support `resend` policy, so fall into `flush` policy.
+    if *p == FailoverPolicy::Resend && metadata(&control_fs_path).is_err() {
+        info!("Fallback to flush policy");
+        control_fs_path = format!("{}/{}/{}", control_fs_conn, conn, "flush");
+    }
 
-    OpenOptions::new()
+    // Finally, if the control file is absent, then do nothing ending with no handling in-flight message.
+    let mut f = OpenOptions::new()
         .write(true)
-        .open(control_fs_path)
-        .map(|mut f| {
-            f.write_all(b"1")
-                .unwrap_or_else(|e| error!("Resend failed. {:?}", e))
-        })
-        .unwrap_or_else(|e| error!("Open `{}` file failed. {:?}", e, f));
+        .open(&control_fs_path)
+        .map_err(|e| {
+            error!("Can't open control file {}, {}", &control_fs_path, e);
+            e
+        })?;
+    f.write_all(b"1").map_err(|e| {
+        error!("Can't write to control file {}, {}", &control_fs_path, e);
+        e
+    })?;
+
+    Ok(())
 }
 
 use std::convert::TryFrom;
+#[derive(PartialEq)]
 pub enum FailoverPolicy {
     Flush,
     Resend,
@@ -520,3 +537,32 @@ pub struct DaemonOpaque {
 }
 
 impl VersionMapGetter for DaemonOpaque {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+    use std::io::ErrorKind;
+    use vmm_sys_util::tempdir::TempDir;
+    #[test]
+    fn test_failover_policy_fallback() {
+        env_logger::init();
+        let _td = TempDir::new().unwrap();
+        let control_fs = _td.as_path();
+        let conn = 48;
+        let r = drain_fuse_requests(conn, &FailoverPolicy::Resend, &control_fs.to_str().unwrap());
+
+        match r {
+            Err(e) => assert_eq!(e.kind(), ErrorKind::NotFound),
+            _ => panic!(),
+        }
+
+        // Test if failover policy can fallback?
+        let control_fs_conn = control_fs.join(format!("{}", conn));
+        std::fs::create_dir_all(&control_fs_conn).unwrap();
+        let control_fs_path = control_fs_conn.join("flush");
+        let _f = File::create(control_fs_path).unwrap();
+
+        drain_fuse_requests(conn, &FailoverPolicy::Resend, &control_fs.to_str().unwrap()).unwrap();
+    }
+}

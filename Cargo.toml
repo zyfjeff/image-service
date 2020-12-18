@@ -43,6 +43,8 @@ versionize_derive = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versioniz
 
 [dev-dependencies]
 sendfd = "0.3.3"
+vmm-sys-util = ">=0.3.1"
+env_logger = "0.8.2"
 
 [features]
 fusedev = ["nydus-utils/fusedev", "fuse-rs/fusedev", "rafs/lz4_ipp"]
