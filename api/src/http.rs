@@ -8,6 +8,7 @@ use std::io::Result;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
+use std::time::SystemTime;
 
 use std::os::unix::io::AsRawFd;
 
@@ -81,25 +82,61 @@ fn kick_api_server(
     from_api.recv().map_err(ApiError::ResponseRecv)?
 }
 
+// Example:
+// <-- GET /
+// --> GET / 200 835ms 746b
+//
+
+fn trace_api_begin(request: &micro_http::Request) {
+    info!("<--- {:?} {:?}", request.method(), request.uri());
+}
+fn trace_api_end(
+    response: &micro_http::Response,
+    method: micro_http::Method,
+    recv_time: SystemTime,
+) {
+    let elapse = SystemTime::now().duration_since(recv_time);
+    info!(
+        "---> {:?} Status Code: {:?}, Elapse: {:?}, Body Size: {:?}",
+        method,
+        response.status(),
+        elapse,
+        response.content_length()
+    );
+}
+
 fn handle_http_request(
     request: &Request,
     api_notifier: &EventFd,
     to_api: &Sender<ApiRequest>,
     from_api: &Receiver<ApiResponse>,
 ) -> Response {
+    trace_api_begin(request);
+    let begin_time = SystemTime::now();
+
     // Micro http should ensure that req path is legal.
-    let uri = request.uri().get_abs_path().parse::<Uri>().unwrap();
-    let mut response = match HTTP_ROUTES.routes.get(&uri.path().to_string()) {
-        Some(route) => route
-            .handle_request(&request, &|r| {
-                kick_api_server(api_notifier, to_api, from_api, r)
-            })
-            .unwrap_or_else(|err| error_response(err, StatusCode::BadRequest)),
-        None => error_response(HttpError::NoRoute, StatusCode::NotFound),
+    let uri_parsed = request.uri().get_abs_path().parse::<Uri>();
+
+    let mut response = match uri_parsed {
+        Ok(uri) => match HTTP_ROUTES.routes.get(&uri.path().to_string()) {
+            Some(route) => route
+                .handle_request(&request, &|r| {
+                    kick_api_server(api_notifier, to_api, from_api, r)
+                })
+                .unwrap_or_else(|err| error_response(err, StatusCode::BadRequest)),
+            None => error_response(HttpError::NoRoute, StatusCode::NotFound),
+        },
+        Err(e) => {
+            error!("URI can't be parsed, {}", e);
+            error_response(HttpError::BadRequest, StatusCode::BadRequest)
+        }
     };
 
     response.set_server("Nydus API");
     response.set_content_type(MediaType::ApplicationJson);
+
+    trace_api_end(&response, request.method(), begin_time);
+
     response
 }
 
