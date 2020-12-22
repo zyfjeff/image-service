@@ -302,7 +302,7 @@ impl NydusDaemon for FusedevDaemon {
                         config: item.config,
                         prefetch_files: None,
                     },
-                    Some(&vfs_state),
+                    Some((item.index, &vfs_state)),
                 )?;
             }
         }

@@ -103,15 +103,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3441f0f7b02788e948e47f457ca01f1d7e6d92c693bc132c22b087d3141c03ff"
 
 [[package]]
-name = "bimap"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "783204f24fd7724ea274d327619cfa6a6018047bb0561a68aadff6f56787591b"
-dependencies = [
- "cfg-if 0.1.10",
-]
-
-[[package]]
 name = "bincode"
 version = "1.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -486,10 +477,9 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 [[package]]
 name = "fuse-rs"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=master#574c874fdff488a604220d4acb2900543f3daacf"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=master#df8381800333ba30a36f797d4b45c5df8f9a851e"
 dependencies = [
  "arc-swap",
- "bimap",
  "bitflags",
  "libc",
  "log",
@@ -951,7 +941,7 @@ checksum = "3728d817d99e5ac407411fa471ff9800a778d88a24685968b36824eaf4bee400"
 [[package]]
 name = "micro_http"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/micro-http.git?branch=master#bc2611dac66f14e08b69996bdebb6b9481aa386e"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/micro-http.git#bc2611dac66f14e08b69996bdebb6b9481aa386e"
 dependencies = [
  "epoll",
 ]
@@ -1751,7 +1741,7 @@ checksum = "c7cb5678e1615754284ec264d9bb5b4c27d2018577fd90ac0ceb578591ed5ee4"
 [[package]]
 name = "snapshot"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/snapshot.git?branch=master#c98308a285638faa474ddfd196bd59b06c074a7e"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/snapshot.git#c98308a285638faa474ddfd196bd59b06c074a7e"
 dependencies = [
  "bincode",
  "lazy_static 1.4.0",
@@ -2119,7 +2109,7 @@ checksum = "b5a972e5669d67ba988ce3dc826706fb0a8b01471c088cb0b6110b805cc36aed"
 [[package]]
 name = "versionize"
 version = "0.1.1"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git?branch=master#95dffd6cc7c15bcb69909c837c6aa7c1d0187993"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git#95dffd6cc7c15bcb69909c837c6aa7c1d0187993"
 dependencies = [
  "bincode",
  "crc64",
@@ -2135,7 +2125,7 @@ dependencies = [
 [[package]]
 name = "versionize_derive"
 version = "0.1.1"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize_derive.git?branch=master#af4d79fdebce2e5f90e4b304002973b8b6c4a22e"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize_derive.git#af4d79fdebce2e5f90e4b304002973b8b6c4a22e"
 dependencies = [
  "proc-macro2 1.0.24",
  "quote 1.0.6",
@@ -2145,7 +2135,7 @@ dependencies = [
 [[package]]
 name = "vhost"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vhost.git?branch=master#f3a449c1626a64f1e3af4df64692dc929c2b4a10"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vhost.git#f3a449c1626a64f1e3af4df64692dc929c2b4a10"
 dependencies = [
  "bitflags",
  "libc",
@@ -2180,7 +2170,7 @@ checksum = "3ff512178285488516ed85f15b5d0113a7cdb89e9e8a760b269ae4f02b84bd6b"
 [[package]]
 name = "vm-memory"
 version = "0.2.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-memory.git?branch=master#f3aa95d9c8fa9a1c1bbe5fccb10dc18b84410bd0"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-memory.git#f3aa95d9c8fa9a1c1bbe5fccb10dc18b84410bd0"
 dependencies = [
  "libc",
  "snapshot",
@@ -2193,7 +2183,7 @@ dependencies = [
 [[package]]
 name = "vm-virtio"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-virtio.git?branch=master#db6b6a28d9a5f0a4c1b07e1e6e353a353a63519f"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-virtio.git#db6b6a28d9a5f0a4c1b07e1e6e353a353a63519f"
 dependencies = [
  "byteorder",
  "libc",
@@ -2208,7 +2198,7 @@ dependencies = [
 [[package]]
 name = "vmm-serde"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vmm-serde.git?branch=master#444d92f226dc7750c9654e9deb83322b0b2a2c58"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vmm-serde.git#444d92f226dc7750c9654e9deb83322b0b2a2c58"
 dependencies = [
  "vmm-serde-impl",
 ]
@@ -2216,7 +2206,7 @@ dependencies = [
 [[package]]
 name = "vmm-serde-impl"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vmm-serde.git?branch=master#444d92f226dc7750c9654e9deb83322b0b2a2c58"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vmm-serde.git#444d92f226dc7750c9654e9deb83322b0b2a2c58"
 dependencies = [
  "proc-macro2 1.0.24",
  "quote 1.0.6",
