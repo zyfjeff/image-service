@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020. Ant Financial. All rights reserved.
+ * Copyright (c) 2020. Ant Group. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -12,7 +12,6 @@ import (
 
 	"gitlab.alipay-inc.com/antsys/nydus-snapshotter/pkg/daemon"
 )
-
 
 type DaemonStore struct {
 	sync.Mutex
@@ -95,4 +94,3 @@ func (s *DaemonStore) filterOutDeletedDaemon(d *daemon.Daemon) []*daemon.Daemon 
 	}
 	return res
 }
-

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020. Ant Financial. All rights reserved.
+ * Copyright (c) 2020. Ant Group. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -28,7 +28,7 @@ const (
 	mountEndpoint = "/api/v1/mount"
 
 	defaultHttpClientTimeout = 100 * time.Millisecond
-	contentType = "application/json"
+	contentType              = "application/json"
 )
 
 type Interface interface {

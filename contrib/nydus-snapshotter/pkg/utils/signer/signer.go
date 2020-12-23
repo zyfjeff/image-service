@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020. Ant Financial. All rights reserved.
+ * Copyright (c) 2020. Ant Group. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -25,7 +25,7 @@ func New(publicKey []byte) (*Signer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Signer {
+	return &Signer{
 		publicKey: key,
 	}, nil
 }

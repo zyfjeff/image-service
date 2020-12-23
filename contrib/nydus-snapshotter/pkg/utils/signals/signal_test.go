@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020. Ant Financial. All rights reserved.
+ * Copyright (c) 2020. Ant Group. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -33,5 +33,3 @@ func TestSetupSignalHandler(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	require.Equal(t, actual, expected)
 }
-
-

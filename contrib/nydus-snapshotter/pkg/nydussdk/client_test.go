@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020. Ant Financial. All rights reserved.
+ * Copyright (c) 2020. Ant Group. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -51,7 +51,7 @@ func TestNydusClient_CheckStatus(t *testing.T) {
 	defer dispose()
 	client, err := NewNydusClient(sock)
 	require.Nil(t, err)
-	info ,err := client.CheckStatus()
+	info, err := client.CheckStatus()
 	require.Nil(t, err)
 	assert.Equal(t, "Running", info.State)
 	assert.Equal(t, "testid", info.ID)

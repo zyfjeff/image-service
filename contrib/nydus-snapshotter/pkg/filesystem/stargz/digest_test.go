@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020. Ant Financial. All rights reserved.
+ * Copyright (c) 2020. Ant Group. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -16,10 +16,9 @@ func Test_digest_Sha256(t *testing.T) {
 	}{
 		{
 			name: "testdigest",
-			d: digest("sha256:12345"),
+			d:    digest("sha256:12345"),
 			want: "12345",
 		},
-
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020. Ant Financial. All rights reserved.
+ * Copyright (c) 2020. Ant Group. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -13,7 +13,7 @@ type DaemonInfo struct {
 }
 
 type ErrorMessage struct {
-	Code string `json:"code"`
+	Code    string `json:"code"`
 	Message string `json:"message"`
 }
 

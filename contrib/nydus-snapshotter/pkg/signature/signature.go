@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020. Ant Financial. All rights reserved.
+ * Copyright (c) 2020. Ant Group. All rights reserved.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -25,7 +25,7 @@ type Verifier struct {
 
 func NewVerifier(publicKeyFile string, validateSignature bool) (*Verifier, error) {
 	res := &Verifier{
-		force:  validateSignature,
+		force: validateSignature,
 	}
 	if !validateSignature {
 		return res, nil
