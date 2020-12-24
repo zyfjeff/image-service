@@ -412,10 +412,10 @@ fn calc_fuse_conn(mp: impl AsRef<Path>) -> Result<u64> {
 fn drain_fuse_requests(conn: u64, p: &FailoverPolicy, control_fs_conn: &str) -> Result<()> {
     let f = match p {
         FailoverPolicy::Flush => "flush",
-        FailoverPolicy::Resend => "reset",
+        FailoverPolicy::Resend => "resend",
     };
 
-    // TODO: If `flush` or `reset` file does not exists, we continue the failover progress but
+    // TODO: If `flush` or `resend` file does not exists, we continue the failover progress but
     // should throw alarm out.
     let mut control_fs_path = format!("{}/{}/{}", control_fs_conn, conn, f);
 
