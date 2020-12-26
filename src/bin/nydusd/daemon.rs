@@ -362,24 +362,12 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
             .get_rootfs(&mountpoint)
             .map_err(|e| DaemonError::Vfs(VfsErrorKind::Common(e)))?;
         let any_fs = fs.deref().as_any();
-        use fuse_rs::api::BackendFileSystemType;
 
-        let resp = match fs.fstype() {
-            BackendFileSystemType::Rafs => {
-                let rafs = any_fs
-                    .downcast_ref::<Rafs>()
-                    .ok_or_else(|| DaemonError::FsTypeMismatch("to rafs".to_string()))?;
+        let rafs = any_fs
+            .downcast_ref::<Rafs>()
+            .ok_or_else(|| DaemonError::FsTypeMismatch("to rafs".to_string()))?;
 
-                serde_json::to_string(&rafs.sb.meta).map_err(DaemonError::Serde)?
-            }
-            BackendFileSystemType::PassthroughFs => {
-                let _passthrough_fs = any_fs
-                    .downcast_ref::<PassthroughFs>()
-                    .ok_or_else(|| DaemonError::FsTypeMismatch("to passthrough_fs".to_string()))?;
-
-                return Err(DaemonError::Unsupported);
-            }
-        };
+        let resp = serde_json::to_string(&rafs.sb.meta).map_err(DaemonError::Serde)?;
 
         Ok(resp)
     }
