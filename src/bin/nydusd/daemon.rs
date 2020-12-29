@@ -630,6 +630,7 @@ state_machine! {
     Init => {
         Mount => Running [StartService],
         Takeover => Upgrading [Restore],
+        Stop => Die[Umount],
     },
     Running => {
         Exit => Interrupted [TerminateFuseService],
