@@ -174,57 +174,59 @@ pub type DaemonResult<T> = std::result::Result<T, DaemonError>;
 
 #[derive(Default, PartialEq, Serialize, Deserialize, Versionize, Debug)]
 pub struct RafsMountStateSet {
-    pub items: Vec<RafsMountState>,
+    pub items: HashMap<String, RafsMountState>,
 }
 
-#[derive(Versionize, Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Versionize, Serialize, Deserialize, PartialEq, Debug, Clone)]
 pub struct RafsMountState {
     pub index: u8,
-    pub mountpoint: String,
     // A json string serialized from RafsConfig. The reason why we don't save `RafsConfig`
     // instance here is it's impossible to implement Versionize for serde_json::Value
     pub config: String,
     pub bootstrap: String,
 }
 
-impl RafsMountState {
-    fn new(c: FsBackendMountCmd, index: u8) -> Self {
-        RafsMountState {
-            index,
-            mountpoint: c.mountpoint,
-            config: c.config,
-            bootstrap: c.source,
-        }
-    }
-}
-
 impl RafsMountStateSet {
     pub fn new() -> Self {
-        Self { items: vec![] }
+        Self {
+            items: HashMap::new(),
+        }
     }
 
-    pub fn add(&mut self, cmd: FsBackendMountCmd, index: u8) {
-        if let Some(idx) = self
-            .items
-            .iter()
-            .position(|m| m.mountpoint == cmd.mountpoint)
-        {
+    pub fn add(&mut self, cmd: FsBackendMountCmd, index: u8) -> DaemonResult<()> {
+        if self.items.contains_key(&cmd.mountpoint) {
+            return Err(DaemonError::Vfs(VfsErrorKind::Common(IoError::new(
+                IoErrorKind::AlreadyExists,
+                "Already mounted",
+            ))));
+        }
+        let _ = self.items.insert(
+            cmd.mountpoint,
+            RafsMountState {
+                index,
+                config: cmd.config,
+                bootstrap: cmd.source,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn update(&mut self, cmd: FsBackendMountCmd) -> DaemonResult<()> {
+        if let Some(state) = self.items.get_mut(&cmd.mountpoint) {
             // update only affects config and source
-            self.items[idx].config = cmd.config;
-            self.items[idx].bootstrap = cmd.source;
+            state.config = cmd.config;
+            state.bootstrap = cmd.source;
+            Ok(())
         } else {
-            self.items.push(RafsMountState::new(cmd, index));
+            Err(DaemonError::Vfs(VfsErrorKind::Common(IoError::new(
+                IoErrorKind::NotFound,
+                "not mounted",
+            ))))
         }
     }
 
-    pub fn remove(&mut self, info: FsBackendUmountCmd) {
-        if let Some(idx) = self
-            .items
-            .iter()
-            .position(|mount| mount.mountpoint == info.mountpoint)
-        {
-            self.items.remove(idx);
-        }
+    pub fn remove(&mut self, cmd: FsBackendUmountCmd) {
+        self.items.remove(&cmd.mountpoint);
     }
 }
 
@@ -400,27 +402,30 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
 
         let backend = fs_backend_factory(&cmd)?;
 
-        let index = if let Some((vfs_index, vfs_state)) = vfs_state {
+        if let Some((vfs_index, vfs_state)) = vfs_state {
+            // No need to save RafsMounts opaque as all mount info are already there
             self.get_vfs()
                 .restore_mount(backend, vfs_index, &cmd.mountpoint, vfs_state)
                 .map_err(|e| DaemonError::Vfs(VfsErrorKind::Restore(e)))?;
-            vfs_index
+            info!("rafs restored at {}", cmd.mountpoint);
         } else {
-            self.get_vfs()
+            let index = self
+                .get_vfs()
                 .mount(backend, &cmd.mountpoint)
-                .map_err(|e| DaemonError::Vfs(VfsErrorKind::Mount(e)))?
-        };
-        info!("vfs mounted at {}", cmd.mountpoint);
-        self.backend_collection().add(&cmd.mountpoint, &cmd)?;
+                .map_err(|e| DaemonError::Vfs(VfsErrorKind::Mount(e)))?;
+            info!("rafs mounted at {}", cmd.mountpoint);
 
-        // Add mounts opaque to UpgradeManager
-        if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
-            let mut state = mgr_guard
-                .get_opaque_raw(OpaqueKind::RafsMounts)?
-                .unwrap_or_else(RafsMountStateSet::new);
-            state.add(cmd, index);
-            mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
+            // Add mounts opaque to UpgradeManager
+            if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
+                let mut state = mgr_guard
+                    .get_opaque_raw(OpaqueKind::RafsMounts)?
+                    .unwrap_or_else(RafsMountStateSet::new);
+                state.add(cmd.clone(), index)?;
+                mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
+            }
         }
+
+        self.backend_collection().add(&cmd.mountpoint, &cmd)?;
 
         Ok(())
     }
@@ -449,7 +454,7 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
             let mut state = mgr_guard
                 .get_opaque_raw(OpaqueKind::RafsMounts)?
                 .unwrap_or_else(RafsMountStateSet::new);
-            state.add(cmd, 0);
+            state.update(cmd)?;
             mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
         }
 
@@ -729,46 +734,51 @@ pub mod tests {
         let mut upgrade_mgr = UpgradeManager::new(String::from("test"), Box::new(backend));
 
         let mut rafs_mount = RafsMountStateSet::new();
-        rafs_mount.add(
-            FsBackendMountCmd {
-                fs_type: FsBackendType::Rafs,
-                source: String::from("source-fake1"),
-                config: String::from("config-fake1"),
-                mountpoint: String::from("mountpoint-fake1"),
-                prefetch_files: None,
-            },
-            1,
-        );
-        rafs_mount.add(
-            FsBackendMountCmd {
-                fs_type: FsBackendType::Rafs,
-                source: String::from("source-fake2"),
-                config: String::from("config-fake2"),
-                mountpoint: String::from("mountpoint-fake2"),
-                prefetch_files: None,
-            },
-            2,
-        );
-        rafs_mount.add(
-            FsBackendMountCmd {
+        rafs_mount
+            .add(
+                FsBackendMountCmd {
+                    fs_type: FsBackendType::Rafs,
+                    source: String::from("source-fake1"),
+                    config: String::from("config-fake1"),
+                    mountpoint: String::from("mountpoint-fake1"),
+                    prefetch_files: None,
+                },
+                1,
+            )
+            .unwrap();
+        rafs_mount
+            .add(
+                FsBackendMountCmd {
+                    fs_type: FsBackendType::Rafs,
+                    source: String::from("source-fake2"),
+                    config: String::from("config-fake2"),
+                    mountpoint: String::from("mountpoint-fake2"),
+                    prefetch_files: None,
+                },
+                2,
+            )
+            .unwrap();
+        rafs_mount
+            .update(FsBackendMountCmd {
                 fs_type: FsBackendType::Rafs,
                 source: String::from("source-fake3"),
                 config: String::from("config-fake3"),
                 mountpoint: String::from("mountpoint-fake2"),
                 prefetch_files: None,
-            },
-            2,
-        );
-        rafs_mount.add(
-            FsBackendMountCmd {
-                fs_type: FsBackendType::Rafs,
-                source: String::from("source-fake4"),
-                config: String::from("config-fake4"),
-                mountpoint: String::from("mountpoint-fake4"),
-                prefetch_files: None,
-            },
-            4,
-        );
+            })
+            .unwrap();
+        rafs_mount
+            .add(
+                FsBackendMountCmd {
+                    fs_type: FsBackendType::Rafs,
+                    source: String::from("source-fake4"),
+                    config: String::from("config-fake4"),
+                    mountpoint: String::from("mountpoint-fake4"),
+                    prefetch_files: None,
+                },
+                4,
+            )
+            .unwrap();
         rafs_mount.remove(FsBackendUmountCmd {
             mountpoint: String::from("mountpoint-fake4"),
         });
@@ -783,22 +793,19 @@ pub mod tests {
             .unwrap();
 
         assert_eq!(
-            expected_rafs_mount,
-            RafsMountStateSet {
-                items: vec![
-                    RafsMountState {
-                        index: 1,
-                        bootstrap: String::from("source-fake1"),
-                        config: String::from("config-fake1"),
-                        mountpoint: String::from("mountpoint-fake1"),
-                    },
-                    RafsMountState {
-                        index: 2,
-                        bootstrap: String::from("source-fake3"),
-                        config: String::from("config-fake3"),
-                        mountpoint: String::from("mountpoint-fake2"),
-                    }
-                ],
+            expected_rafs_mount.items.get("mountpoint-fake1").unwrap(),
+            &RafsMountState {
+                index: 1,
+                bootstrap: String::from("source-fake1"),
+                config: String::from("config-fake1"),
+            }
+        );
+        assert_eq!(
+            expected_rafs_mount.items.get("mountpoint-fake2").unwrap(),
+            &RafsMountState {
+                index: 2,
+                bootstrap: String::from("source-fake3"),
+                config: String::from("config-fake3"),
             }
         );
     }

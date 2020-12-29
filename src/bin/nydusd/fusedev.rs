@@ -292,17 +292,17 @@ impl NydusDaemon for FusedevDaemon {
 
         // Restore RAFS mounts
         if let Some(set) = mounts_set {
-            for item in set.items {
+            for (mountpoint, state) in set.items {
                 // Only support Rafs live-upgrade right now.
                 self.mount(
                     FsBackendMountCmd {
                         fs_type: FsBackendType::Rafs,
-                        mountpoint: item.mountpoint,
-                        source: item.bootstrap,
-                        config: item.config,
+                        mountpoint,
+                        source: state.bootstrap,
+                        config: state.config,
                         prefetch_files: None,
                     },
-                    Some((item.index, &vfs_state)),
+                    Some((state.index, &vfs_state)),
                 )?;
             }
         }
