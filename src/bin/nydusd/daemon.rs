@@ -226,7 +226,7 @@ impl RafsMountStateSet {
 
 impl VersionMapGetter for RafsMountStateSet {}
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, PartialEq)]
 pub enum FsBackendType {
     Rafs,
     PassthroughFs,
@@ -285,23 +285,30 @@ pub struct FsBackendCollection(HashMap<String, FsBackendDesc>);
 
 impl FsBackendCollection {
     fn add(&mut self, id: &str, cmd: &FsBackendMountCmd) -> DaemonResult<()> {
-        // TODO: This is ugly now. Use Rust `proc_macro` to wrap this wash.
-        let mut config: serde_json::Value =
-            serde_json::from_str(&cmd.config).map_err(DaemonError::Serde)?;
+        // We only wash Rafs backend now.
+        let fs_config = if cmd.fs_type == FsBackendType::Rafs {
+            // TODO: This is ugly now. Use Rust `proc_macro` to wrap this wash.
+            let mut config: serde_json::Value =
+                serde_json::from_str(&cmd.config).map_err(DaemonError::Serde)?;
 
-        if config["device"]["backend"]["type"] == "oss" {
-            config["device"]["backend"]["config"]["access_key_id"].take();
-            config["device"]["backend"]["config"]["access_key_secret"].take();
-        } else if config["device"]["backend"]["type"] == "registry" {
-            config["device"]["backend"]["config"]["auth"].take();
-            config["device"]["backend"]["config"]["registry_token"].take();
-        }
+            if config["device"]["backend"]["type"] == "oss" {
+                config["device"]["backend"]["config"]["access_key_id"].take();
+                config["device"]["backend"]["config"]["access_key_secret"].take();
+            } else if config["device"]["backend"]["type"] == "registry" {
+                config["device"]["backend"]["config"]["auth"].take();
+                config["device"]["backend"]["config"]["registry_token"].take();
+            }
+            config
+        } else {
+            // Passthrough Fs has no config ever input.
+            serde_json::Value::Null
+        };
 
         let desc = FsBackendDesc {
             backend_type: cmd.fs_type.clone(),
             mountpoint: cmd.mountpoint.clone(),
             mounted_time: chrono::Local::now(),
-            config,
+            config: fs_config,
         };
 
         self.0.insert(id.to_string(), desc);
