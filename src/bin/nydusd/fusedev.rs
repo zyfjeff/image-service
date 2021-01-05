@@ -19,6 +19,8 @@ use std::sync::{
 };
 use std::thread::{self, JoinHandle};
 
+use nix::sys::stat::{major, minor};
+
 use fuse_rs::api::{server::Server, VersionMapGetter, Vfs};
 
 use snapshot::Persist;
@@ -411,7 +413,11 @@ fn is_crashed(path: impl AsRef<Path>, sock: &impl AsRef<Path>) -> Result<bool> {
 
 fn calc_fuse_conn(mp: impl AsRef<Path>) -> Result<u64> {
     let st = metadata(mp)?;
-    Ok(st.st_dev())
+    let dev = st.st_dev();
+    let (major, minor) = (major(dev), minor(dev));
+    // According to kernel formula:
+    //      MKDEV(ma,mi) (((ma) << 20) | (mi))
+    Ok(major << 20 | minor)
 }
 
 /// There might be some in-flight fuse requests when nydusd terminates out of sudden.
