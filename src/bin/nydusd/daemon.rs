@@ -695,6 +695,10 @@ impl DaemonStateMachineContext {
                             Ok(())
                         }
                         Umount => d.disconnect().map(|r| {
+                            // Always interrupt fuse service loop after shutdown connection to kernel.
+                            // In case that kernel does not really shutdown the session due to some reasons
+                            // causing service loop keep waiting of `/dev/fuse`.
+                            d.interrupt();
                             d.set_state(DaemonState::STOPPED);
                             r
                         }),
