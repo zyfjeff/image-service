@@ -477,7 +477,7 @@ checksum = "3dcaa9ae7725d12cdb85b3ad99a434db70b468c09ded17e012d86b5c1010f7a7"
 [[package]]
 name = "fuse-rs"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=master#df8381800333ba30a36f797d4b45c5df8f9a851e"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=stable-0.0.2#18bff261f301795ff460525547bfb66cc311018b"
 dependencies = [
  "arc-swap",
  "bitflags",
@@ -2108,8 +2108,8 @@ checksum = "b5a972e5669d67ba988ce3dc826706fb0a8b01471c088cb0b6110b805cc36aed"
 
 [[package]]
 name = "versionize"
-version = "0.1.1"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git#95dffd6cc7c15bcb69909c837c6aa7c1d0187993"
+version = "0.1.4"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git?branch=master#ce8081a0333dd8f2f92c14480c155edb4f7d482d"
 dependencies = [
  "bincode",
  "crc64",
@@ -2124,8 +2124,8 @@ dependencies = [
 
 [[package]]
 name = "versionize_derive"
-version = "0.1.1"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize_derive.git#af4d79fdebce2e5f90e4b304002973b8b6c4a22e"
+version = "0.1.3"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize_derive.git?branch=master#a797ccbe4bea5e8e97382d2d769487bbf71ff7b8"
 dependencies = [
  "proc-macro2 1.0.24",
  "quote 1.0.6",
