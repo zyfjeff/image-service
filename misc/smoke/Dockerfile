@@ -1,11 +1,11 @@
 FROM rust:1.47.0
 
 RUN echo '[source.crates-io] \n\
-registry = "https://github.com/rust-lang/crates.io-index" \n\
-replace-with = "thu" \n\
-[source.thu] \n\
-registry = "https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index.git"'\
->> /usr/local/cargo/config
+  registry = "https://github.com/rust-lang/crates.io-index" \n\
+  replace-with = "thu" \n\
+  [source.thu] \n\
+  registry = "https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index.git"'\
+  >> /usr/local/cargo/config
 
 ENV RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
 
