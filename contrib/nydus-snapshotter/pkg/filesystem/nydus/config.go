@@ -71,3 +71,4 @@ func WithSharedDaemon(sharedDaemon bool) NewFSOpt {
 		return nil
 	}
 }
+

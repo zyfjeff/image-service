@@ -56,3 +56,4 @@ func WithDaemonConfig(cfg nydus.DaemonConfig) NewFSOpt {
 }
 
 type NewFSOpt func(d *filesystem) error
+

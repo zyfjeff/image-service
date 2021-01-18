@@ -33,3 +33,5 @@ func TestSetupSignalHandler(t *testing.T) {
 	time.Sleep(1 * time.Second)
 	require.Equal(t, actual, expected)
 }
+
+
