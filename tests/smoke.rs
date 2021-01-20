@@ -1,7 +1,6 @@
 // Copyright 2020 Ant Group. All rights reserved.
 //
 // SPDX-License-Identifier: Apache-2.0
-
 #[macro_use]
 extern crate log;
 extern crate stderrlog;
@@ -202,6 +201,33 @@ fn integration_test_compact() -> Result<()> {
         for bs in COMPAT_BOOTSTRAPS.iter() {
             check_compact(&work_dir, bs, mode)?;
         }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn integration_test_special_files() -> Result<()> {
+    info!("\n\n==================== testing run: special file test");
+    let tmp_dir = TempDir::new().map_err(|e| eother!(e))?;
+    let work_dir = tmp_dir.as_path().to_path_buf();
+
+    let mut builder = builder::new(&work_dir, "oci");
+
+    builder.build_special_files()?;
+
+    for mode in vec!["direct", "cached"] {
+        let nydusd = nydusd::new(
+            &work_dir,
+            true,
+            true,
+            mode.parse()?,
+            "api.sock".into(),
+            false,
+        )?;
+        nydusd.start(Some("bootstrap-specialfiles"), "mnt")?;
+        nydusd.check("specialfiles/result", "mnt")?;
+        nydusd.umount("mnt");
     }
 
     Ok(())

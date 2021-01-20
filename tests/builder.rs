@@ -105,6 +105,32 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
+    fn create_special_file(&mut self, path: &PathBuf, devtype: &str) -> Result<()> {
+        let dev: dev_t = makedev(255, 0);
+        let kind = match devtype {
+            "char" => SFlag::S_IFCHR,
+            "block" => SFlag::S_IFBLK,
+            "fifo" => SFlag::S_IFIFO,
+            _ => {
+                return Err(Error::new(
+                    ErrorKind::InvalidInput,
+                    "invalid special file type",
+                ))
+            }
+        };
+        if let Err(nix::Error::Sys(errno)) = mknod(
+            path.to_str().unwrap(),
+            kind,
+            Mode::S_IRUSR | Mode::S_IWUSR,
+            dev,
+        ) {
+            println!("create_special_file failed: {} {:?}", errno.desc(), path);
+            return Err(errno.into());
+        }
+
+        Ok(())
+    }
+
     fn set_xattr(&mut self, path: &PathBuf, key: &str, value: &[u8]) -> Result<()> {
         xattr::set(path, key, value)?;
         Ok(())
@@ -261,6 +287,34 @@ impl<'a> Builder<'a> {
                 self.work_dir.join("bootstrap-overlay"),
                 "upper.stargz",
                 self.work_dir.join("stargz.index-upper.json"),
+            )
+            .as_str(),
+            false,
+        )?;
+
+        Ok(())
+    }
+
+    pub fn build_special_files(&mut self) -> Result<()> {
+        let dir = self.work_dir.join("special_files");
+        self.create_dir(&dir)?;
+        self.create_dir(&self.work_dir.join("blobs"))?;
+
+        self.create_special_file(&dir.join("block-file"), "block")?;
+        self.create_special_file(&dir.join("char-file"), "char")?;
+        self.create_special_file(&dir.join("fifo-file"), "fifo")?;
+        self.create_file(&dir.join("normal-file"), b"")?;
+        self.create_dir(&dir.join("dir"))?;
+
+        exec(
+            format!(
+                "{:?} create --bootstrap {:?} --backend-type localfs --backend-config '{{\"dir\": {:?}}}' --log-level info --compressor {} --whiteout-spec {} {:?}",
+                NYDUS_IMAGE,
+                self.work_dir.join("bootstrap-specialfiles"),
+                self.work_dir.join("blobs"),
+                "lz4_block",
+                self.whiteout_spec,
+                dir,
             )
             .as_str(),
             false,
