@@ -51,6 +51,7 @@ mod fusedev;
 use fusedev::create_nydus_daemon;
 
 mod api_server_glue;
+mod upgrade;
 use api_server_glue::{ApiServer, ApiSeverSubscriber};
 
 lazy_static! {

@@ -199,16 +199,13 @@ impl ApiServer {
         let fs_type =
             FsBackendType::from_str(&cmd.fs_type).map_err(|e| ApiError::MountFailure(e.into()))?;
         self.daemon
-            .mount(
-                FsBackendMountCmd {
-                    fs_type,
-                    mountpoint,
-                    config: cmd.config,
-                    source: cmd.source,
-                    prefetch_files: cmd.prefetch_files,
-                },
-                None,
-            )
+            .mount(FsBackendMountCmd {
+                fs_type,
+                mountpoint,
+                config: cmd.config,
+                source: cmd.source,
+                prefetch_files: cmd.prefetch_files,
+            })
             .map(|_| ApiResponsePayload::Empty)
             .map_err(|e| ApiError::MountFailure(e.into()))
     }

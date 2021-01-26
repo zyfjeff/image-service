@@ -8,6 +8,7 @@ RUN echo '[source.crates-io] \n\
   >> /usr/local/cargo/config
 
 ENV RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup
+ENV RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static
 
 RUN rustup component add clippy
 RUN rustup component add rustfmt

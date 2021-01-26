@@ -14,13 +14,14 @@ pub mod backend;
 use std::collections::HashMap;
 use std::fmt;
 use std::os::unix::io::RawFd;
+use std::path::PathBuf;
 
 use fuse_rs::api::VersionMapGetter;
 use snapshot::{self, Persist, Snapshot};
 use versionize::{VersionMap, Versionize, VersionizeError, VersionizeResult};
 use versionize_derive::Versionize;
 
-use backend::{Backend, BackendError};
+use backend::{unix_domain_socket::UdsBackend, Backend, BackendError};
 
 #[derive(Debug)]
 pub enum UpgradeMgrError {
@@ -71,18 +72,15 @@ impl VersionMapGetter for Opaques {}
 // when needed.
 #[allow(dead_code)]
 pub struct UpgradeManager {
-    // Identify resource between multi nydusd instances
-    id: String,
     backend: Box<dyn Backend>,
     fds: Vec<RawFd>,
     opaques: Opaques,
 }
 
 impl UpgradeManager {
-    pub fn new(id: String, backend: Box<dyn Backend>) -> Self {
+    pub fn new(supervisor: PathBuf) -> Self {
         UpgradeManager {
-            id,
-            backend,
+            backend: Box::new(UdsBackend::new(supervisor)),
             fds: Vec::new(),
             opaques: Opaques {
                 data: HashMap::new(),
@@ -165,7 +163,7 @@ impl UpgradeManager {
         }
     }
 
-    // Get opaque (implemented Versionize) from manager cache
+    // Get opaque (implemented Versionize) from manager internal storage
     pub fn get_opaque_raw<V>(&mut self, kind: OpaqueKind) -> Result<Option<V>>
     where
         V: Versionize + VersionMapGetter,
@@ -247,7 +245,6 @@ pub mod tests {
     use vmm_sys_util::tempfile::TempFile;
 
     use super::*;
-    use backend::unix_domain_socket::UdsBackend;
 
     #[derive(Clone, Debug, PartialEq)]
     pub struct Test {
@@ -367,8 +364,7 @@ pub mod tests {
         let fds = vec![temp_file.as_file().as_raw_fd()];
         temp_file.as_file().seek(SeekFrom::Start(seek_pos)).unwrap();
 
-        let backend = UdsBackend::new(uds_path.clone());
-        let mut upgrade_mgr = UpgradeManager::new(String::from("test"), Box::new(backend));
+        let mut upgrade_mgr = UpgradeManager::new(uds_path.clone());
 
         // Save fd + opaque to uds server
         upgrade_mgr.set_fds(fds);
@@ -381,8 +377,7 @@ pub mod tests {
         upgrade_mgr.save().unwrap();
 
         // Restore fd + opaque from uds server
-        let backend = UdsBackend::new(uds_path);
-        let mut upgrade_mgr = UpgradeManager::new(String::from("test"), Box::new(backend));
+        let mut upgrade_mgr = UpgradeManager::new(uds_path.clone());
         upgrade_mgr.restore().unwrap();
 
         let restored_opaque1: Test = upgrade_mgr

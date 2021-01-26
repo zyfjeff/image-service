@@ -5,13 +5,13 @@
 
 use std::any::Any;
 use std::ffi::{CStr, CString};
-use std::fs::{metadata, OpenOptions};
-use std::io::{Result, Write};
+use std::fs::metadata;
+use std::io::Result;
 use std::ops::Deref;
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::net::UnixStream;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{
     atomic::{AtomicI32, AtomicU64, Ordering},
     mpsc::{channel, Receiver, Sender},
@@ -21,25 +21,16 @@ use std::thread::{self, JoinHandle};
 
 use nix::sys::stat::{major, minor};
 
-use fuse_rs::api::{server::Server, VersionMapGetter, Vfs};
-
-use snapshot::Persist;
-use versionize::{VersionMap, Versionize, VersionizeResult};
-use versionize_derive::Versionize;
+use fuse_rs::api::{server::Server, Vfs};
 use vmm_sys_util::eventfd::EventFd;
 
-use crate::daemon;
-use crate::exit_event_manager;
+use crate::upgrade::{self, FailoverPolicy, UpgradeManager};
+use crate::{daemon, exit_event_manager};
 use daemon::{
     DaemonError, DaemonResult, DaemonState, DaemonStateMachineContext, DaemonStateMachineInput,
-    DaemonStateMachineSubscriber, FsBackendCollection, FsBackendMountCmd, FsBackendType,
-    NydusDaemon, RafsMountStateSet, Trigger,
+    DaemonStateMachineSubscriber, FsBackendCollection, FsBackendMountCmd, NydusDaemon, Trigger,
 };
-use nydus_utils::{einval, eio, eother, BuildTimeInfo, FuseChannel, FuseSession};
-use upgrade_manager::backend::unix_domain_socket::UdsBackend;
-use upgrade_manager::{OpaqueKind, UpgradeManager, UpgradeMgrError};
-
-const CTRL_FS_CONN: &str = "/sys/fs/fuse/connections";
+use nydus_utils::{eio, eother, BuildTimeInfo, FuseChannel, FuseSession};
 
 struct FuseServer {
     server: Arc<Server<Arc<Vfs>>>,
@@ -104,8 +95,8 @@ pub struct FusedevDaemon {
     pub supervisor: Option<String>,
     pub id: Option<String>,
     /// Fuse connection ID which usually equals to `st_dev`
-    conn: AtomicU64,
-    failover_policy: FailoverPolicy,
+    pub(crate) conn: AtomicU64,
+    pub(crate) failover_policy: FailoverPolicy,
     upgrade_mgr: Option<Mutex<UpgradeManager>>,
     backend_collection: Mutex<FsBackendCollection>,
     bti: BuildTimeInfo,
@@ -234,89 +225,11 @@ impl NydusDaemon for FusedevDaemon {
     }
 
     fn save(&self) -> DaemonResult<()> {
-        if !self.vfs.initialized() {
-            return Err(DaemonError::NotReady);
-        }
-
-        // Unwrap should be safe because it's in live-upgrade/failover workflow
-        let mut mgr_guard = self.get_upgrade_mgr().unwrap();
-
-        // Save fuse fd
-        let fds = vec![self.session.lock().unwrap().get_fuse_fd().unwrap()];
-        mgr_guard.set_fds(fds);
-
-        // Save daemon opaque
-        mgr_guard.set_opaque(OpaqueKind::FuseDevice, &self)?;
-
-        mgr_guard.set_opaque_raw(OpaqueKind::VfsState, &self.get_vfs().save())?;
-
-        mgr_guard.save()?;
-
-        info!(
-            "Saved opaques {:?} to remote UDS server",
-            mgr_guard.get_opaque_kinds()
-        );
-
-        Ok(())
+        upgrade::fusedev_upgrade::save(self)
     }
 
     fn restore(&self) -> DaemonResult<()> {
-        if self.supervisor().is_none() {
-            return Err(DaemonError::UpgradeManager(UpgradeMgrError::Disabled));
-        }
-
-        // Unwrap should be safe because it's in live-upgrade/failover workflow
-        let mut mgr_guard = self.get_upgrade_mgr().unwrap();
-        mgr_guard.restore()?;
-
-        let _o: &FusedevDaemon = mgr_guard.get_opaque(OpaqueKind::FuseDevice, self)?;
-
-        // Restore fuse fd
-        let fds = mgr_guard.get_fds();
-        self.session.lock().unwrap().set_fuse_fd(fds[0]);
-
-        // Restore vfs
-        let vfs_state = mgr_guard
-            .get_opaque_raw(OpaqueKind::VfsState)?
-            .ok_or_else(|| DaemonError::Common("Opaque does not exist".to_string()))?;
-
-        // Mounts state set is allowed to be empty since nydusd can have no fs backend.
-        // The resource correction is already guaranteed by `Versionize`.
-        let mounts_set: Option<RafsMountStateSet> =
-            mgr_guard.get_opaque_raw(OpaqueKind::RafsMounts)?;
-
-        let trace_kinds = mgr_guard.get_opaque_kinds();
-
-        drop(mgr_guard);
-
-        <&Vfs>::restore(self.get_vfs(), &vfs_state)
-            .map_err(|_| DaemonError::Common("Fail in restoring".to_string()))?;
-
-        // Restore RAFS mounts
-        if let Some(set) = mounts_set {
-            for (mountpoint, state) in set.items {
-                // Only support Rafs live-upgrade right now.
-                self.mount(
-                    FsBackendMountCmd {
-                        fs_type: FsBackendType::Rafs,
-                        mountpoint,
-                        source: state.bootstrap,
-                        config: state.config,
-                        prefetch_files: None,
-                    },
-                    Some((state.index, &vfs_state)),
-                )?;
-            }
-        }
-
-        info!("Restored opaques {:?} from remote UDS server", trace_kinds);
-
-        // Start to serve fuse request
-        let conn = self.conn.load(Ordering::Acquire);
-        drain_fuse_requests(conn, &self.failover_policy, CTRL_FS_CONN)
-            .unwrap_or_else(|e| error!("Failed in draining fuse requests. {}", e));
-
-        Ok(())
+        upgrade::fusedev_upgrade::restore(self)
     }
 
     #[inline]
@@ -325,7 +238,7 @@ impl NydusDaemon for FusedevDaemon {
     }
 
     #[inline]
-    fn get_upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>> {
+    fn upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>> {
         self.upgrade_mgr.as_ref().map(|mgr| mgr.lock().unwrap())
     }
 
@@ -335,27 +248,6 @@ impl NydusDaemon for FusedevDaemon {
 
     fn version(&self) -> BuildTimeInfo {
         self.bti.clone()
-    }
-}
-
-impl<'a> Persist<'a> for &'a FusedevDaemon {
-    type State = DaemonOpaque;
-    type ConstructorArgs = &'a FusedevDaemon;
-    type LiveUpgradeConstructorArgs = &'a FusedevDaemon;
-    type Error = ();
-
-    fn save(&self) -> Self::State {
-        DaemonOpaque {
-            conn: self.conn.load(Ordering::Acquire),
-        }
-    }
-
-    fn restore(
-        daemon: Self::ConstructorArgs,
-        opaque: &Self::State,
-    ) -> std::result::Result<Self, Self::Error> {
-        daemon.conn.store(opaque.conn, Ordering::Release);
-        Ok(daemon)
     }
 }
 
@@ -420,62 +312,6 @@ fn calc_fuse_conn(mp: impl AsRef<Path>) -> Result<u64> {
     Ok(major << 20 | minor)
 }
 
-/// There might be some in-flight fuse requests when nydusd terminates out of sudden.
-/// According to FLUSH policy, those requests will be abandoned which means kernel
-/// no longer waits for their responses.
-/// RESEND policy commands kernel fuse to re-queue those fuse requests back to *Pending*
-/// queue, so nydus can re-read those messages.
-fn drain_fuse_requests(conn: u64, p: &FailoverPolicy, control_fs_conn: &str) -> Result<()> {
-    let f = match p {
-        FailoverPolicy::Flush => "flush",
-        FailoverPolicy::Resend => "resend",
-    };
-
-    // TODO: If `flush` or `resend` file does not exists, we continue the failover progress but
-    // should throw alarm out.
-    let mut control_fs_path = format!("{}/{}/{}", control_fs_conn, conn, f);
-
-    // Kernel may not support `resend` policy, so fall into `flush` policy.
-    if *p == FailoverPolicy::Resend && metadata(&control_fs_path).is_err() {
-        info!("Fallback to flush policy");
-        control_fs_path = format!("{}/{}/{}", control_fs_conn, conn, "flush");
-    }
-
-    // Finally, if the control file is absent, then do nothing ending with no handling in-flight message.
-    let mut f = OpenOptions::new()
-        .write(true)
-        .open(&control_fs_path)
-        .map_err(|e| {
-            error!("Can't open control file {}, {}", &control_fs_path, e);
-            e
-        })?;
-    f.write_all(b"1").map_err(|e| {
-        error!("Can't write to control file {}, {}", &control_fs_path, e);
-        e
-    })?;
-
-    Ok(())
-}
-
-use std::convert::TryFrom;
-#[derive(PartialEq)]
-pub enum FailoverPolicy {
-    Flush,
-    Resend,
-}
-
-impl TryFrom<&str> for FailoverPolicy {
-    type Error = std::io::Error;
-
-    fn try_from(p: &str) -> std::result::Result<Self, Self::Error> {
-        match p {
-            "flush" => Ok(FailoverPolicy::Flush),
-            "resend" => Ok(FailoverPolicy::Resend),
-            x => Err(einval!(x)),
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub fn create_nydus_daemon(
     mountpoint: &str,
@@ -493,10 +329,8 @@ pub fn create_nydus_daemon(
     let session = FuseSession::new(Path::new(mountpoint), "rafs", "")?;
 
     // Create upgrade manager
-    let upgrade_mgr = if let Some(supervisor) = &supervisor {
-        let upgrade_mgr_id = format!("nydus-{}", id.as_ref().unwrap());
-        let backend = Box::new(UdsBackend::new(PathBuf::from(supervisor)));
-        Some(Mutex::new(UpgradeManager::new(upgrade_mgr_id, backend)))
+    let upgrade_mgr = if let Some(s) = &supervisor {
+        Some(Mutex::new(UpgradeManager::new(s.to_string().into())))
     } else {
         None
     };
@@ -536,7 +370,7 @@ pub fn create_nydus_daemon(
         || api_sock.is_none()
     {
         if let Some(cmd) = mount_cmd {
-            daemon.mount(cmd, None)?;
+            daemon.mount(cmd)?;
         }
         daemon.session.lock().unwrap().mount()?;
         daemon
@@ -548,40 +382,4 @@ pub fn create_nydus_daemon(
     }
 
     Ok(daemon)
-}
-
-#[derive(Debug, Versionize)]
-pub struct DaemonOpaque {
-    conn: u64,
-}
-
-impl VersionMapGetter for DaemonOpaque {}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs::File;
-    use std::io::ErrorKind;
-    use vmm_sys_util::tempdir::TempDir;
-    #[test]
-    fn test_failover_policy_fallback() {
-        env_logger::init();
-        let _td = TempDir::new().unwrap();
-        let control_fs = _td.as_path();
-        let conn = 48;
-        let r = drain_fuse_requests(conn, &FailoverPolicy::Resend, &control_fs.to_str().unwrap());
-
-        match r {
-            Err(e) => assert_eq!(e.kind(), ErrorKind::NotFound),
-            _ => panic!(),
-        }
-
-        // Test if failover policy can fallback?
-        let control_fs_conn = control_fs.join(format!("{}", conn));
-        std::fs::create_dir_all(&control_fs_conn).unwrap();
-        let control_fs_path = control_fs_conn.join("flush");
-        let _f = File::create(control_fs_path).unwrap();
-
-        drain_fuse_requests(conn, &FailoverPolicy::Resend, &control_fs.to_str().unwrap()).unwrap();
-    }
 }

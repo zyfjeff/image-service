@@ -9,7 +9,7 @@ use std::cmp::PartialEq;
 use std::collections::HashMap;
 use std::convert::From;
 use std::fmt::{Display, Formatter};
-use std::io::{Error as IoError, ErrorKind as IoErrorKind, Result};
+use std::io::Result;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::id;
@@ -23,14 +23,12 @@ use std::thread;
 use std::{convert, error, fmt, io};
 
 use event_manager::{EventOps, EventSubscriber, Events};
-use fuse_rs::api::{BackendFileSystem, VersionMapGetter, Vfs, VfsState};
+use fuse_rs::api::{BackendFileSystem, Vfs, VfsState};
 use fuse_rs::passthrough::{Config, PassthroughFs};
 #[cfg(feature = "virtiofs")]
 use fuse_rs::transport::Error as FuseTransportError;
 use fuse_rs::Error as VhostUserFsError;
 
-use versionize::{VersionMap, Versionize, VersionizeResult};
-use versionize_derive::Versionize;
 use vmm_sys_util::{epoll::EventSet, eventfd::EventFd};
 
 use chrono::{self, DateTime, Local};
@@ -44,10 +42,9 @@ use rafs::{
     fs::{Rafs, RafsConfig},
     RafsError, RafsIoRead,
 };
-use upgrade_manager::{OpaqueKind, UpgradeManager, UpgradeMgrError};
 
-use crate::SubscriberWrapper;
-use crate::EVENT_MANAGER_RUN;
+use crate::upgrade::{self, UpgradeManager, UpgradeMgrError};
+use crate::{SubscriberWrapper, EVENT_MANAGER_RUN};
 
 #[allow(dead_code)]
 #[derive(Debug, Hash, PartialEq, Eq, Serialize)]
@@ -86,17 +83,12 @@ pub enum VfsErrorKind {
     Mount(io::Error),
     Umount(io::Error),
     Restore(io::Error),
+    AlreadyMounted,
 }
 
 impl From<RafsError> for DaemonError {
     fn from(error: RafsError) -> Self {
         DaemonError::Rafs(error)
-    }
-}
-
-impl From<UpgradeMgrError> for DaemonError {
-    fn from(error: UpgradeMgrError) -> Self {
-        DaemonError::UpgradeManager(error)
     }
 }
 
@@ -130,6 +122,8 @@ pub enum DaemonError {
     DaemonFailure(String),
 
     Common(String),
+    NotFound,
+    AlreadyExists,
     Serde(SerdeError),
     UpgradeManager(UpgradeMgrError),
     Vfs(VfsErrorKind),
@@ -171,66 +165,6 @@ impl convert::From<DaemonError> for io::Error {
 }
 
 pub type DaemonResult<T> = std::result::Result<T, DaemonError>;
-
-#[derive(Default, PartialEq, Serialize, Deserialize, Versionize, Debug)]
-pub struct RafsMountStateSet {
-    pub items: HashMap<String, RafsMountState>,
-}
-
-#[derive(Versionize, Serialize, Deserialize, PartialEq, Debug, Clone)]
-pub struct RafsMountState {
-    pub index: u8,
-    // A json string serialized from RafsConfig. The reason why we don't save `RafsConfig`
-    // instance here is it's impossible to implement Versionize for serde_json::Value
-    pub config: String,
-    pub bootstrap: String,
-}
-
-impl RafsMountStateSet {
-    pub fn new() -> Self {
-        Self {
-            items: HashMap::new(),
-        }
-    }
-
-    pub fn add(&mut self, cmd: FsBackendMountCmd, index: u8) -> DaemonResult<()> {
-        if self.items.contains_key(&cmd.mountpoint) {
-            return Err(DaemonError::Vfs(VfsErrorKind::Common(IoError::new(
-                IoErrorKind::AlreadyExists,
-                "Already mounted",
-            ))));
-        }
-        let _ = self.items.insert(
-            cmd.mountpoint,
-            RafsMountState {
-                index,
-                config: cmd.config,
-                bootstrap: cmd.source,
-            },
-        );
-        Ok(())
-    }
-
-    pub fn update(&mut self, cmd: FsBackendMountCmd) -> DaemonResult<()> {
-        if let Some(state) = self.items.get_mut(&cmd.mountpoint) {
-            // update only affects config and source
-            state.config = cmd.config;
-            state.bootstrap = cmd.source;
-            Ok(())
-        } else {
-            Err(DaemonError::Vfs(VfsErrorKind::Common(IoError::new(
-                IoErrorKind::NotFound,
-                "not mounted",
-            ))))
-        }
-    }
-
-    pub fn remove(&mut self, cmd: FsBackendUmountCmd) {
-        self.items.remove(&cmd.mountpoint);
-    }
-}
-
-impl VersionMapGetter for RafsMountStateSet {}
 
 #[derive(Clone, Serialize, PartialEq)]
 pub enum FsBackendType {
@@ -355,7 +289,7 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
     fn save(&self) -> DaemonResult<()>;
     fn restore(&self) -> DaemonResult<()>;
     fn get_vfs(&self) -> &Vfs;
-    fn get_upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>>;
+    fn upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>>;
     fn backend_collection(&self) -> MutexGuard<FsBackendCollection>;
     fn version(&self) -> BuildTimeInfo;
     fn export_info(&self) -> DaemonResult<String> {
@@ -370,10 +304,7 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
         serde_json::to_string(&response).map_err(DaemonError::Serde)
     }
     fn export_backend_info(&self, mountpoint: &str) -> DaemonResult<String> {
-        let fs = self
-            .get_vfs()
-            .get_rootfs(&mountpoint)
-            .map_err(|e| DaemonError::Vfs(VfsErrorKind::Common(e)))?;
+        let fs = self.backend_from_mountpoint(mountpoint)?;
         let any_fs = fs.deref().as_any();
 
         let rafs = any_fs
@@ -385,57 +316,43 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
         Ok(resp)
     }
 
-    // FIXME: locking?
-    fn mount<'a>(
+    // TODO: returning type Arc<Box<>> is very strange, but we have to follow fuse-rs.
+    // We can redefine `get_rootfs` someday thus to make this neat.
+    fn backend_from_mountpoint(
         &self,
-        cmd: FsBackendMountCmd,
-        vfs_state: Option<(u8, &'a VfsState)>,
-    ) -> DaemonResult<()> {
+        mp: &str,
+    ) -> DaemonResult<Arc<Box<dyn BackendFileSystem<Inode = u64, Handle = u64> + Send + Sync>>>
+    {
+        self.get_vfs()
+            .get_rootfs(mp)
+            .map_err(|e| DaemonError::Vfs(VfsErrorKind::Common(e)))
+    }
+
+    // FIXME: locking?
+    fn mount(&self, cmd: FsBackendMountCmd) -> DaemonResult<()> {
         // TODO: Fuse-rs and Vfs should be capable to handle that the mountpoint is already mounted.
         // Otherwise vfs' clients will suffer a lot  :-(. So try to add this capability to it.
-        if self.get_vfs().get_rootfs(&cmd.mountpoint).is_ok() {
-            return Err(DaemonError::Vfs(VfsErrorKind::Common(IoError::new(
-                IoErrorKind::AlreadyExists,
-                "Already mounted",
-            ))));
+        if self.backend_from_mountpoint(&cmd.mountpoint).is_ok() {
+            return Err(DaemonError::Vfs(VfsErrorKind::AlreadyMounted));
         }
-
         let backend = fs_backend_factory(&cmd)?;
-
-        if let Some((vfs_index, vfs_state)) = vfs_state {
-            // No need to save RafsMounts opaque as all mount info are already there
-            self.get_vfs()
-                .restore_mount(backend, vfs_index, &cmd.mountpoint, vfs_state)
-                .map_err(|e| DaemonError::Vfs(VfsErrorKind::Restore(e)))?;
-            info!("rafs restored at {}", cmd.mountpoint);
-        } else {
-            let index = self
-                .get_vfs()
-                .mount(backend, &cmd.mountpoint)
-                .map_err(|e| DaemonError::Vfs(VfsErrorKind::Mount(e)))?;
-            info!("rafs mounted at {}", cmd.mountpoint);
-
-            // Add mounts opaque to UpgradeManager
-            if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
-                let mut state = mgr_guard
-                    .get_opaque_raw(OpaqueKind::RafsMounts)?
-                    .unwrap_or_else(RafsMountStateSet::new);
-                state.add(cmd.clone(), index)?;
-                mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
-            }
-        }
-
+        let index = self
+            .get_vfs()
+            .mount(backend, &cmd.mountpoint)
+            .map_err(|e| DaemonError::Vfs(VfsErrorKind::Mount(e)))?;
+        info!("rafs mounted at {}", &cmd.mountpoint);
         self.backend_collection().add(&cmd.mountpoint, &cmd)?;
+
+        // Add mounts opaque to UpgradeManager
+        if let Some(mut mgr_guard) = self.upgrade_mgr() {
+            upgrade::add_mounts_state(&mut mgr_guard, cmd, index)?;
+        }
 
         Ok(())
     }
 
     fn remount(&self, cmd: FsBackendMountCmd) -> DaemonResult<()> {
-        let rootfs = self
-            .get_vfs()
-            .get_rootfs(&cmd.mountpoint)
-            .map_err(|e| DaemonError::Vfs(VfsErrorKind::Common(e)))?;
-
+        let rootfs = self.backend_from_mountpoint(&cmd.mountpoint)?;
         let rafs_config = RafsConfig::from_str(&&cmd.config)?;
         let mut bootstrap = RafsIoRead::from_file(&&cmd.source)?;
         let any_fs = rootfs.deref().as_any();
@@ -450,23 +367,15 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
             })?;
 
         // Update mounts opaque from UpgradeManager
-        if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
-            let mut state = mgr_guard
-                .get_opaque_raw(OpaqueKind::RafsMounts)?
-                .unwrap_or_else(RafsMountStateSet::new);
-            state.update(cmd)?;
-            mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
+        if let Some(mut mgr_guard) = self.upgrade_mgr() {
+            upgrade::update_mounts_state(&mut mgr_guard, cmd)?;
         }
 
         Ok(())
     }
 
     fn umount(&self, cmd: FsBackendUmountCmd) -> DaemonResult<()> {
-        let _ = self
-            .get_vfs()
-            .get_rootfs(&cmd.mountpoint)
-            .map_err(|e| DaemonError::Vfs(VfsErrorKind::Common(e)))?;
-
+        let _ = self.backend_from_mountpoint(&cmd.mountpoint)?;
         self.get_vfs()
             .umount(&cmd.mountpoint)
             .map_err(|e| DaemonError::Vfs(VfsErrorKind::Umount(e)))?;
@@ -474,15 +383,27 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
         self.backend_collection().del(&cmd.mountpoint);
 
         // Remove mount opaque from UpgradeManager
-        if let Some(mut mgr_guard) = self.get_upgrade_mgr() {
-            if let Some(mut state) =
-                mgr_guard.get_opaque_raw(OpaqueKind::RafsMounts)? as Option<RafsMountStateSet>
-            {
-                state.remove(cmd);
-                mgr_guard.set_opaque_raw(OpaqueKind::RafsMounts, &state)?;
-            }
+        if let Some(mut mgr_guard) = self.upgrade_mgr() {
+            upgrade::remove_mounts_state(&mut mgr_guard, cmd)?;
         }
 
+        Ok(())
+    }
+
+    /// NOTE: Don't push this method into upstream.
+    fn restore_mount<'a>(
+        &self,
+        cmd: FsBackendMountCmd,
+        vfs_state: (u8, &'a VfsState),
+    ) -> DaemonResult<()> {
+        let (vfs_index, vfs_state) = (vfs_state.0, vfs_state.1);
+        // No need to save RafsMounts opaque as all mount info are already there
+
+        let backend = fs_backend_factory(&cmd)?;
+        self.get_vfs()
+            .restore_mount(backend, vfs_index, &cmd.mountpoint, vfs_state)
+            .map_err(|e| DaemonError::Vfs(VfsErrorKind::Restore(e)))?;
+        info!("rafs restored at {}", cmd.mountpoint);
         Ok(())
     }
 }
@@ -721,97 +642,5 @@ impl DaemonStateMachineContext {
                 self.result_sender.send(r).unwrap();
             })
             .map(|_| ())
-    }
-}
-
-#[cfg(test)]
-pub mod tests {
-    use std::path::PathBuf;
-
-    use upgrade_manager::backend::unix_domain_socket::UdsBackend;
-    use upgrade_manager::{OpaqueKind, UpgradeManager};
-
-    use super::*;
-
-    #[test]
-    fn test_rafs_mounts_state_with_upgrade_manager() {
-        let backend = UdsBackend::new(PathBuf::from("fake"));
-        let mut upgrade_mgr = UpgradeManager::new(String::from("test"), Box::new(backend));
-
-        let mut rafs_mount = RafsMountStateSet::new();
-        rafs_mount
-            .add(
-                FsBackendMountCmd {
-                    fs_type: FsBackendType::Rafs,
-                    source: String::from("source-fake1"),
-                    config: String::from("config-fake1"),
-                    mountpoint: String::from("mountpoint-fake1"),
-                    prefetch_files: None,
-                },
-                1,
-            )
-            .unwrap();
-        rafs_mount
-            .add(
-                FsBackendMountCmd {
-                    fs_type: FsBackendType::Rafs,
-                    source: String::from("source-fake2"),
-                    config: String::from("config-fake2"),
-                    mountpoint: String::from("mountpoint-fake2"),
-                    prefetch_files: None,
-                },
-                2,
-            )
-            .unwrap();
-        rafs_mount
-            .update(FsBackendMountCmd {
-                fs_type: FsBackendType::Rafs,
-                source: String::from("source-fake3"),
-                config: String::from("config-fake3"),
-                mountpoint: String::from("mountpoint-fake2"),
-                prefetch_files: None,
-            })
-            .unwrap();
-        rafs_mount
-            .add(
-                FsBackendMountCmd {
-                    fs_type: FsBackendType::Rafs,
-                    source: String::from("source-fake4"),
-                    config: String::from("config-fake4"),
-                    mountpoint: String::from("mountpoint-fake4"),
-                    prefetch_files: None,
-                },
-                4,
-            )
-            .unwrap();
-        rafs_mount.remove(FsBackendUmountCmd {
-            mountpoint: String::from("mountpoint-fake4"),
-        });
-
-        upgrade_mgr
-            .set_opaque_raw(OpaqueKind::RafsMounts, &rafs_mount)
-            .unwrap();
-
-        let expected_rafs_mount: RafsMountStateSet = upgrade_mgr
-            .get_opaque_raw(OpaqueKind::RafsMounts)
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(
-            expected_rafs_mount.items.get("mountpoint-fake1").unwrap(),
-            &RafsMountState {
-                index: 1,
-                bootstrap: String::from("source-fake1"),
-                config: String::from("config-fake1"),
-            }
-        );
-        assert_eq!(
-            expected_rafs_mount.items.get("mountpoint-fake2").unwrap(),
-            &RafsMountState {
-                index: 2,
-                bootstrap: String::from("source-fake3"),
-                config: String::from("config-fake3"),
-            }
-        );
     }
 }

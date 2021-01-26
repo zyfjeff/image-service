@@ -22,11 +22,10 @@ use vhost_user_backend::{VhostUserBackend, VhostUserDaemon, Vring};
 use vm_memory::GuestMemoryMmap;
 use vmm_sys_util::eventfd::EventFd;
 
+use crate::upgrade::UpgradeManager;
 use nydus_utils::{eother, BuildTimeInfo};
-use upgrade_manager::UpgradeManager;
 
-use crate::daemon;
-use daemon::{
+use crate::daemon::{
     DaemonError, DaemonResult, DaemonState, DaemonStateMachineContext, DaemonStateMachineInput,
     DaemonStateMachineSubscriber, FsBackendCollection, FsBackendMountCmd, NydusDaemon, Trigger,
 };
@@ -42,7 +41,6 @@ const REQ_QUEUE_EVENT: u16 = 1;
 // The device has been dropped.
 const KILL_EVENT: u16 = 2;
 
-/// TODO: group virtiofs code into a different file
 type VhostUserBackendResult<T> = std::result::Result<T, std::io::Error>;
 
 #[allow(dead_code)]
@@ -258,7 +256,7 @@ impl<S: VhostUserBackend> NydusDaemon for VirtiofsDaemon<S> {
         &self.vfs
     }
 
-    fn get_upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>> {
+    fn upgrade_mgr(&self) -> Option<MutexGuard<UpgradeManager>> {
         self.upgrade_mgr.as_ref().map(|mgr| mgr.lock().unwrap())
     }
 
@@ -321,7 +319,7 @@ pub fn create_nydus_daemon(
     machine.kick_state_machine()?;
 
     if let Some(cmd) = mount_cmd {
-        daemon.mount(cmd, None)?;
+        daemon.mount(cmd)?;
     }
 
     // TODO: In fact, for virtiofs, below event triggers virtio-queue setup and some other
