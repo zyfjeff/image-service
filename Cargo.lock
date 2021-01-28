@@ -940,8 +940,8 @@ checksum = "3728d817d99e5ac407411fa471ff9800a778d88a24685968b36824eaf4bee400"
 
 [[package]]
 name = "micro_http"
-version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/micro-http.git#bc2611dac66f14e08b69996bdebb6b9481aa386e"
+version = "0.2.0"
+source = "git+https://github.com/cloud-hypervisor/micro-http.git?branch=master#af72318b755620f9c1b99b319bc2e4e942b91b2f"
 dependencies = [
  "epoll",
 ]
