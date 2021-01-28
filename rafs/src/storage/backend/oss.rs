@@ -105,7 +105,7 @@ impl OSS {
             }
         }
         let canonicalized_oss_headers = canonicalized_oss_headers.join("\n");
-        if canonicalized_oss_headers != "" {
+        if !canonicalized_oss_headers.is_empty() {
             data.insert(4, canonicalized_oss_headers.as_str());
         }
         let data = data.join("\n");

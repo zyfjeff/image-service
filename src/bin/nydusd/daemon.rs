@@ -391,10 +391,10 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
     }
 
     /// NOTE: Don't push this method into upstream.
-    fn restore_mount<'a>(
+    fn restore_mount(
         &self,
         cmd: FsBackendMountCmd,
-        vfs_state: (u8, &'a VfsState),
+        vfs_state: (u8, &VfsState),
     ) -> DaemonResult<()> {
         let (vfs_index, vfs_state) = (vfs_state.0, vfs_state.1);
         // No need to save RafsMounts opaque as all mount info are already there

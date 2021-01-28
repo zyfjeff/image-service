@@ -35,9 +35,11 @@ impl Validator {
 
     pub fn check(&mut self, verbosity: bool) -> Result<bool> {
         let err = "failed to load bootstrap for validator";
-        let mut rs = RafsSuper::default();
-        rs.mode = RafsMode::Direct;
-        rs.digest_validate = true;
+        let mut rs = RafsSuper {
+            mode: RafsMode::Direct,
+            digest_validate: true,
+            ..Default::default()
+        };
         rs.load(&mut self.f_bootstrap).context(err)?;
 
         let tree = Tree::from_bootstrap(&rs, None).context(err)?;
