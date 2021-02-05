@@ -63,7 +63,7 @@ members = [
 vm-memory = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-memory.git", branch = "master", optional = true }
 
 [patch.'https://github.com/cloud-hypervisor/fuse-backend-rs.git']
-fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git", branch = "stable-0.0.2", optional = true }
+fuse-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git", branch = "stable-0.2.0", optional = true }
 
 [patch.'https://github.com/cloud-hypervisor/vhost-user-backend.git']
 vhost-user-backend = { git = "ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git", package="vhost_user_backend", branch = "master", optional = true }
