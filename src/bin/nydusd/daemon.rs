@@ -23,7 +23,7 @@ use std::thread;
 use std::{convert, error, fmt, io};
 
 use event_manager::{EventOps, EventSubscriber, Events};
-use fuse_rs::api::{vfs::BackFileSystem, vfs::VfsError, BackendFileSystem, Vfs, VfsState};
+use fuse_rs::api::{vfs::BackFileSystem, vfs::VfsError, BackendFileSystem, Vfs};
 use fuse_rs::passthrough::{Config, PassthroughFs};
 #[cfg(feature = "virtiofs")]
 use fuse_rs::transport::Error as FuseTransportError;
@@ -378,17 +378,12 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
     }
 
     /// NOTE: Don't push this method into upstream.
-    fn restore_mount(
-        &self,
-        cmd: FsBackendMountCmd,
-        vfs_state: (u8, &VfsState),
-    ) -> DaemonResult<()> {
-        let (vfs_index, vfs_state) = (vfs_state.0, vfs_state.1);
+    fn restore_mount(&self, cmd: FsBackendMountCmd, fs_index: u8) -> DaemonResult<()> {
         // No need to save RafsMounts opaque as all mount info are already there
 
         let backend = fs_backend_factory(&cmd)?;
         self.get_vfs()
-            .restore_mount(backend, vfs_index, &cmd.mountpoint, vfs_state)?;
+            .restore_mount(backend, fs_index, &cmd.mountpoint)?;
         info!("rafs restored at {}", cmd.mountpoint);
         Ok(())
     }

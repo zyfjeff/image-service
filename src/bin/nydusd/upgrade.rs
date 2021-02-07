@@ -221,7 +221,7 @@ pub mod fusedev_upgrade {
                         config: state.config,
                         prefetch_files: None,
                     },
-                    (state.index, &vfs_state),
+                    state.index,
                 )?;
             }
         }
