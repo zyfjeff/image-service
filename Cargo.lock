@@ -258,7 +258,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49a84d8ff70e3ec52311109b019c27672b4c1929e4cf7c18bcf0cd9fb5e230be"
 dependencies = [
  "getrandom 0.2.0",
- "lazy_static 1.4.0",
+ "lazy_static",
  "proc-macro-hack",
  "tiny-keccak",
 ]
@@ -446,7 +446,9 @@ dependencies = [
  "atty",
  "chrono",
  "glob",
+ "lazy_static",
  "log",
+ "regex",
  "thiserror",
  "yansi",
 ]
@@ -878,12 +880,6 @@ dependencies = [
 
 [[package]]
 name = "lazy_static"
-version = "0.2.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76f033c7ad61445c5b347c7382dd1237847eb1bce590fe50365dcb33d546be73"
-
-[[package]]
-name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
@@ -1038,7 +1034,7 @@ version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b0d88c06fe90d5ee94048ba40409ef1d9315d86f6f38c2efdaad4fb50c58b2d"
 dependencies = [
- "lazy_static 1.4.0",
+ "lazy_static",
  "libc",
  "log",
  "openssl",
@@ -1130,7 +1126,7 @@ version = "0.1.0"
 dependencies = [
  "epoll",
  "http",
- "lazy_static 1.4.0",
+ "lazy_static",
  "log",
  "micro_http",
  "serde",
@@ -1151,8 +1147,9 @@ dependencies = [
  "env_logger",
  "epoll",
  "event-manager",
+ "flexi_logger",
  "fuse-rs",
- "lazy_static 1.4.0",
+ "lazy_static",
  "libc",
  "log",
  "nix",
@@ -1186,6 +1183,7 @@ dependencies = [
  "built",
  "chrono",
  "epoll",
+ "flexi_logger",
  "fuse-rs",
  "libc",
  "log",
@@ -1217,7 +1215,7 @@ dependencies = [
  "bitflags",
  "cfg-if 0.1.10",
  "foreign-types",
- "lazy_static 1.4.0",
+ "lazy_static",
  "libc",
  "openssl-sys",
 ]
@@ -1410,7 +1408,7 @@ dependencies = [
  "governor",
  "hmac",
  "httpdate",
- "lazy_static 1.4.0",
+ "lazy_static",
  "libc",
  "log",
  "lz4-sys",
@@ -1496,7 +1494,7 @@ dependencies = [
  "aho-corasick",
  "memchr",
  "regex-syntax",
- "thread_local 1.0.1",
+ "thread_local",
 ]
 
 [[package]]
@@ -1530,7 +1528,7 @@ dependencies = [
  "hyper",
  "hyper-tls",
  "js-sys",
- "lazy_static 1.4.0",
+ "lazy_static",
  "log",
  "mime",
  "mime_guess",
@@ -1596,7 +1594,7 @@ version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f05ba609c234e60bee0d547fe94a4c7e9da733d1c962cf6e59efa4cd9c8bc75"
 dependencies = [
- "lazy_static 1.4.0",
+ "lazy_static",
  "winapi 0.3.8",
 ]
 
@@ -1763,7 +1761,7 @@ version = "0.1.0"
 source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/snapshot.git?branch=master#c98308a285638faa474ddfd196bd59b06c074a7e"
 dependencies = [
  "bincode",
- "lazy_static 1.4.0",
+ "lazy_static",
  "libc",
  "serde",
  "serde_derive",
@@ -1897,21 +1895,11 @@ dependencies = [
 
 [[package]]
 name = "thread_local"
-version = "0.3.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1697c4b57aeeb7a536b647165a2825faddffb1d3bad386d507709bd51a90bb14"
-dependencies = [
- "lazy_static 0.2.11",
- "unreachable",
-]
-
-[[package]]
-name = "thread_local"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d40c6d1b69745a6ec6fb1ca717914848da4b44ae29d9b3080cbee91d72a69b14"
 dependencies = [
- "lazy_static 1.4.0",
+ "lazy_static",
 ]
 
 [[package]]
@@ -1943,7 +1931,7 @@ dependencies = [
  "fnv",
  "futures-core",
  "iovec",
- "lazy_static 1.4.0",
+ "lazy_static",
  "memchr",
  "mio",
  "num_cpus",
@@ -2048,20 +2036,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "826e7639553986605ec5979c7dd957c7895e93eabed50ab2ffa7f6128a75097c"
 
 [[package]]
-name = "unreachable"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "382810877fe448991dfc7f0dd6e3ae5d58088fd0ea5e35189655f84e6814fa56"
-dependencies = [
- "void",
-]
-
-[[package]]
 name = "upgrade-manager"
 version = "0.1.0"
 dependencies = [
  "fuse-rs",
- "lazy_static 1.4.0",
+ "lazy_static",
  "libc",
  "log",
  "nix",
@@ -2270,7 +2249,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e53963b583d18a5aa3aaae4b4c1cb535218246131ba22a71f05b518098571df"
 dependencies = [
  "bumpalo",
- "lazy_static 1.4.0",
+ "lazy_static",
  "log",
  "proc-macro2 1.0.24",
  "quote 1.0.6",
