@@ -16,7 +16,7 @@ use vmm_sys_util::tempdir::TempDir;
 use nydus_utils::{eother, exec, setup_logging};
 use snapshotter::Snapshotter;
 
-const COMPAT_BOOTSTRAPS: &'static [&'static str] = &[
+const COMPAT_BOOTSTRAPS: [&str; 2] = [
     "blake3-lz4_block-non_repeatable",
     "sha256-nocompress-repeatable",
 ];
@@ -60,7 +60,7 @@ fn test(
     let tmp_dir_prefix =
         std::env::var("TEST_WORKDIR_PREFIX").expect("Please specify `TEST_WORKDIR_PREFIX` env");
     let tmp_dir = {
-        let path = if tmp_dir_prefix.ends_with("/") {
+        let path = if tmp_dir_prefix.ends_with('/') {
             tmp_dir_prefix
         } else {
             format!("{}/", tmp_dir_prefix)
@@ -68,8 +68,8 @@ fn test(
         TempDir::new_with_prefix(path).map_err(|e| eother!(e))?
     };
     let work_dir = tmp_dir.as_path().to_path_buf();
-    let lower_texture = format!("directory/lower.result");
-    let overlay_texture = format!("directory/overlay.result");
+    let lower_texture = "directory/lower.result".to_string();
+    let overlay_texture = "directory/overlay.result".to_string();
 
     let mut builder = builder::new(&work_dir, whiteout_spec);
 
@@ -210,7 +210,7 @@ fn integration_test_special_files() -> Result<()> {
 
     builder.build_special_files()?;
 
-    for mode in vec!["direct", "cached"] {
+    for mode in &["direct", "cached"] {
         let nydusd = nydusd::new(
             &work_dir,
             true,
@@ -290,7 +290,7 @@ fn integration_test_hot_upgrade_with_fusedev() -> Result<()> {
         true,
     )?;
 
-    let snapshotter = Snapshotter::new(work_dir.clone());
+    let snapshotter = Snapshotter::new(work_dir);
 
     // Start old nydusd to mount
     old_nydusd.start(Some(COMPAT_BOOTSTRAPS[0]), "mnt")?;
@@ -359,7 +359,7 @@ fn integration_test_hot_upgrade_with_rafs_mount() -> Result<()> {
         true,
     )?;
 
-    let snapshotter = Snapshotter::new(work_dir.clone());
+    let snapshotter = Snapshotter::new(work_dir);
 
     // Start old nydusd to mount
     old_nydusd.start(None, "mnt")?;
