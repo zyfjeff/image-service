@@ -774,7 +774,7 @@ mod tests {
         let attr = rafs.get_inode_attr(1).unwrap();
         assert_eq!(attr.ino, 1);
         assert_eq!(attr.blocks, 8);
-        assert_eq!(attr.uid, 127824);
+        assert_eq!(attr.uid, 0);
     }
 
     #[test]
@@ -818,7 +818,7 @@ mod tests {
         };
         match rafs.statfs(ctx, 1) {
             Ok(statfs) => {
-                assert_eq!(statfs.f_files, 16816);
+                assert_eq!(statfs.f_files, 43082);
                 assert_eq!(statfs.f_bsize, 512);
                 assert_eq!(statfs.f_namemax, 255);
                 assert_eq!(statfs.f_fsid, 1380009555);
