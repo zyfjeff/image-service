@@ -633,7 +633,6 @@ mod tests {
     fn it_should_convert_str_to_fsbackendtype() {
         let backend_type:FsBackendType = "rafs".parse().unwrap();
         assert!(backend_type==FsBackendType::Rafs);
-
     }
 
     #[test]
