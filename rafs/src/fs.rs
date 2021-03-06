@@ -727,7 +727,7 @@ impl FileSystem for Rafs {
 
 #[cfg(test)]
 mod tests {
-    use super::*; 
+    use super::*;
 
     fn new_rafs_backend() -> Box<Rafs> {
         let config = r#"
@@ -764,7 +764,8 @@ mod tests {
         let bootstrapfile = bootstrapfile.as_str();
         let mut bootstrap = RafsIoRead::from_file(bootstrapfile).unwrap();
         let mut rafs = Rafs::new(rafs_config, mountpoint, &mut bootstrap).unwrap();
-        rafs.import(&mut bootstrap, Some(vec![std::path::PathBuf::new()])).unwrap();
+        rafs.import(&mut bootstrap, Some(vec![std::path::PathBuf::new()]))
+            .unwrap();
         Box::new(rafs)
     }
 
@@ -823,7 +824,7 @@ mod tests {
                 assert_eq!(statfs.f_namemax, 255);
                 assert_eq!(statfs.f_fsid, 1380009555);
                 assert_eq!(statfs.f_ffree, 0);
-            },
+            }
             Err(_) => assert!(false, "failed to statfs"),
         }
     }
@@ -846,11 +847,10 @@ mod tests {
             Err(e) => {
                 println!("{:?}", e);
                 assert!(false, "failed to lookup /etc from ino 1");
-            },
+            }
             Ok(e) => {
                 assert_eq!(e.inode, 0);
-            },
+            }
         }
     }
-    
 }

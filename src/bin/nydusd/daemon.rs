@@ -631,20 +631,23 @@ mod tests {
 
     #[test]
     fn it_should_convert_str_to_fsbackendtype() {
-        let backend_type:FsBackendType = "rafs".parse().unwrap();
-        assert!(backend_type==FsBackendType::Rafs);
+        let backend_type: FsBackendType = "rafs".parse().unwrap();
+        assert!(backend_type == FsBackendType::Rafs);
     }
 
     #[test]
     fn it_should_add_new_backend() {
-        let mut col:FsBackendCollection = Default::default();
-        match col.add("test", &FsBackendMountCmd{
-           fs_type:  FsBackendType::Rafs,
-           config: "{\"config\": \"test\"}".to_string(),
-           mountpoint: "testmonutount".to_string(),
-           source: "testsource".to_string(),
-           prefetch_files: Some(vec!["testfile".to_string()]),
-        }) {
+        let mut col: FsBackendCollection = Default::default();
+        match col.add(
+            "test",
+            &FsBackendMountCmd {
+                fs_type: FsBackendType::Rafs,
+                config: "{\"config\": \"test\"}".to_string(),
+                mountpoint: "testmonutount".to_string(),
+                source: "testsource".to_string(),
+                prefetch_files: Some(vec!["testfile".to_string()]),
+            },
+        ) {
             Err(_) => assert!(false, "failed to add backend collection"),
             Ok(_) => assert!(true),
         }
@@ -661,7 +664,7 @@ mod tests {
             Ok(res) => match res {
                 Some(v) => assert_eq!(1, v.len()),
                 None => assert!(false, "failed to get verified prefetch files"),
-            }
+            },
         }
 
         match input_prefetch_files_verify(&Some(vec!["etc/passwd".to_string()])) {
@@ -698,13 +701,17 @@ mod tests {
             }
           }"#;
         let bootstrap = "./tests/texture/bootstrap/nydusd_daemon_test_bootstrap";
-        match fs_backend_factory(&FsBackendMountCmd{
-           fs_type:  FsBackendType::Rafs,
-           config: config.to_string(),
-           mountpoint: "testmountpoint".to_string(),
-           source: bootstrap.to_string(),
-           prefetch_files: Some(vec!["/testfile".to_string()]),
-        }).unwrap().as_any().downcast_ref::<Rafs>() {
+        match fs_backend_factory(&FsBackendMountCmd {
+            fs_type: FsBackendType::Rafs,
+            config: config.to_string(),
+            mountpoint: "testmountpoint".to_string(),
+            source: bootstrap.to_string(),
+            prefetch_files: Some(vec!["/testfile".to_string()]),
+        })
+        .unwrap()
+        .as_any()
+        .downcast_ref::<Rafs>()
+        {
             Some(_) => assert!(true),
             None => assert!(false, "failed to create rafs backend"),
         }
