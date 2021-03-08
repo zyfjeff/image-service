@@ -23,7 +23,7 @@ use std::thread;
 use std::{convert, error, fmt, io};
 
 use event_manager::{EventOps, EventSubscriber, Events};
-use fuse_rs::api::{vfs::BackFileSystem, vfs::VfsError, BackendFileSystem, Vfs};
+use fuse_rs::api::{vfs::BackFileSystem, vfs::VfsError, Vfs};
 use fuse_rs::passthrough::{Config, PassthroughFs};
 #[cfg(feature = "virtiofs")]
 use fuse_rs::transport::Error as FuseTransportError;
@@ -407,9 +407,7 @@ fn input_prefetch_files_verify(input: &Option<Vec<String>>) -> DaemonResult<Opti
 
     Ok(prefetch_files)
 }
-fn fs_backend_factory(
-    cmd: &FsBackendMountCmd,
-) -> DaemonResult<Box<dyn BackendFileSystem<Inode = u64, Handle = u64> + Send + Sync>> {
+fn fs_backend_factory(cmd: &FsBackendMountCmd) -> DaemonResult<BackFileSystem> {
     let prefetch_files = input_prefetch_files_verify(&cmd.prefetch_files)?;
     match cmd.fs_type {
         FsBackendType::Rafs => {
