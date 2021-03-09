@@ -760,8 +760,7 @@ mod tests {
         source_path.push("../tests/texture/bootstrap/image_v2.boot");
         let mountpoint = "/mnt";
         let rafs_config = RafsConfig::from_str(config).unwrap();
-        let bootstrapfile = source_path.into_os_string().into_string().unwrap();
-        let bootstrapfile = bootstrapfile.as_str();
+        let bootstrapfile = source_path.to_str().unwrap();
         let mut bootstrap = RafsIoRead::from_file(bootstrapfile).unwrap();
         let mut rafs = Rafs::new(rafs_config, mountpoint, &mut bootstrap).unwrap();
         rafs.import(&mut bootstrap, Some(vec![std::path::PathBuf::new()]))
