@@ -377,7 +377,7 @@ pub mod tests {
         upgrade_mgr.save().unwrap();
 
         // Restore fd + opaque from uds server
-        let mut upgrade_mgr = UpgradeManager::new(uds_path.clone());
+        let mut upgrade_mgr = UpgradeManager::new(uds_path);
         upgrade_mgr.restore().unwrap();
 
         let restored_opaque1: Test = upgrade_mgr
