@@ -12,11 +12,11 @@ build-virtiofs:
 	# TODO: switch to --out-dir when it moves to stable
 	# For now we build with separate target directories
 	cargo build --features=virtiofs --target-dir target-virtiofs
-	cargo clippy --features=virtiofs --tests --target-dir target-virtiofs -- -Dclippy::all
+	cargo clippy --features=virtiofs --tests --bins --workspace --target-dir target-virtiofs  -- -Dclippy::all
 
 build-fusedev:
 	cargo build --features=fusedev --target-dir target-fusedev
-	cargo clippy --features=fusedev --tests --target-dir target-fusedev -- -Dclippy::all
+	cargo clippy --features=fusedev --tests --bins --workspace --target-dir target-fusedev  -- -Dclippy::all
 
 build-virtiofs-release:
 	cargo build --features=virtiofs --release --target-dir target-virtiofs
@@ -32,7 +32,11 @@ ut:
 	RUST_BACKTRACE=1 cargo test --features=fusedev --target-dir target-fusedev --workspace -- --nocapture --test-threads=15 --skip integration
 	RUST_BACKTRACE=1 cargo test --features=virtiofs --target-dir target-virtiofs --workspace -- --nocapture --test-threads=15 --skip integration
 
+# Run smoke test including general integration tests and unit tests in container.
+# Nydus binaries should already be prepared.
 static-test:
+	# No clippy for virtiofs for now since it has much less updates.
+	cargo clippy --features=fusedev --tests --bins --workspace --target-dir target-fusedev  -- -Dclippy::all
 	# For virtiofs target UT
 	cargo test --target x86_64-unknown-linux-musl --features=virtiofs --release --target-dir target-virtiofs --workspace -- --nocapture --test-threads=15 --skip integration
 	# For fusedev target UT & integration
