@@ -2,9 +2,13 @@
 
 <p><img src="misc/logo.svg" width="170"></p>
 
-The nydus project implements a user space filesystem on top of
-a container image format that improves over the current OCI image
-specification. Its key features include:
+The nydus project implements a user space filesystem on top of a container image format that improves over the current OCI image specification, in terms of container launching speed, image space, and network bandwidth efficiency, as well as data integrity.
+
+The following benchmarking result shows the performance improvement compared with the OCI image for the container cold startup elapsed time on containerd. As the OCI image size increases, the container startup time of using Nydus image remains very short.
+
+![Container Cold Startup](./misc/perf.jpg)
+
+Nydus' key features include:
 
 * Container images are downloaded on demand
 * Chunk level data duplication
@@ -12,7 +16,7 @@ specification. Its key features include:
 * Only usable image data is saved when building a container image
 * Only usable image data is downloaded when running a container
 * End-to-end image data integrity
-* Compactible with the OCI artifacts spec and distribution spec
+* Compatible with the OCI artifacts spec and distribution spec
 * Integrated with existing CNCF project Dragonfly to support image distribution in large clusters
 * Different container image storage backends are supported
 
