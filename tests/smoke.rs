@@ -287,6 +287,8 @@ fn integration_test_hot_upgrade_with_fusedev() {
 
     // Old nydusd's state should be RUNNING
     assert_eq!(snapshotter.get_status(&old_nydusd.api_sock), "RUNNING");
+    // Basically, we should not send `takeover` here, but it is fuzz.
+    snapshotter.take_over(&new_nydusd.api_sock);
 
     // Snapshotter receive fuse fd from old nydusd
     snapshotter.request_sendfd(&old_nydusd.api_sock);
