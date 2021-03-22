@@ -87,9 +87,9 @@ impl Snapshotter {
         self.request(apisock, "PUT", "/daemon/exit", None).unwrap();
     }
 
-    pub fn take_over(&self, apisock: &PathBuf) {
+    pub fn take_over(&self, apisock: &PathBuf) -> Result<()> {
         self.request(apisock, "PUT", "/daemon/fuse/takeover", None)
-            .unwrap();
+            .map(|_| ())
     }
 
     pub fn mount(
