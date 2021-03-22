@@ -270,7 +270,7 @@ fn main() -> Result<()> {
 
     setup_logging(logging_file, level)?;
 
-    dump_program_info();
+    dump_program_info(crate_version!());
 
     // Retrieve arguments
     // shared-dir means fs passthrough
