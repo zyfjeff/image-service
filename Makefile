@@ -71,12 +71,22 @@ docker-nydus-smoke: docker-static
 docker-nydusify-smoke: docker-static
 	docker run --rm -v ~/go:/go -v ${current_dir}:/nydus-rs --workdir /nydus-rs golang:1.14 make -C contrib/nydusify build-smoke
 	docker build -t nydusify-smoke misc/nydusify-smoke
-	docker run --rm -v $(current_dir):/nydus-rs -v ~/.cargo/target-fusedev:/nydus-rs/target-fusedev --privileged nydusify-smoke -test.run TestSmoke
+	docker run --rm --privileged \
+		-e BACKEND_TYPE=$(BACKEND_TYPE) \
+		-e BACKEND_CONFIG=$(BACKEND_CONFIG) \
+		-v $(current_dir):/nydus-rs \
+		-v ~/.cargo/target-fusedev:/nydus-rs/target-fusedev \
+		nydusify-smoke TestSmoke
 
 docker-nydusify-image-test: docker-static
 	docker run --rm -v ~/go:/go -v ${current_dir}:/nydus-rs --workdir /nydus-rs golang:1.14 make -C contrib/nydusify build-smoke
 	docker build -t nydusify-smoke misc/nydusify-smoke
-	docker run --rm -v $(current_dir):/nydus-rs -v ~/.cargo/target-fusedev:/nydus-rs/target-fusedev --privileged nydusify-smoke -test.run TestDockerHubImage
+	docker run --rm --privileged \
+		-e BACKEND_TYPE=$(BACKEND_TYPE) \
+		-e BACKEND_CONFIG=$(BACKEND_CONFIG) \
+		-v $(current_dir):/nydus-rs \
+		-v ~/.cargo/target-fusedev:/nydus-rs/target-fusedev \
+		nydusify-smoke TestDockerHubImage
 
 docker-smoke: docker-nydus-smoke docker-nydusify-smoke
 
