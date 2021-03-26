@@ -11,10 +11,10 @@ lazy_static = "1.4.0"
 log = "0.4.8"
 epoll = ">=4.0.1"
 micro_http = { git = "https://github.com/cloud-hypervisor/micro-http.git", branch = "master" }
-serde = {version = ">=1.0.27", features = ["rc"] }
+serde = { version = ">=1.0.27", features = ["rc"] }
 serde_derive = ">=1.0.27"
 serde_json = ">=1.0.9"
 vmm-sys-util = ">=0.3.1"
 url = "2.1.1"
 http = "0.2.1"
-rafs = {path = "../rafs"}
+nydus-utils = { path = "../utils" }
