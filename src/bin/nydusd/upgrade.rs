@@ -9,7 +9,6 @@ use versionize_derive::Versionize;
 
 use crate::daemon::{DaemonError, DaemonResult, FsBackendMountCmd, FsBackendUmountCmd};
 
-use nydus_utils::einval;
 pub use upgrade_manager::{OpaqueKind, UpgradeManager, UpgradeMgrError};
 
 impl VersionMapGetter for RafsMountStateSet {}

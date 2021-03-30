@@ -21,8 +21,6 @@ mod lz4_ipp;
 #[cfg(lz4_ipp_enabled)]
 use self::lz4_ipp::*;
 
-use nydus_utils::einval;
-
 const COMPRESSION_MINIMUM_RATIO: usize = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
