@@ -196,6 +196,10 @@ pub fn setup_logging(log_file_path: Option<PathBuf>, level: LevelFilter) -> Resu
     Ok(())
 }
 
+pub fn gen_uuid() -> String {
+    uuid::Uuid::new_v4().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
