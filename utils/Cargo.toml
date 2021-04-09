@@ -25,7 +25,6 @@ chrono = "0.4.19"
 num-traits = "0.2.14"
 vmm-sys-util = ">=0.3.1"
 fuse-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.git", optional = true }
-uuid = { version = "0.8.2", features = ["v4"] }
 
 [features]
 fusedev = ["fuse-rs/fusedev"]
