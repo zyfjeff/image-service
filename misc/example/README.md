@@ -7,7 +7,12 @@ This would show how to run a nydus enabled environment in a docker container.
 To do it, add something like below in `/etc/docker/daemon.json`:
 ```json
 {
-	"storage-driver": "devicemapper"
+	"storage-driver": "devicemapper",
+	"storage-opts": [
+		"dm.fs=ext4",
+		"dm.loopdatasize=20G",
+		"dm.loopmetadatasize=1G"
+	]
 }
 ```
 Refer to docker official guide on how to set `devicemapper` storage driver:  https://docs.docker.com/storage/storagedriver/device-mapper-driver/

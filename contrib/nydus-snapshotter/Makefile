@@ -6,10 +6,10 @@ PACKAGES ?= $(shell go list ./... | grep -v /vendor/)
 
 .PHONY: build
 build:
-	GOOS=linux go build -ldflags="-s -w -X 'main.Version=${VERSION}'" -v -o bin/containerd-nydus-grpc ./cmd/containerd-nydus-grpc
+	GOOS=linux GOPROXY=https://goproxy.io go build -ldflags="-s -w -X 'main.Version=${VERSION}'" -v -o bin/containerd-nydus-grpc ./cmd/containerd-nydus-grpc
 
 static-release:
-	CGO_ENABLED=0 GOOS=linux go build -ldflags '-s -w -X "main.Version=${VERSION}" -extldflags "-static"' -v -o bin/containerd-nydus-grpc ./cmd/containerd-nydus-grpc
+	CGO_ENABLED=0 GOPROXY=https://goproxy.io GOOS=linux go build -ldflags '-s -w -X "main.Version=${VERSION}" -extldflags "-static"' -v -o bin/containerd-nydus-grpc ./cmd/containerd-nydus-grpc
 
 .PHONY: clear
 clear:

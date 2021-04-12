@@ -12,7 +12,7 @@ RUN cd $GOPATH/src/github.com/containerd/containerd && git checkout v1.4.3
 RUN cd $GOPATH/src/github.com/containerd/containerd && make EXTRA_FLAGS="-buildmode pie" EXTRA_LDFLAGS='-linkmode external -extldflags "-fno-PIC -static"' BUILDTAGS="no_btrfs netgo osusergo static_build"
 RUN cd $GOPATH/src/github.com/containerd/containerd && mv bin /opt/
 
-FROM docker:dind
+FROM docker:19.03.13-dind
 COPY --from=base /opt/containerd-cri/etc/cni/net.d/* /etc/cni/net.d/
 COPY --from=base /opt/containerd-cri/opt/cni/bin/* /opt/cni/bin/
 COPY --from=base /opt/containerd-cri/usr/local/bin/* /usr/local/bin/
