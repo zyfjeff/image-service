@@ -137,7 +137,7 @@ pub struct Rafs {
     fs_prefetch: bool,
     initialized: bool,
     xattr_enabled: bool,
-    ios: Arc<metrics::GlobalIOStats>,
+    ios: Arc<metrics::GlobalIoStats>,
     // static inode attributes
     i_uid: u32,
     i_gid: u32,

@@ -5,7 +5,7 @@
 use std::io::Result;
 use std::os::unix::io::RawFd;
 use std::os::unix::net::UnixListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread;
 
 use sendfd::{RecvWithFd, SendWithFd};
@@ -56,7 +56,7 @@ impl Snapshotter {
 
     fn request(
         &self,
-        apisock: &PathBuf,
+        apisock: &Path,
         method: &str,
         path: &str,
         body: Option<String>,
@@ -72,29 +72,29 @@ impl Snapshotter {
         exec(curl.as_str(), true)
     }
 
-    pub fn request_sendfd(&self, apisock: &PathBuf) {
+    pub fn request_sendfd(&self, apisock: &Path) {
         self.request(apisock, "PUT", "/daemon/fuse/sendfd", None)
             .unwrap();
     }
 
-    pub fn get_status(&self, apisock: &PathBuf) -> String {
+    pub fn get_status(&self, apisock: &Path) -> String {
         let resp = self.request(apisock, "GET", "/daemon", None).unwrap();
         let info: Value = serde_json::from_str(&resp).unwrap();
         info["state"].as_str().unwrap().to_string()
     }
 
-    pub fn kill_nydusd(&self, apisock: &PathBuf) {
+    pub fn kill_nydusd(&self, apisock: &Path) {
         self.request(apisock, "PUT", "/daemon/exit", None).unwrap();
     }
 
-    pub fn take_over(&self, apisock: &PathBuf) -> Result<()> {
+    pub fn take_over(&self, apisock: &Path) -> Result<()> {
         self.request(apisock, "PUT", "/daemon/fuse/takeover", None)
             .map(|_| ())
     }
 
     pub fn mount(
         &self,
-        apisock: &PathBuf,
+        apisock: &Path,
         blobs_dir: &str,
         mount_point: &str,
         source_name: &str,
@@ -127,7 +127,7 @@ impl Snapshotter {
         .unwrap()
     }
 
-    pub fn umount(&self, apisock: &PathBuf, mount_point: &str) -> String {
+    pub fn umount(&self, apisock: &Path, mount_point: &str) -> String {
         let endpoint = format!("/mount?mountpoint={}", mount_point);
         self.request(apisock, "DELETE", endpoint.as_str(), None)
             .unwrap()

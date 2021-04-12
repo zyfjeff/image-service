@@ -329,7 +329,7 @@ pub mod tests {
                     stream.send_with_fd(&buf, &fds).unwrap();
                 }
                 Err(err) => {
-                    panic!(err);
+                    panic!("{}", err);
                 }
             }
         }

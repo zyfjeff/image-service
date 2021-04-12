@@ -25,27 +25,27 @@ pub fn new<'a>(work_dir: &'a PathBuf, whiteout_spec: &'a str) -> Builder<'a> {
 }
 
 impl<'a> Builder<'a> {
-    fn create_dir(&mut self, path: &PathBuf) {
+    fn create_dir(&mut self, path: &Path) {
         fs::create_dir_all(path).unwrap();
     }
 
-    fn create_file(&mut self, path: &PathBuf, data: &[u8]) {
+    fn create_file(&mut self, path: &Path, data: &[u8]) {
         File::create(path).unwrap().write_all(data).unwrap();
     }
 
-    fn copy_file(&mut self, src: &PathBuf, dst: &PathBuf) -> u64 {
+    fn copy_file(&mut self, src: &Path, dst: &Path) -> u64 {
         fs::copy(src, dst).unwrap()
     }
 
-    fn create_symlink(&mut self, src: &PathBuf, dst: &PathBuf) {
+    fn create_symlink(&mut self, src: &Path, dst: &Path) {
         unix_fs::symlink(src, dst).unwrap();
     }
 
-    fn create_hardlink(&mut self, src: &PathBuf, dst: &PathBuf) {
+    fn create_hardlink(&mut self, src: &Path, dst: &Path) {
         fs::hard_link(src, dst).unwrap();
     }
 
-    fn create_large_file(&mut self, path: &PathBuf, size_in_mb: u8) {
+    fn create_large_file(&mut self, path: &Path, size_in_mb: u8) {
         let mut file = File::create(path).unwrap();
 
         for i in 1..size_in_mb + 1 {
@@ -54,7 +54,7 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn create_whiteout_file(&mut self, path: &PathBuf) {
+    fn create_whiteout_file(&mut self, path: &Path) {
         match self.whiteout_spec {
             "overlayfs" => {
                 let dev: dev_t = makedev(0, 0);
@@ -79,7 +79,7 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn create_opaque_entry(&mut self, path: &PathBuf) {
+    fn create_opaque_entry(&mut self, path: &Path) {
         match self.whiteout_spec {
             "overlayfs" => {
                 self.set_xattr(path, "trusted.overlay.opaque", b"y");
@@ -93,7 +93,7 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn create_special_file(&mut self, path: &PathBuf, devtype: &str) {
+    fn create_special_file(&mut self, path: &Path, devtype: &str) {
         let dev: dev_t = makedev(255, 0);
         let kind = match devtype {
             "char" => SFlag::S_IFCHR,
@@ -112,7 +112,7 @@ impl<'a> Builder<'a> {
         .expect("create_special_file failed");
     }
 
-    fn set_xattr(&mut self, path: &PathBuf, key: &str, value: &[u8]) {
+    fn set_xattr(&mut self, path: &Path, key: &str, value: &[u8]) {
         xattr::set(path, key, value).unwrap();
     }
 
