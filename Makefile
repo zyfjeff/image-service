@@ -120,12 +120,17 @@ nydus-snapshotter-static:
 # Run integration smoke test in docker-in-docker container. It requires some special settings,
 # refer to `misc/example/README.md` for details.
 all-static-release: docker-static nydusify-static nydus-snapshotter-static
+
+# https://www.gnu.org/software/make/manual/html_node/One-Shell.html
+.ONESHELL:
 docker-example: all-static-release
 	cp ${current_dir}/target-fusedev/x86_64-unknown-linux-musl/release/nydusd misc/example
 	cp ${current_dir}/target-fusedev/x86_64-unknown-linux-musl/release/nydus-image misc/example
 	cp contrib/nydusify/cmd/nydusify misc/example
 	cp contrib/nydus-snapshotter/bin/containerd-nydus-grpc misc/example
 	docker build -t nydus-rs-example misc/example
-	cid=$(shell docker run -t -d --privileged nydus-rs-example); \
-	    docker exec $$cid /run.sh; \
-	    docker rm -f $$cid
+	@cid=$(shell docker run --rm -t -d --privileged nydus-rs-example)
+	@docker exec $$cid /run.sh
+	@EXIT_CODE=$$?
+	@docker rm -f $$cid
+	@exit $$EXIT_CODE
