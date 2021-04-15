@@ -3,6 +3,8 @@ TEST_WORKDIR_PREFIX ?= "/tmp"
 
 current_dir := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 
+env_go_path := $(shell go env GOPATH 2> /dev/null)
+go_path := $(if $(env_go_path),$(env_go_path),"$(HOME)/go")
 
 # Functions
 
@@ -18,10 +20,7 @@ define build_musl_static
 		-v ~/.ssh/id_rsa:/root/.ssh/id_rsa \
 		-v ~/.cargo/git:/root/.cargo/git \
 		-v ~/.cargo/registry:/root/.cargo/registry \
-		-v ~/.cargo/target:/nydus-rs/target \
-		-v ~/.cargo/target-fusedev:/nydus-rs/target-fusedev \
-		-v ~/.cargo/target-virtiofs:/nydus-rs/target-virtiofs \
-		nydus-rs-static sh
+		nydus-rs-static $(1)
 endef
 
 # Func: build golang target in docker
@@ -29,7 +28,7 @@ endef
 #   $(1): target make command
 define build_golang
 	@echo "Building golang: $(1)"
-	docker run --rm -v $(shell go env GOPATH):/go -v ${current_dir}:/nydus-rs --workdir /nydus-rs golang:1.14 $(1)
+	docker run --rm -v ${go_path}:/go -v ${current_dir}:/nydus-rs --workdir /nydus-rs golang:1.14 $(1)
 endef
 
 # Targets
@@ -64,7 +63,7 @@ ut:
 	RUST_BACKTRACE=1 cargo test --features=fusedev --target-dir target-fusedev --workspace -- --nocapture --test-threads=15 --skip integration
 	RUST_BACKTRACE=1 cargo test --features=virtiofs --target-dir target-virtiofs --workspace -- --nocapture --test-threads=15 --skip integration
 
-docker-static-release:
+docker-static:
 	$(call build_musl_static,make static-release)
 
 # Run smoke test including general integration tests and unit tests in container.
@@ -77,7 +76,7 @@ static-test:
 	# For fusedev target UT & integration
 	cargo test --target x86_64-unknown-linux-musl --features=fusedev --release --target-dir target-fusedev --workspace -- --nocapture --test-threads=15
 
-docker-nydus-smoke: docker-static-release
+docker-nydus-smoke: docker-static
 	docker build -t nydus-smoke misc/nydus-smoke
 	docker run --rm --privileged \
 		-e TEST_WORKDIR_PREFIX=$(TEST_WORKDIR_PREFIX) \
@@ -86,29 +85,24 @@ docker-nydus-smoke: docker-static-release
 		-v ~/.ssh/id_rsa:/root/.ssh/id_rsa \
 		-v ~/.cargo/git:/root/.cargo/git \
 		-v ~/.cargo/registry:/root/.cargo/registry \
-		-v ~/.cargo/target:/nydus-rs/target \
-		-v ~/.cargo/target-fusedev:/nydus-rs/target-fusedev \
-		-v ~/.cargo/target-virtiofs:/nydus-rs/target-virtiofs \
 		nydus-smoke
 
-docker-nydusify-smoke: docker-static-release
+docker-nydusify-smoke: docker-static
 	$(call build_golang,make -C contrib/nydusify build-smoke)
 	docker build -t nydusify-smoke misc/nydusify-smoke
 	docker run --rm --privileged \
 		-e BACKEND_TYPE=$(BACKEND_TYPE) \
 		-e BACKEND_CONFIG=$(BACKEND_CONFIG) \
 		-v $(current_dir):/nydus-rs \
-		-v ~/.cargo/target-fusedev:/nydus-rs/target-fusedev \
 		nydusify-smoke TestSmoke
 
-docker-nydusify-image-test: docker-static-release
+docker-nydusify-image-test: docker-static
 	$(call build_golang,make -C contrib/nydusify build-smoke)
 	docker build -t nydusify-smoke misc/nydusify-smoke
 	docker run --rm --privileged \
 		-e BACKEND_TYPE=$(BACKEND_TYPE) \
 		-e BACKEND_CONFIG=$(BACKEND_CONFIG) \
 		-v $(current_dir):/nydus-rs \
-		-v ~/.cargo/target-fusedev:/nydus-rs/target-fusedev \
 		nydusify-smoke TestDockerHubImage
 
 docker-smoke: docker-nydus-smoke docker-nydusify-smoke
@@ -125,10 +119,10 @@ nydus-snapshotter-static:
 
 # Run integration smoke test in docker-in-docker container. It requires some special settings,
 # refer to `misc/example/README.md` for details.
-all-static-release: docker-static-release nydusify-static nydus-snapshotter-static
+all-static-release: docker-static nydusify-static nydus-snapshotter-static
 docker-example: all-static-release
-	cp ~/.cargo/target-fusedev/x86_64-unknown-linux-musl/release/nydusd misc/example
-	cp ~/.cargo/target-fusedev/x86_64-unknown-linux-musl/release/nydus-image misc/example
+	cp ${current_dir}/target-fusedev/x86_64-unknown-linux-musl/release/nydusd misc/example
+	cp ${current_dir}/target-fusedev/x86_64-unknown-linux-musl/release/nydus-image misc/example
 	cp contrib/nydusify/cmd/nydusify misc/example
 	cp contrib/nydus-snapshotter/bin/containerd-nydus-grpc misc/example
 	docker build -t nydus-rs-example misc/example
