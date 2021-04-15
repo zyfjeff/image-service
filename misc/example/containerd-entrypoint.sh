@@ -8,6 +8,8 @@ if [ "$#" -eq 0 ]; then
 		--config-path /opt/etc/nydusd-config.json \
 		--shared-daemon \
 		--log-level debug \
+		--enable-metrics \
+		--metrics-file=/var/log/nydus-metrics.log \
 		--root /var/lib/containerd-test/io.containerd.snapshotter.v1.nydus \
 		--address /run/containerd-test/containerd-nydus-grpc.sock &
 fi
