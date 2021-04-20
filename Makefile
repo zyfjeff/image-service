@@ -6,6 +6,12 @@ current_dir := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 env_go_path := $(shell go env GOPATH 2> /dev/null)
 go_path := $(if $(env_go_path),$(env_go_path),"$(HOME)/go")
 
+# Set the env DIND_CACHE_DIR to specify a cache directory for
+# docker-in-docker container, used to cache data for docker pull,
+# then mitigate the impact of docker hub rate limit, for example:
+# env DIND_CACHE_DIR=/path/to/host/var-lib-docker make docker-nydusify-smoke
+dind_cache_mount := $(if $(DIND_CACHE_DIR),-v $(DIND_CACHE_DIR):/var/lib/docker,)
+
 # Functions
 
 # Func: build with musl-static in docker
@@ -93,8 +99,7 @@ docker-nydusify-smoke: docker-static
 	docker run --rm --privileged \
 		-e BACKEND_TYPE=$(BACKEND_TYPE) \
 		-e BACKEND_CONFIG=$(BACKEND_CONFIG) \
-		-v $(current_dir):/nydus-rs \
-		nydusify-smoke TestSmoke
+		-v $(current_dir):/nydus-rs $(dind_cache_mount) nydusify-smoke TestSmoke
 
 docker-nydusify-image-test: docker-static
 	$(call build_golang,make -C contrib/nydusify build-smoke)
@@ -102,8 +107,7 @@ docker-nydusify-image-test: docker-static
 	docker run --rm --privileged \
 		-e BACKEND_TYPE=$(BACKEND_TYPE) \
 		-e BACKEND_CONFIG=$(BACKEND_CONFIG) \
-		-v $(current_dir):/nydus-rs \
-		nydusify-smoke TestDockerHubImage
+		-v $(current_dir):/nydus-rs $(dind_cache_mount) nydusify-smoke TestDockerHubImage
 
 docker-smoke: docker-nydus-smoke docker-nydusify-smoke
 
@@ -129,7 +133,7 @@ docker-example: all-static-release
 	cp contrib/nydusify/cmd/nydusify misc/example
 	cp contrib/nydus-snapshotter/bin/containerd-nydus-grpc misc/example
 	docker build -t nydus-rs-example misc/example
-	@cid=$(shell docker run --rm -t -d --privileged nydus-rs-example)
+	@cid=$(shell docker run --rm -t -d --privileged $(dind_cache_mount) nydus-rs-example)
 	@docker exec $$cid /run.sh
 	@EXIT_CODE=$$?
 	@docker rm -f $$cid
