@@ -1093,6 +1093,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+ "upgrade-manager",
  "url",
  "vmm-sys-util",
 ]

@@ -18,3 +18,4 @@ vmm-sys-util = ">=0.3.1"
 url = "2.1.1"
 http = "0.2.1"
 nydus-utils = { path = "../utils" }
+upgrade-manager = { path = "../upgrade" }

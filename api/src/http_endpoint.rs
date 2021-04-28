@@ -20,11 +20,12 @@ use serde_json::Error as SerdeError;
 use crate::http::{extract_query_part, EndpointHandler};
 
 use nydus_utils::metrics::IoStatsError;
+use upgrade_manager::UpgradeMgrError;
 
 #[derive(Debug)]
 pub enum DaemonErrorKind {
     NotReady,
-    UpgradeManager,
+    UpgradeManager(UpgradeMgrError),
     Unsupported,
     Connect(io::Error),
     SendFd,
