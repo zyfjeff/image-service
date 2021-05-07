@@ -181,6 +181,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b700ce4376041dcd0a327fd0097c41095743c4c8af8887265942faf1100bd040"
 
 [[package]]
+name = "caps"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d092fbb6657fb1f98a7da70c14335ac97e5a9477e1a8156d4bbf19a3a7aece51"
+dependencies = [
+ "errno",
+ "libc",
+ "thiserror",
+]
+
+[[package]]
 name = "cargo-lock"
 version = "4.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -381,6 +392,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "errno"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa68f2fb9cae9d37c9b2b3584aba698a2e97f72d7aef7b9f7aa71d8b54ce46fe"
+dependencies = [
+ "errno-dragonfly",
+ "libc",
+ "winapi",
+]
+
+[[package]]
+name = "errno-dragonfly"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "14ca354e36190500e1e1fb267c647932382b54053c50b14970856c0b00a35067"
+dependencies = [
+ "gcc",
+ "libc",
+]
+
+[[package]]
 name = "event-manager"
 version = "0.2.0"
 source = "git+https://github.com/rust-vmm/event-manager.git?tag=v0.2.0#abac92899908e6a23a6927b5c1c9d4d53bc4f59e"
@@ -452,10 +484,11 @@ dependencies = [
 [[package]]
 name = "fuse-rs"
 version = "0.2.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=stable-0.2.0#ef54f9625d6980efc0870044ff417fbd215b863d"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=stable-0.3.0#5cee4b31867d3d8d56b6dddf9586df60cfe843e9"
 dependencies = [
  "arc-swap",
  "bitflags",
+ "caps",
  "libc",
  "log",
  "nix",
@@ -567,6 +600,12 @@ dependencies = [
  "proc-macro-nested",
  "slab",
 ]
+
+[[package]]
+name = "gcc"
+version = "0.3.55"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8f5f3913fa0bfe7ee1fd8248b6b9f42a5af4b9d65ec2dd2c3c26132b950ecfc2"
 
 [[package]]
 name = "generic-array"
