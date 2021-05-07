@@ -14,21 +14,6 @@ dind_cache_mount := $(if $(DIND_CACHE_DIR),-v $(DIND_CACHE_DIR):/var/lib/docker,
 
 # Functions
 
-# Func: build with musl-static in docker
-# Args:
-#   $(1): target make command, eg. `make static-release`
-define build_musl_static
-	@echo "Build musl-static in docker: \"$(1)\""
-	docker build -t nydus-rs-static misc/musl-static
-	docker run --rm \
-		-v ${current_dir}:/nydus-rs \
-		--workdir /nydus-rs \
-		-v ~/.ssh/id_rsa:/root/.ssh/id_rsa \
-		-v ~/.cargo/git:/root/.cargo/git \
-		-v ~/.cargo/registry:/root/.cargo/registry \
-		nydus-rs-static $(1)
-endef
-
 # Func: build golang target in docker
 # Args:
 #   $(1): target make command
@@ -70,7 +55,14 @@ ut:
 	RUST_BACKTRACE=1 cargo test --features=virtiofs --target-dir target-virtiofs --workspace -- --nocapture --test-threads=15 --skip integration
 
 docker-static:
-	$(call build_musl_static,make static-release)
+	docker build -t nydus-rs-static misc/musl-static
+	docker run --rm \
+		-v ${current_dir}:/nydus-rs \
+		--workdir /nydus-rs \
+		-v ~/.ssh/id_rsa:/root/.ssh/id_rsa \
+		-v ~/.cargo/git:/root/.cargo/git \
+		-v ~/.cargo/registry:/root/.cargo/registry \
+		nydus-rs-static
 
 # Run smoke test including general integration tests and unit tests in container.
 # Nydus binaries should already be prepared.
