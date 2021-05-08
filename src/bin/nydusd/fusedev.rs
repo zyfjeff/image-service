@@ -412,7 +412,9 @@ pub fn create_nydus_daemon(
 
     // Create upgrade manager
     let upgrade_mgr = if let Some(s) = &supervisor {
-        Some(Mutex::new(UpgradeManager::new(s.to_string().into())))
+        let mut mgr = UpgradeManager::new(s.to_string().into());
+        crate::upgrade::fusedev_upgrade::init_fusedev_upgrade_mgr(&mut mgr);
+        Some(Mutex::new(mgr))
     } else {
         None
     };

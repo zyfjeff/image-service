@@ -16,9 +16,8 @@ use std::fmt;
 use std::os::unix::io::RawFd;
 use std::path::PathBuf;
 
-use fuse_rs::api::VersionMapGetter;
 use snapshot::{self, Persist, Snapshot};
-use versionize::{VersionMap, Versionize, VersionizeError, VersionizeResult};
+use versionize::{VersionManager, VersionMap, Versionize, VersionizeError, VersionizeResult};
 use versionize_derive::Versionize;
 
 use backend::{unix_domain_socket::UdsBackend, Backend, BackendError};
@@ -61,8 +60,6 @@ struct Opaques {
     data: HashMap<OpaqueKind, Vec<u8>>,
 }
 
-impl VersionMapGetter for Opaques {}
-
 // UpgradeManager manages all state that needs to be saved (persist to storage backend)
 // or restored (reconstruct from storage backend), includes Fd and Binary (Opaque) data.
 //
@@ -72,6 +69,7 @@ impl VersionMapGetter for Opaques {}
 // when needed.
 #[allow(dead_code)]
 pub struct UpgradeManager {
+    pub vm: VersionManager,
     backend: Box<dyn Backend>,
     fds: Vec<RawFd>,
     opaques: Opaques,
@@ -80,6 +78,7 @@ pub struct UpgradeManager {
 impl UpgradeManager {
     pub fn new(supervisor: PathBuf) -> Self {
         UpgradeManager {
+            vm: VersionManager::new(),
             backend: Box::new(UdsBackend::new(supervisor)),
             fds: Vec::new(),
             opaques: Opaques {
@@ -102,13 +101,13 @@ impl UpgradeManager {
     pub fn set_opaque<'a, O, V, D>(&mut self, kind: OpaqueKind, obj: &O) -> Result<()>
     where
         O: Persist<'a, State = V, Error = D>,
-        V: Versionize + VersionMapGetter,
+        V: Versionize,
         D: std::fmt::Debug,
     {
-        let vm = V::version_map();
+        let vm = self.vm.make_version_map();
         let latest_version = vm.latest_version();
 
-        let mut snapshot = Snapshot::new(vm, latest_version);
+        let mut snapshot = Snapshot::new(vm.clone(), latest_version);
 
         let state = obj.save();
         let mut opaque: Vec<u8> = Vec::new();
@@ -125,12 +124,12 @@ impl UpgradeManager {
     // Cache opaque (implemented Versionize) to manager, opaque object should implement Persist trait
     pub fn set_opaque_raw<V>(&mut self, kind: OpaqueKind, obj: &V) -> Result<()>
     where
-        V: Versionize + VersionMapGetter,
+        V: Versionize,
     {
-        let vm = V::version_map();
+        let vm = self.vm.make_version_map();
         let latest_version = vm.latest_version();
 
-        let mut snapshot = Snapshot::new(vm, latest_version);
+        let mut snapshot = Snapshot::new(vm.clone(), latest_version);
         let mut opaque: Vec<u8> = Vec::new();
 
         snapshot
@@ -146,13 +145,12 @@ impl UpgradeManager {
     pub fn get_opaque<'a, O, V, A, D>(&mut self, kind: OpaqueKind, args: A) -> Result<O>
     where
         O: Persist<'a, State = V, ConstructorArgs = A, Error = D>,
-        V: Versionize + VersionMapGetter,
+        V: Versionize,
         D: std::fmt::Debug,
     {
+        self.vm.make_version_map();
         if let Some(opaque) = self.opaques.data.get(&kind) {
-            let vm = V::version_map();
-
-            let state = Snapshot::load_with_crc64(&mut opaque.as_slice(), vm)
+            let state = Snapshot::load_with_crc64(&mut opaque.as_slice(), &self.vm)
                 .map_err(UpgradeMgrError::Deserialize)?;
             let opaque = O::restore(args, &state)
                 .map_err(|e| UpgradeMgrError::Restore(format!("{:?}", e)))?;
@@ -166,12 +164,11 @@ impl UpgradeManager {
     // Get opaque (implemented Versionize) from manager internal storage
     pub fn get_opaque_raw<V>(&mut self, kind: OpaqueKind) -> Result<Option<V>>
     where
-        V: Versionize + VersionMapGetter,
+        V: Versionize,
     {
+        self.vm.make_version_map();
         if let Some(opaque) = self.opaques.data.get(&kind) {
-            let vm = V::version_map();
-
-            let opaque = Snapshot::load_with_crc64(&mut opaque.as_slice(), vm)
+            let opaque = Snapshot::load_with_crc64(&mut opaque.as_slice(), &self.vm)
                 .map_err(UpgradeMgrError::Deserialize)?;
 
             return Ok(Some(opaque));
@@ -182,10 +179,10 @@ impl UpgradeManager {
 
     // Save all fds and opaques to backend
     pub fn save(&mut self) -> Result<()> {
-        let vm = Opaques::version_map();
+        let vm = self.vm.make_version_map();
         let latest_version = vm.latest_version();
 
-        let mut snapshot = Snapshot::new(vm, latest_version);
+        let mut snapshot = Snapshot::new(vm.clone(), latest_version);
 
         let mut opaque: Vec<u8> = Vec::new();
 
@@ -202,8 +199,6 @@ impl UpgradeManager {
 
     // Restore all fds and opaques from backend, and put them to manager cache
     pub fn restore(&mut self) -> Result<()> {
-        let vm = Opaques::version_map();
-
         // TODO: Is 256K buffer large enough?
         let mut opaque: Vec<u8> = vec![0u8; 256 << 10];
         let mut fds: Vec<RawFd> = vec![0; 8];
@@ -216,7 +211,8 @@ impl UpgradeManager {
         fds.truncate(fd_count);
 
         self.fds = fds;
-        self.opaques = Snapshot::load_with_crc64(&mut opaque.as_slice(), vm)
+        self.vm.make_version_map();
+        self.opaques = Snapshot::load_with_crc64(&mut opaque.as_slice(), &self.vm)
             .map_err(UpgradeMgrError::Deserialize)?;
 
         Ok(())
@@ -229,6 +225,7 @@ impl UpgradeManager {
 
 #[cfg(test)]
 pub mod tests {
+    use std::any::TypeId;
     use std::collections::HashMap;
     use std::fs::File;
     use std::io::Error;
@@ -261,18 +258,19 @@ pub mod tests {
         baz: u32,
     }
 
+    fn get_versions_teststate(sem_ver: &str) -> Vec<(TypeId, u16)> {
+        let mut versions = Vec::new();
+        match sem_ver {
+            "0.0.0" => {}
+            "latest" => versions.push((TypeId::of::<TestState>(), 2)),
+            _ => {}
+        }
+        versions
+    }
+
     impl TestState {
         fn bar_default(_: u16) -> String {
             String::from("bar")
-        }
-    }
-
-    impl VersionMapGetter for TestState {
-        fn version_map() -> VersionMap {
-            VersionMap::new()
-                .new_version()
-                .set_type_version(Self::type_id(), 2)
-                .clone()
         }
     }
 
@@ -365,6 +363,9 @@ pub mod tests {
         temp_file.as_file().seek(SeekFrom::Start(seek_pos)).unwrap();
 
         let mut upgrade_mgr = UpgradeManager::new(uds_path.clone());
+        upgrade_mgr.vm.add_version("0.0.1");
+        upgrade_mgr.vm.add_version("latest");
+        upgrade_mgr.vm.add_version_provider(get_versions_teststate);
 
         // Save fd + opaque to uds server
         upgrade_mgr.set_fds(fds);
@@ -378,6 +379,10 @@ pub mod tests {
 
         // Restore fd + opaque from uds server
         let mut upgrade_mgr = UpgradeManager::new(uds_path);
+        upgrade_mgr.vm.add_version("0.0.1");
+        upgrade_mgr.vm.add_version("latest");
+        upgrade_mgr.vm.add_version_provider(get_versions_teststate);
+
         upgrade_mgr.restore().unwrap();
 
         let restored_opaque1: Test = upgrade_mgr

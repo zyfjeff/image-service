@@ -14,7 +14,7 @@ rlimit = "0.3.0"
 log = "0.4.8"
 epoll = ">=4.0.1"
 libc = "0.2"
-vmm-sys-util = ">=0.3.1"
+vmm-sys-util = ">=0.8.0"
 clap = "2.33"
 flexi_logger = { version = "0.17" }
 serde = { version = ">=1.0.27", features = ["serde_derive", "rc"] }
@@ -45,7 +45,6 @@ versionize_derive = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versioniz
 
 [dev-dependencies]
 sendfd = "0.3.3"
-vmm-sys-util = ">=0.3.1"
 env_logger = "0.8.2"
 
 [features]
@@ -72,3 +71,6 @@ vhost-user-backend = { git = "ssh://git@gitlab.alibaba-inc.com/kata-containers/v
 
 [patch."https://github.com/cloud-hypervisor/vhost.git"]
 vhost-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/vhost.git", branch = "master", package = "vhost", optional = true }
+
+[patch."https://github.com/rust-vmm/event-manager.git"]
+event-manager = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/event-manager.git", branch = "master" }

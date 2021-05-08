@@ -138,6 +138,7 @@ pub mod fusedev_upgrade {
 
     use fuse_rs::api::Vfs;
 
+    use super::UpgradeManager;
     use super::{DaemonOpaque, FailoverPolicy, RafsMountStateSet};
     use crate::daemon::NydusDaemon;
     use crate::daemon::{DaemonError, DaemonResult, FsBackendMountCmd, FsBackendType};
@@ -145,6 +146,14 @@ pub mod fusedev_upgrade {
     use upgrade_manager::{OpaqueKind, UpgradeMgrError};
 
     const CTRL_FS_CONN: &str = "/sys/fs/fuse/connections";
+
+    pub fn init_fusedev_upgrade_mgr(mgr: &mut UpgradeManager) {
+        // TODO: add version mapper between nydusd and fuse-rs
+        mgr.vm.add_version("1.3.0");
+        mgr.vm.add_version("1.3.1");
+        mgr.vm.add_version("1.4.0");
+        mgr.vm.add_version("latest");
+    }
 
     impl<'a> Persist<'a> for &'a FusedevDaemon {
         type State = DaemonOpaque;
@@ -282,6 +291,7 @@ pub mod tests {
     #[test]
     fn test_rafs_mounts_state_with_upgrade_manager() {
         let mut upgrade_mgr = UpgradeManager::new("test".to_string().into());
+        upgrade_mgr.vm.add_version("latest");
         let mut rafs_mount = RafsMountStateSet::new();
         rafs_mount
             .add(

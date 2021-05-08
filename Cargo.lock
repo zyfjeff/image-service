@@ -360,6 +360,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "downcast-rs"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ea835d29036a4087793836fa931b08837ad5e957da9e23886b29586fb9b6650"
+
+[[package]]
 name = "encoding_rs"
 version = "0.8.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -415,8 +421,9 @@ dependencies = [
 [[package]]
 name = "event-manager"
 version = "0.2.0"
-source = "git+https://github.com/rust-vmm/event-manager.git?tag=v0.2.0#abac92899908e6a23a6927b5c1c9d4d53bc4f59e"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/event-manager.git?branch=master#ae99e66eac362c7b0e8e76699812b210a55fed90"
 dependencies = [
+ "downcast-rs",
  "libc",
  "vmm-sys-util",
 ]
@@ -1762,10 +1769,9 @@ checksum = "fe0f37c9e8f3c5a4a66ad655a93c74daac4ad00c441533bf5c6e7990bb42604e"
 [[package]]
 name = "snapshot"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/snapshot.git?branch=master#c98308a285638faa474ddfd196bd59b06c074a7e"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/snapshot.git?branch=master#2747c2b464fddaa3ef66f3ea0f80b49fd19ff83c"
 dependencies = [
  "bincode",
- "lazy_static",
  "libc",
  "serde",
  "serde_derive",
@@ -2117,7 +2123,7 @@ checksum = "b5a972e5669d67ba988ce3dc826706fb0a8b01471c088cb0b6110b805cc36aed"
 [[package]]
 name = "versionize"
 version = "0.1.4"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git?branch=master#ce8081a0333dd8f2f92c14480c155edb4f7d482d"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git?branch=master#e146c6aa214e6f030b5a3c9f4a380222c622e4b3"
 dependencies = [
  "bincode",
  "crc64",
@@ -2143,21 +2149,20 @@ dependencies = [
 [[package]]
 name = "vhost"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vhost.git?branch=master#f3a449c1626a64f1e3af4df64692dc929c2b4a10"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vhost.git?branch=master#de4c60103894f7ab5ab00897c0c46a1824036651"
 dependencies = [
  "bitflags",
  "libc",
  "snapshot",
  "versionize",
  "versionize_derive",
- "vmm-serde",
  "vmm-sys-util",
 ]
 
 [[package]]
 name = "vhost_user_backend"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git#6b75b6230fa60984fe89ab3e62c33bf79be1d7a1"
+source = "git+ssh://git@gitlab.alibaba-inc.com/kata-containers/vhost-user-backend.git?branch=master#c7f57c6afb6de1478405e7c93227b1b71f44cb4b"
 dependencies = [
  "epoll",
  "libc",
@@ -2191,7 +2196,7 @@ dependencies = [
 [[package]]
 name = "vm-virtio"
 version = "0.1.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-virtio.git?branch=master#840b4ca3e44b866feaf683e8bb1916709493bf68"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-virtio.git?branch=master#f734a228ec491cb902146f79efd94b99bf63b856"
 dependencies = [
  "byteorder",
  "libc",
@@ -2223,9 +2228,9 @@ dependencies = [
 
 [[package]]
 name = "vmm-sys-util"
-version = "0.6.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c40b8c9abb58cec48e0e39dfbe83ff1cfed17d89df28f0fa74f5e88021ae56b"
+checksum = "01cf11afbc4ebc0d5c7a7748a77d19e2042677fc15faa2f4ccccb27c18a60605"
 dependencies = [
  "bitflags",
  "libc",
