@@ -95,12 +95,6 @@ dependencies = [
 
 [[package]]
 name = "base64"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3441f0f7b02788e948e47f457ca01f1d7e6d92c693bc132c22b087d3141c03ff"
-
-[[package]]
-name = "base64"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "904dfeac50f3cdaba28fc6f57fdcddb75f49ed61346676a78c4ffe55877802fd"
@@ -1123,7 +1117,7 @@ name = "nydus-rs"
 version = "1.4.0"
 dependencies = [
  "anyhow",
- "base64 0.12.3",
+ "base64",
  "chrono",
  "clap",
  "env_logger",
@@ -1363,7 +1357,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
- "base64 0.12.3",
+ "base64",
  "bitflags",
  "blake3",
  "flate2",
@@ -1529,7 +1523,7 @@ version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2296f2fac53979e8ccbc4a1136b25dcefd37be9ed7e4a1f6b05a6029c84ff124"
 dependencies = [
- "base64 0.13.0",
+ "base64",
  "bytes 1.0.1",
  "encoding_rs",
  "futures-core",
@@ -1804,7 +1798,7 @@ version = "0.5.0"
 dependencies = [
  "anyhow",
  "arc-swap",
- "base64 0.12.3",
+ "base64",
  "bitflags",
  "flate2",
  "fuse-rs",
