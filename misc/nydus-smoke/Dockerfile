@@ -18,6 +18,10 @@ RUN cat /etc/apt/sources.list
 RUN rm -Rf /var/lib/apt/lists/*
 RUN apt update && apt install -y tree
 
+RUN echo '#!/bin/bash \n chmod 400 /root/.ssh/id_rsa && eval `ssh-agent` && ssh-add; exec "$@"' > /entrypoint.sh; chmod +x /entrypoint.sh
+
 WORKDIR /nydus-rs
 
-CMD chmod 400 /root/.ssh/id_rsa && eval `ssh-agent` && ssh-add && make static-test
+CMD make static-test
+
+ENTRYPOINT ["/entrypoint.sh"]
