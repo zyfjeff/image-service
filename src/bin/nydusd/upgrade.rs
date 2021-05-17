@@ -137,6 +137,8 @@ pub mod fusedev_upgrade {
     use std::sync::atomic::Ordering;
 
     use fuse_rs::api::Vfs;
+    use fuse_rs::version_manager::get_version_manager;
+    use versionize::VersionMapper;
 
     use super::UpgradeManager;
     use super::{DaemonOpaque, FailoverPolicy, RafsMountStateSet};
@@ -148,11 +150,29 @@ pub mod fusedev_upgrade {
     const CTRL_FS_CONN: &str = "/sys/fs/fuse/connections";
 
     pub fn init_fusedev_upgrade_mgr(mgr: &mut UpgradeManager) {
-        // TODO: add version mapper between nydusd and fuse-rs
+        // nydusd versions
         mgr.vm.add_version("1.3.0");
         mgr.vm.add_version("1.3.1");
         mgr.vm.add_version("1.4.0");
         mgr.vm.add_version("latest");
+
+        // add version mapper between nydusd and fuse-backend-rs
+        let mut version_mapper = VersionMapper::new();
+        version_mapper
+            .add("1.3.0", "0.2.0")
+            .add("1.3.1", "0.2.0")
+            .add("1.4.0", "0.3.0")
+            .add("latest", "latest");
+        mgr.vm
+            .add_sub_manager(version_mapper, get_version_manager());
+
+        // add migratable version table
+        mgr.vm.add_migratable_version("1.3.0", "1.4.0");
+        mgr.vm.add_migratable_version("1.3.1", "1.4.0");
+        mgr.vm.add_migratable_version("1.4.0", "latest");
+
+        // cache version map
+        mgr.vm.make_version_map();
     }
 
     impl<'a> Persist<'a> for &'a FusedevDaemon {
