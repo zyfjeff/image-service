@@ -2117,7 +2117,7 @@ checksum = "b5a972e5669d67ba988ce3dc826706fb0a8b01471c088cb0b6110b805cc36aed"
 [[package]]
 name = "versionize"
 version = "0.1.4"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git?branch=master#e146c6aa214e6f030b5a3c9f4a380222c622e4b3"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git?branch=master#562c883bd05420a1623a760d2477a657cf9f19ef"
 dependencies = [
  "bincode",
  "crc64",
