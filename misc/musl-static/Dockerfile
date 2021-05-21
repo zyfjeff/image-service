@@ -1,4 +1,8 @@
-FROM clux/muslrust:1.49.0
+ARG ARCH=x86_64
+
+FROM messense/rust-musl-cross:${ARCH}-musl
+ARG ARCH=x86_64
+ARG RUST_TOOLCHAIN=1.49.0
 
 RUN echo '[source.crates-io] \n\
   replace-with = "ustc" \n\
@@ -8,9 +12,9 @@ RUN echo '[source.crates-io] \n\
 
 ENV RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static
 
-RUN rustup component add clippy
-RUN rustup component add rustfmt
-RUN rustup target add x86_64-unknown-linux-musl
+# Below is a trick to replace rust tool-chain from base image which is always the newest version.
+RUN rustup toolchain install ${RUST_TOOLCHAIN} && rustup default ${RUST_TOOLCHAIN} && \
+  rustup target add ${ARCH}-unknown-linux-musl && rustup component add clippy && rustup component add rustfmt
 
 RUN echo '#!/bin/bash \n chmod 400 /root/.ssh/id_rsa && eval `ssh-agent` && ssh-add; exec "$@"' > /entrypoint.sh; chmod +x /entrypoint.sh
 

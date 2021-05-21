@@ -2,6 +2,7 @@
 TEST_WORKDIR_PREFIX ?= "/tmp"
 
 current_dir := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
+ARCH := $(shell uname -p)
 
 env_go_path := $(shell go env GOPATH 2> /dev/null)
 go_path := $(if $(env_go_path),$(env_go_path),"$(HOME)/go")
@@ -47,15 +48,15 @@ build-fusedev-release:
 	cargo build --features=fusedev --release --target-dir target-fusedev
 
 static-release:
-	cargo build --target x86_64-unknown-linux-musl --features=fusedev --release --target-dir target-fusedev
-	cargo build --target x86_64-unknown-linux-musl --features=virtiofs --release --target-dir target-virtiofs
+	cargo build --target ${ARCH}-unknown-linux-musl --features=fusedev --release --target-dir target-fusedev
+	cargo build --target ${ARCH}-unknown-linux-musl --features=virtiofs --release --target-dir target-virtiofs
 
 ut:
 	RUST_BACKTRACE=1 cargo test --features=fusedev --target-dir target-fusedev --workspace -- --nocapture --test-threads=15 --skip integration
 	RUST_BACKTRACE=1 cargo test --features=virtiofs --target-dir target-virtiofs --workspace -- --nocapture --test-threads=15 --skip integration
 
 docker-static:
-	docker build -t nydus-rs-static misc/musl-static
+	docker build -t nydus-rs-static --build-arg ${ARCH} misc/musl-static
 	docker run --rm \
 		-v ${current_dir}:/nydus-rs \
 		--workdir /nydus-rs \
@@ -70,12 +71,12 @@ static-test:
 	# No clippy for virtiofs for now since it has much less updates.
 	cargo clippy --features=fusedev --tests --bins --workspace --target-dir target-fusedev  -- -Dclippy::all
 	# For virtiofs target UT
-	cargo test --target x86_64-unknown-linux-musl --features=virtiofs --release --target-dir target-virtiofs --workspace -- --nocapture --test-threads=15 --skip integration
+	cargo test --target ${ARCH}-unknown-linux-musl --features=virtiofs --release --target-dir target-virtiofs --workspace -- --nocapture --test-threads=15 --skip integration
 	# For fusedev target UT & integration
-	cargo test --target x86_64-unknown-linux-musl --features=fusedev --release --target-dir target-fusedev --workspace -- --nocapture --test-threads=15
+	cargo test --target ${ARCH}-unknown-linux-musl --features=fusedev --release --target-dir target-fusedev --workspace -- --nocapture --test-threads=15
 
 docker-nydus-smoke: docker-static
-	docker build -t nydus-smoke misc/nydus-smoke
+	docker build -t nydus-smoke --build-arg ${ARCH} misc/nydus-smoke
 	docker run --rm --privileged \
 		-e TEST_WORKDIR_PREFIX=$(TEST_WORKDIR_PREFIX) \
 		-v $(TEST_WORKDIR_PREFIX) \
@@ -120,8 +121,8 @@ all-static-release: docker-static nydusify-static nydus-snapshotter-static
 # https://www.gnu.org/software/make/manual/html_node/One-Shell.html
 .ONESHELL:
 docker-example: all-static-release
-	cp ${current_dir}/target-fusedev/x86_64-unknown-linux-musl/release/nydusd misc/example
-	cp ${current_dir}/target-fusedev/x86_64-unknown-linux-musl/release/nydus-image misc/example
+	cp ${current_dir}/target-fusedev/${ARCH}-unknown-linux-musl/release/nydusd misc/example
+	cp ${current_dir}/target-fusedev/${ARCH}-unknown-linux-musl/release/nydus-image misc/example
 	cp contrib/nydusify/cmd/nydusify misc/example
 	cp contrib/nydus-snapshotter/bin/containerd-nydus-grpc misc/example
 	docker build -t nydus-rs-example misc/example
