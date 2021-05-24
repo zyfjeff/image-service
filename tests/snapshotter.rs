@@ -63,7 +63,7 @@ impl Snapshotter {
     ) -> Result<String> {
         let sock_path = self.work_dir.join(apisock);
         let mut curl = format!(
-            "curl -X {} --unix-socket {:?} http:/localhost/api/v1{}",
+            "curl -X {} --unix-socket {:?} http://localhost/api/v1{}",
             method, sock_path, path
         );
         if let Some(body) = body {
