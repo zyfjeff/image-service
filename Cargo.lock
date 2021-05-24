@@ -485,7 +485,7 @@ dependencies = [
 [[package]]
 name = "fuse-rs"
 version = "0.2.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=stable-0.3.0#5cee4b31867d3d8d56b6dddf9586df60cfe843e9"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=stable-0.3.0#e4c7e3ad1050d41931d4686d38a24ce3ecf8f42c"
 dependencies = [
  "arc-swap",
  "bitflags",
