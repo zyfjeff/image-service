@@ -14,8 +14,8 @@ use std::io::{ErrorKind, Read, Result};
 use std::mem::size_of;
 use std::sync::Arc;
 
-use fuse_rs::abi::linux_abi;
-use fuse_rs::api::filesystem::Entry;
+use fuse_backend_rs::abi::linux_abi;
+use fuse_backend_rs::api::filesystem::Entry;
 
 use crate::metadata::layout::*;
 use crate::metadata::*;

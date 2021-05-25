@@ -483,9 +483,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "fuse-rs"
-version = "0.2.0"
-source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=stable-0.3.0#e4c7e3ad1050d41931d4686d38a24ce3ecf8f42c"
+name = "fuse-backend-rs"
+version = "0.3.0"
+source = "git+ssh://git@gitlab.alibaba-inc.com/rust-vmm/fuse-backend-rs.git?branch=stable-0.3.0#3c588a52570fc4f390a30b41ebe50d2084024f95"
 dependencies = [
  "arc-swap",
  "bitflags",
@@ -1124,7 +1124,7 @@ dependencies = [
  "epoll",
  "event-manager",
  "flexi_logger",
- "fuse-rs",
+ "fuse-backend-rs",
  "lazy_static",
  "libc",
  "log",
@@ -1161,7 +1161,7 @@ dependencies = [
  "chrono",
  "epoll",
  "flexi_logger",
- "fuse-rs",
+ "fuse-backend-rs",
  "lazy_static",
  "libc",
  "log",
@@ -1361,7 +1361,7 @@ dependencies = [
  "bitflags",
  "blake3",
  "flate2",
- "fuse-rs",
+ "fuse-backend-rs",
  "futures",
  "hmac",
  "lazy_static",
@@ -1801,7 +1801,7 @@ dependencies = [
  "base64",
  "bitflags",
  "flate2",
- "fuse-rs",
+ "fuse-backend-rs",
  "futures",
  "governor",
  "hmac",
@@ -2072,7 +2072,7 @@ checksum = "826e7639553986605ec5979c7dd957c7895e93eabed50ab2ffa7f6128a75097c"
 name = "upgrade-manager"
 version = "0.1.0"
 dependencies = [
- "fuse-rs",
+ "fuse-backend-rs",
  "lazy_static",
  "libc",
  "log",

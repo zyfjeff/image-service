@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use fuse_rs::api::VersionMapGetter;
+use fuse_backend_rs::api::VersionMapGetter;
 use versionize::{VersionMap, Versionize, VersionizeResult};
 use versionize_derive::Versionize;
 
@@ -136,8 +136,8 @@ pub mod fusedev_upgrade {
     use std::io::{Result, Write};
     use std::sync::atomic::Ordering;
 
-    use fuse_rs::api::Vfs;
-    use fuse_rs::version_manager::get_version_manager;
+    use fuse_backend_rs::api::Vfs;
+    use fuse_backend_rs::version_manager::get_version_manager;
     use versionize::VersionMapper;
 
     use super::UpgradeManager;

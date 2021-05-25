@@ -35,7 +35,7 @@ nydus-utils = { path = "../utils" }
 storage = { path = "../storage", features = ["backend-localfs"] }
 
 
-fuse-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.git" }
+fuse-backend-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.git" }
 snapshot = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/snapshot.git", branch = "master" }
 versionize = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git", branch = "master" }
 versionize_derive = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize_derive.git", branch = "master" }
@@ -44,9 +44,9 @@ versionize_derive = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versioniz
 vmm-sys-util = ">=0.8.0"
 
 [features]
-fusedev = ["fuse-rs/fusedev"]
-virtio-fs = ["fuse-rs/virtiofs"]
-vhost-user-fs = ["fuse-rs/vhost-user-fs"]
+fusedev = ["fuse-backend-rs/fusedev"]
+virtio-fs = ["fuse-backend-rs/virtiofs"]
+vhost-user-fs = ["fuse-backend-rs/vhost-user-fs"]
 backend-oss = ["storage/backend-oss"]
 backend-registry = ["storage/backend-registry"]
 lz4_ipp = []

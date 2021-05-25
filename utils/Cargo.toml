@@ -24,7 +24,7 @@ backtrace = "0.3"
 chrono = "0.4.19"
 num-traits = "0.2"
 vmm-sys-util = ">=0.8.0"
-fuse-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.git", optional = true }
+fuse-backend-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.git", optional = true }
 
 [features]
-fusedev = ["fuse-rs/fusedev"]
+fusedev = ["fuse-backend-rs/fusedev"]

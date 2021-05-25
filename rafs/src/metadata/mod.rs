@@ -19,9 +19,9 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_with::{serde_as, DisplayFromStr};
 
-use fuse_rs::abi::linux_abi::Attr;
-use fuse_rs::api::filesystem::Entry;
-use fuse_rs::api::filesystem::ROOT_ID;
+use fuse_backend_rs::abi::linux_abi::Attr;
+use fuse_backend_rs::api::filesystem::Entry;
+use fuse_backend_rs::api::filesystem::ROOT_ID;
 
 use self::direct::DirectMapping;
 use self::layout::*;

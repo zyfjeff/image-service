@@ -20,7 +20,7 @@ use nix::Error as nixError;
 use epoll::{ControlOptions, Event, Events};
 use nix::fcntl::{fcntl, FcntlArg, OFlag};
 
-use fuse_rs::transport::{FuseBuf, Reader, Writer};
+use fuse_backend_rs::transport::{FuseBuf, Reader, Writer};
 use vmm_sys_util::eventfd::EventFd;
 
 /// These follows definition from libfuse
