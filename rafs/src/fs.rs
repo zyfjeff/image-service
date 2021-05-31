@@ -342,7 +342,7 @@ impl Rafs {
 
         let parent = self.sb.get_inode(ino, self.digest_validate)?;
         if !parent.is_dir() {
-            return Err(enotdir!("is not a directory"));
+            return Err(enotdir!());
         }
 
         let mut cur_offset = offset;
@@ -486,7 +486,7 @@ impl FileSystem for Rafs {
         let target = OsStr::from_bytes(name.to_bytes());
         let parent = self.sb.get_inode(ino, self.digest_validate)?;
         if !parent.is_dir() {
-            return Err(enotdir!("is not a directory"));
+            return Err(enotdir!());
         }
 
         rec.mark_success(0);
