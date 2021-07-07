@@ -15,6 +15,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 
 use nix::unistd::{getegid, geteuid};
@@ -24,7 +25,9 @@ use fuse_backend_rs::abi::linux_abi::Attr;
 use fuse_backend_rs::api::filesystem::*;
 use fuse_backend_rs::api::BackendFileSystem;
 
-use crate::metadata::{Inode, RafsInode, RafsSuper, RAFS_DEFAULT_BLOCK_SIZE};
+use crate::metadata::{
+    layout::RAFS_ROOT_INODE, Inode, RafsInode, RafsSuper, RAFS_DEFAULT_BLOCK_SIZE,
+};
 use crate::*;
 use nydus_utils::metrics::{self, FopRecorder, StatsFop::*};
 use storage::device::BlobPrefetchControl;
@@ -50,6 +53,10 @@ fn default_merging_size() -> usize {
     128 * 1024
 }
 
+fn default_prefetch_all() -> bool {
+    true
+}
+
 #[derive(Clone, Default, Deserialize)]
 pub struct FsPrefetchControl {
     #[serde(default)]
@@ -67,6 +74,8 @@ pub struct FsPrefetchControl {
     //                        Please note that if the value is less than Rafs chunk size,
     //                        it will be raised to the chunk size.
     bandwidth_rate: u32,
+    #[serde(default = "default_prefetch_all")]
+    prefetch_all: bool,
 }
 
 /// Not everything can be safely exported from configuration.
@@ -137,6 +146,7 @@ pub struct Rafs {
     pub sb: Arc<RafsSuper>,
     digest_validate: bool,
     fs_prefetch: bool,
+    prefetch_all: bool,
     initialized: bool,
     xattr_enabled: bool,
     ios: Arc<metrics::GlobalIoStats>,
@@ -188,6 +198,7 @@ impl Rafs {
             ios: metrics::new(id),
             digest_validate: conf.digest_validate,
             fs_prefetch: conf.fs_prefetch.enable,
+            prefetch_all: conf.fs_prefetch.prefetch_all,
             xattr_enabled: conf.enable_xattr,
             i_uid: geteuid().into(),
             i_gid: getegid().into(),
@@ -272,6 +283,8 @@ impl Rafs {
             let sb = self.sb.clone();
             let device = self.device.clone();
 
+            let prefetch_all = self.prefetch_all;
+
             let _ = std::thread::spawn(move || {
                 let mut reader = r;
                 let inodes = match prefetch_files {
@@ -299,6 +312,24 @@ impl Rafs {
                 .unwrap_or_else(|e| {
                     info!("No file to be prefetched {:?}", e);
                 });
+
+                if prefetch_all {
+                    let mut root = Vec::new();
+                    root.push(RAFS_ROOT_INODE);
+                    // Sleeping for 2 seconds is indeed a trick to prefetch the entire rootfs.
+                    // FIXME: As nydus can't give different policies different priorities, this is a
+                    // workaround. Remove the sleeping when IO priority mechanism is ready.
+                    sleep(Duration::from_secs(2));
+                    sb.prefetch_hint_files(&mut reader, Some(root), &|mut desc| {
+                        device.prefetch(&mut desc).unwrap_or_else(|e| {
+                            warn!("Prefetch error, {:?}", e);
+                            0
+                        });
+                    })
+                    .unwrap_or_else(|e| {
+                        info!("No file to be prefetched {:?}", e);
+                    })
+                }
 
                 // For now, we only have hinted prefetch. So stopping prefetch workers once
                 // it's done is Okay. But if we involve more policies someday, we have to be
