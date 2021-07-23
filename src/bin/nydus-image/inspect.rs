@@ -515,7 +515,7 @@ impl Executor {
 
         let output = match (cmd, args) {
             ("help", _) => {
-                Self::usage().unwrap();
+                Self::usage();
                 return Err(ExecuteError::HelpCommand);
             }
             ("exit", _) | ("q", _) => return Err(ExecuteError::Exit),
@@ -528,7 +528,7 @@ impl Executor {
             _ => {
                 println!("Unsupported command!");
                 {
-                    Self::usage().unwrap();
+                    Self::usage();
                     return Err(ExecuteError::IllegalCommand);
                 };
             }
@@ -538,7 +538,7 @@ impl Executor {
         Ok(output)
     }
 
-    pub(crate) fn usage() -> Result<Option<Value>> {
+    pub(crate) fn usage() {
         println!(
             r#"
     stats:              Display global rafs metadata
@@ -549,8 +549,6 @@ impl Executor {
     prefetch:           Show prefetch table
         "#
         );
-
-        Ok(None)
     }
 }
 
