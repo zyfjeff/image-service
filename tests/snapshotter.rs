@@ -45,7 +45,7 @@ impl Snapshotter {
                         received = false;
                     }
                     Err(err) => {
-                        panic!(err);
+                        panic!("{}", err);
                     }
                 }
             }
