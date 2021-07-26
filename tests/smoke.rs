@@ -8,7 +8,7 @@ mod builder;
 mod nydusd;
 mod snapshotter;
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use vmm_sys_util::tempdir::TempDir;
 
@@ -20,8 +20,8 @@ const COMPAT_BOOTSTRAPS: [&str; 2] = [
     "sha256-nocompress-repeatable",
 ];
 
-fn check_compact<'a>(
-    work_dir: &'a PathBuf,
+fn check_compact(
+    work_dir: &Path,
     enable_cache: bool,
     bootstrap_name: &str,
     rafs_mode: &str,
