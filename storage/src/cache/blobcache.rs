@@ -38,6 +38,8 @@ use nydus_utils::{
     metrics::{BlobcacheMetrics, Metric},
 };
 
+pub const SINGLE_INFLIGHT_WAIT_TIMEOUT: u64 = 2000;
+
 struct BlobCacheState {
     /// Index blob info by blob index, HashMap<blob_index, (blob_file, blob_size, Arc<ChunkMap>)>.
     blob_map: HashMap<u32, (File, u64, Arc<dyn ChunkMap + Sync + Send>)>,
@@ -166,13 +168,17 @@ impl BlobCache {
     ) -> Result<(usize, bool)> {
         let cache_guard = self.cache.read().unwrap();
         let (fd, _, chunk_map) = match cache_guard.get(blob) {
-            Some(entry) => entry,
+            Some(entry) => {
+                drop(cache_guard);
+                entry
+            }
             None => {
                 drop(cache_guard);
                 self.cache.write().unwrap().set(blob)?
             }
         };
-        let has_ready = chunk_map.has_ready(chunk)?;
+
+        let has_ready = chunk_map.has_ready(chunk, true)?;
         let mut reuse = false;
 
         // Hit cache if cache ready
@@ -231,10 +237,14 @@ impl BlobCache {
                     chunk.decompress_offset()
                 };
                 // TODO: Try to make this as a following asynchronous step writing cache
-                // This should be help to reduce read latency.
+                // This should help to reduce read latency.
                 self.cache(fd, buf, offset)?;
                 chunk_map.set_ready(chunk)?;
                 Ok(())
+            })
+            .map_err(|e| {
+                chunk_map.finish(chunk);
+                e
             })?;
         }
 
@@ -517,7 +527,7 @@ fn kick_prefetch_workers(cache: Arc<BlobCache>) {
                     };
 
                     for c in continuous_chunks {
-                        if chunk_map.has_ready(c.as_ref()).unwrap_or_default() {
+                        if chunk_map.has_ready(c.as_ref(), false).unwrap_or_default() {
                             continue;
                         }
 
@@ -569,8 +579,8 @@ fn kick_prefetch_workers(cache: Arc<BlobCache>) {
                             .set(&mr.blob_entry)
                             .map_err(|_| error!("Set cache index error!"))
                         {
-                            for (i, c) in continuous_chunks.iter().enumerate() {
-                                if !chunk_map.has_ready(c.as_ref()).unwrap_or_default() {
+                            for (i, c) in continuous_chunks.iter().map(|i| i.as_ref()).enumerate() {
+                                if !chunk_map.has_ready(c, false).unwrap_or_default() {
                                     let offset = if blobcache.is_compressed {
                                         c.compress_offset()
                                     } else {
@@ -579,14 +589,21 @@ fn kick_prefetch_workers(cache: Arc<BlobCache>) {
                                     if let Err(err) =
                                         blobcache.cache(fd, chunks[i].as_slice(), offset)
                                     {
+                                        chunk_map.finish(c);
                                         error!("Failed to cache chunk: {}", err);
                                     } else {
-                                        let _ = chunk_map.set_ready(c.as_ref()).map_err(|e| {
+                                        let _ = chunk_map.set_ready(c).map_err(|e| {
                                             error!("Failed to set chunk ready: {:?}", e)
                                         });
                                     }
                                 }
                             }
+                        }
+                    } else {
+                        // Before issue a merged backend request, we already mark
+                        // them as `OnTrip` inflight.
+                        for c in continuous_chunks.iter().map(|i| i.as_ref()) {
+                            chunk_map.finish(c);
                         }
                     }
                 }
@@ -670,6 +687,7 @@ impl RafsCache for BlobCache {
         // TODO: Cache is responsible to release backend's resources
         self.backend().release()
     }
+
     fn prefetch(&self, bios: &mut [RafsBio]) -> StorageResult<usize> {
         let merging_size = self.prefetch_ctx.merging_size;
         let seq = self.prefetch_seq.fetch_add(1, Ordering::Relaxed);
@@ -817,7 +835,7 @@ pub fn new(
 }
 
 #[cfg(test)]
-mod blob_cache_tests {
+pub mod blob_cache_tests {
     use std::alloc::{alloc, Layout};
     use std::slice::from_raw_parts;
     use std::sync::Arc;
@@ -879,7 +897,7 @@ mod blob_cache_tests {
     }
 
     #[derive(Default, Clone)]
-    struct MockChunkInfo {
+    pub struct MockChunkInfo {
         pub block_id: RafsDigest,
         pub blob_index: u32,
         pub flags: RafsChunkFlags,
@@ -893,7 +911,7 @@ mod blob_cache_tests {
     }
 
     impl MockChunkInfo {
-        fn new() -> Self {
+        pub fn new() -> Self {
             MockChunkInfo::default()
         }
     }
