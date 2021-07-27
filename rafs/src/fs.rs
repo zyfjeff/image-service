@@ -452,9 +452,13 @@ impl Rafs {
             attr.gid = self.i_gid;
         }
 
-        attr.atime = self.i_time;
-        attr.ctime = self.i_time;
-        attr.mtime = self.i_time;
+        // Older rafs image doesn't include mtime, in such case we use
+        // runtime timestamp.
+        if attr.mtime == 0 {
+            attr.atime = self.i_time;
+            attr.ctime = self.i_time;
+            attr.mtime = self.i_time;
+        }
 
         Ok(attr)
     }
@@ -467,9 +471,13 @@ impl Rafs {
             entry.attr.st_gid = self.i_gid;
         }
 
-        entry.attr.st_atime = self.i_time as i64;
-        entry.attr.st_ctime = self.i_time as i64;
-        entry.attr.st_mtime = self.i_time as i64;
+        // Older rafs image doesn't include mtime, in such case we use
+        // runtime timestamp.
+        if entry.attr.st_mtime == 0 {
+            entry.attr.st_atime = self.i_time as i64;
+            entry.attr.st_ctime = self.i_time as i64;
+            entry.attr.st_mtime = self.i_time as i64;
+        }
 
         entry
     }

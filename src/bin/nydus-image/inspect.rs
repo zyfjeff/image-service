@@ -330,6 +330,8 @@ impl RafsInspector {
     Nlink:              {nlink}
     UID:                {uid}
     GID:                {gid}
+    Mtime:              {mtime}
+    MtimeNsec:          {mtime_nsec}
     Blocks:             {blocks}"#,
                     inode_number = inode.i_ino,
                     name = f,
@@ -339,6 +341,8 @@ impl RafsInspector {
                     nlink = inode.i_nlink,
                     uid = inode.i_uid,
                     gid = inode.i_gid,
+                    mtime = inode.i_mtime,
+                    mtime_nsec = inode.i_mtime_nsec,
                     blocks = inode.i_blocks,
                 );
 
