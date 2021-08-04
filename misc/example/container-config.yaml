@@ -5,5 +5,5 @@ image:
 command:
 - /bin/sleep
 args:
-- 3600
+- 600
 log_path: container.1.log

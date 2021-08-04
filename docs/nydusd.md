@@ -1,6 +1,6 @@
 # Nydusd
 
-`nydusd` running as daemon to expose a FUSE mountpoint or a Virtio-FS mountpoint inside guest for containers to access
+`nydusd` running as daemon to expose a [FUSE](https://www.kernel.org/doc/html/latest/filesystems/fuse.html) mountpoint or a [Virtio-FS](https://virtio-fs.gitlab.io/) mountpoint inside guest for containers to access.
 
 ### Get binary from release page
 
@@ -35,6 +35,8 @@ sudo nydusd \
 
 ### Run With Virtio-FS
 
+Virtio-fs is supported by both [QEMU](https://www.qemu.org/) and [Cloud-hypervisor](https://github.com/cloud-hypervisor/cloud-hypervisor). To run `nydusd` with virtio-fs support, first start it with `--sock` option to expose a virtio-fs socket endpoint.
+
 ``` shell
 sudo nydusd \
   --config /path/to/config-localfs.json \
@@ -43,7 +45,7 @@ sudo nydusd \
   --log-level info
 ```
 
-To start a qemu process, run something like:
+Then start a qemu process with a `vhost-user-fs-pci` device, run something like:
 
 ``` shell
 ./qemu-system-x86_64 -M pc -cpu host --enable-kvm -smp 2 \
@@ -68,6 +70,8 @@ Or simply below if you are running newer guest kernel:
 ``` shell
 mount -t virtiofs nydus /mnt
 ```
+
+We are working on enabling cloud-hypervisor support for nydus.
 
 ### Nydus Configuration
 

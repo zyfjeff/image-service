@@ -123,6 +123,7 @@ impl RafsConfig {
             ..Default::default()
         }
     }
+
     pub fn from_file(path: &str) -> RafsResult<RafsConfig> {
         let file = File::open(path).map_err(RafsError::LoadConfig)?;
         serde_json::from_reader::<File, RafsConfig>(file).map_err(RafsError::ParseConfig)

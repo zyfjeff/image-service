@@ -336,4 +336,4 @@ There is a [simple example](../misc/example/README.md) to run containers with ny
 
 ### More Detailed Example
 
-Please refer to the [nydus environment setup document](env-setup.md).
+Please refer to the [nydus environment setup document](containerd-env-setup.md).
