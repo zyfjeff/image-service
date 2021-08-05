@@ -14,7 +14,7 @@ rlimit = "0.3.0"
 log = "0.4.8"
 epoll = ">=4.0.1"
 libc = "0.2"
-vmm-sys-util = ">=0.8.0"
+vmm-sys-util = "0.8"
 clap = "2.33"
 flexi_logger = { version = "0.17" }
 serde = { version = ">=1.0.27", features = ["serde_derive", "rc"] }
@@ -36,7 +36,7 @@ chrono = "0.4.19"
 storage = { path = "storage" }
 openssl = { version = "0.10.35", features = ["vendored"] }
 
-event-manager = { git = "https://github.com/rust-vmm/event-manager.git", tag = "v0.2.0" }
+event-manager = "0.2"
 fuse-backend-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.git", optional = true }
 vhost-rs = { git = "https://github.com/cloud-hypervisor/vhost.git", branch = "dragonball", package = "vhost", optional = true }
 vhost-user-backend = { git = "https://github.com/cloud-hypervisor/vhost-user-backend.git", package = "vhost_user_backend", optional = true }
@@ -62,6 +62,7 @@ virtiofs = [
 members = ["utils", "rafs", "api", "storage"]
 
 [patch.crates-io]
+event-manager = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/event-manager.git", branch = "master" }
 vm-memory = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/vm-memory.git", branch = "master", optional = true }
 
 [patch.'https://github.com/cloud-hypervisor/fuse-backend-rs.git']
@@ -72,6 +73,3 @@ vhost-user-backend = { git = "ssh://git@gitlab.alibaba-inc.com/kata-containers/v
 
 [patch."https://github.com/cloud-hypervisor/vhost.git"]
 vhost-rs = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/vhost.git", branch = "master", package = "vhost", optional = true }
-
-[patch."https://github.com/rust-vmm/event-manager.git"]
-event-manager = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/event-manager.git", branch = "master" }

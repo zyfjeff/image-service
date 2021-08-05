@@ -36,7 +36,7 @@ fuse-backend-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.g
 
 
 [dev-dependencies]
-vmm-sys-util = ">=0.3.1"
+vmm-sys-util = "0.8"
 
 [features]
 backend-localfs = ["sha2"]
