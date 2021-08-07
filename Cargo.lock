@@ -57,6 +57,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cff77d8686867eceff3105329d4698d96c2391c176d5d03adc90c7389162b5b8"
 
 [[package]]
+name = "arrayvec"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be4dc07131ffa69b8072d35f5007352af944213cde02545e2103680baed38fcd"
+
+[[package]]
 name = "atty"
 version = "0.2.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -124,11 +130,25 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ce4f9586c9a3151c4b49b19e82ba163dd073614dd057e53c969e1a4db5b52720"
 dependencies = [
  "arrayref",
- "arrayvec",
+ "arrayvec 0.5.1",
  "cc",
  "cfg-if 0.1.10",
  "constant_time_eq",
  "crypto-mac",
+ "digest",
+]
+
+[[package]]
+name = "blake3"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcd555c66291d5f836dbb6883b48660ece810fe25a31f3bdfb911945dff2691f"
+dependencies = [
+ "arrayref",
+ "arrayvec 0.7.1",
+ "cc",
+ "cfg-if 1.0.0",
+ "constant_time_eq",
  "digest",
 ]
 
@@ -148,6 +168,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3fa7899958f4aa3c40edc1b033d0e956763319e398924abb80a0034dda5bb198"
 dependencies = [
  "cargo-lock",
+ "chrono",
  "git2",
 ]
 
@@ -1120,6 +1141,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "nydus-app"
+version = "0.1.0"
+dependencies = [
+ "built",
+ "flexi_logger",
+ "libc",
+ "log",
+ "nix",
+ "nydus-error",
+ "serde",
+]
+
+[[package]]
+name = "nydus-error"
+version = "0.1.0"
+dependencies = [
+ "backtrace",
+ "httpdate 1.0.1",
+ "log",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "nydus-rs"
 version = "1.6.0"
 dependencies = [
@@ -1137,6 +1182,8 @@ dependencies = [
  "log",
  "nix",
  "nydus-api",
+ "nydus-app",
+ "nydus-error",
  "nydus-utils",
  "openssl",
  "rafs",
@@ -1163,18 +1210,14 @@ dependencies = [
 name = "nydus-utils"
 version = "0.1.0"
 dependencies = [
- "backtrace",
- "blake3",
- "built",
+ "blake3 1.0.0",
  "epoll",
- "flexi_logger",
  "fuse-backend-rs",
- "httpdate 1.0.1",
  "lazy_static",
  "libc",
  "log",
  "nix",
- "num-traits",
+ "nydus-error",
  "serde",
  "serde_json",
  "sha2",
@@ -1377,7 +1420,7 @@ dependencies = [
  "arc-swap",
  "base64",
  "bitflags",
- "blake3",
+ "blake3 0.3.6",
  "flate2",
  "fuse-backend-rs",
  "futures",
@@ -1387,6 +1430,7 @@ dependencies = [
  "log",
  "lz4-sys",
  "nix",
+ "nydus-error",
  "nydus-utils",
  "serde",
  "serde_json",
@@ -1828,6 +1872,7 @@ dependencies = [
  "log",
  "lz4-sys",
  "nix",
+ "nydus-error",
  "nydus-utils",
  "reqwest",
  "serde",

@@ -35,10 +35,7 @@ use crate::factory::CacheConfig;
 use crate::utils::{alloc_buf, copyv, readv};
 use crate::RAFS_DEFAULT_BLOCK_SIZE;
 
-use nydus_utils::{
-    einval, enoent, enosys, last_error,
-    metrics::{BlobcacheMetrics, Metric},
-};
+use nydus_utils::metrics::{BlobcacheMetrics, Metric};
 
 pub const SINGLE_INFLIGHT_WAIT_TIMEOUT: u64 = 2000;
 

@@ -31,7 +31,6 @@ sha-1 = { version = "0.9.1", optional = true }
 hmac = { version = "0.8.1", optional = true }
 url = { version = "2.1.1", optional = true }
 vm-memory = ">=0.2.0"
-nydus-utils = { path = "../utils" }
 storage = { path = "../storage", features = ["backend-localfs"] }
 
 
@@ -39,6 +38,9 @@ fuse-backend-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.g
 snapshot = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/snapshot.git", branch = "master" }
 versionize = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git", branch = "master" }
 versionize_derive = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize_derive.git", branch = "master" }
+
+nydus-utils = { path = "../utils" }
+nydus-error = { path = "../error" }
 
 [dev-dependencies]
 vmm-sys-util = "0.8"

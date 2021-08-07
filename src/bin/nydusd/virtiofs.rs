@@ -12,18 +12,16 @@ use std::sync::{
 };
 use std::thread;
 
-use libc::EFD_NONBLOCK;
-
 use fuse_backend_rs::api::{server::Server, Vfs};
 use fuse_backend_rs::transport::{FsCacheReqHandler, Reader, Writer};
-
+use libc::EFD_NONBLOCK;
+use nydus_app::BuildTimeInfo;
 use vhost_rs::vhost_user::{message::*, Listener, SlaveFsCacheReq};
 use vhost_user_backend::{VhostUserBackend, VhostUserDaemon, Vring};
 use vm_memory::GuestMemoryMmap;
 use vmm_sys_util::eventfd::EventFd;
 
 use crate::upgrade::UpgradeManager;
-use nydus_utils::{eother, BuildTimeInfo};
 
 use crate::daemon::{
     DaemonError, DaemonResult, DaemonState, DaemonStateMachineContext, DaemonStateMachineInput,
