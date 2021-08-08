@@ -1143,7 +1143,6 @@ pub mod tests {
     use std::fs::OpenOptions;
     use std::io::{SeekFrom, Write};
 
-    //use nydus_app::setup_logging;
     use vmm_sys_util::tempfile::TempFile;
 
     use crate::RafsIoReader;
@@ -1161,8 +1160,6 @@ pub mod tests {
 
     #[test]
     fn test_load_blob_table() {
-        //setup_logging(None, log::LevelFilter::Info).unwrap();
-
         let mut buffer = Vec::new();
         let first = Entry { foo: 1, bar: 2 };
         let second = Entry { foo: 3, bar: 4 };

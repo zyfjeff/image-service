@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_overflow() {
-        let mut holder = ErrorHolder::init(10, 80);
+        let mut holder = ErrorHolder::new(10, 80);
         let error_msg = "123456789";
         let mut left = 16;
         while left >= 0 {

@@ -17,7 +17,7 @@ log = "0.4"
 spmc = "0.3.0"
 lz4-sys = "1.9.2"
 nix = "0.17.0"
-blake3 = "0.3.6"
+blake3 = "1.0"
 
 futures = "0.3"
 anyhow = "1.0.35"
