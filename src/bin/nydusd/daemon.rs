@@ -47,6 +47,7 @@ use crate::upgrade::{self, UpgradeManager, UpgradeMgrError};
 use crate::EVENT_MANAGER_RUN;
 
 #[allow(dead_code)]
+#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Hash, PartialEq, Eq, Serialize)]
 pub enum DaemonState {
     INIT = 1,
@@ -341,7 +342,7 @@ pub trait NydusDaemon: DaemonStateMachineSubscriber {
             .backend_from_mountpoint(&cmd.mountpoint)?
             .ok_or(DaemonError::NotFound)?;
         let rafs_config = RafsConfig::from_str(&&cmd.config)?;
-        let mut bootstrap = RafsIoRead::from_file(&&cmd.source)?;
+        let mut bootstrap = <dyn RafsIoRead>::from_file(&&cmd.source)?;
         let any_fs = rootfs.deref().as_any();
         let rafs = any_fs
             .downcast_ref::<Rafs>()
@@ -414,7 +415,7 @@ fn fs_backend_factory(cmd: &FsBackendMountCmd) -> DaemonResult<BackFileSystem> {
     match cmd.fs_type {
         FsBackendType::Rafs => {
             let rafs_config = RafsConfig::from_str(cmd.config.as_str())?;
-            let mut bootstrap = RafsIoRead::from_file(&cmd.source)?;
+            let mut bootstrap = <dyn RafsIoRead>::from_file(&cmd.source)?;
             let mut rafs = Rafs::new(rafs_config, &cmd.mountpoint, &mut bootstrap)?;
             rafs.import(bootstrap, prefetch_files)?;
             info!("Rafs imported");

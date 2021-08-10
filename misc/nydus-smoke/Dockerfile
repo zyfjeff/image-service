@@ -2,7 +2,7 @@ ARG ARCH=x86_64
 
 FROM messense/rust-musl-cross:${ARCH}-musl
 ARG ARCH=x86_64
-ARG RUST_TOOLCHAIN=1.49.0
+ARG RUST_TOOLCHAIN=1.52.1
 
 RUN echo '[source.crates-io] \n\
   replace-with = "ustc" \n\
