@@ -1145,8 +1145,8 @@ pub mod tests {
 
     use vmm_sys_util::tempfile::TempFile;
 
-    use crate::RafsIoReader;
     use super::OndiskBlobTable;
+    use crate::RafsIoReader;
 
     #[allow(dead_code)]
     struct Entry {
