@@ -106,6 +106,10 @@ docker-smoke: docker-nydus-smoke docker-nydusify-smoke
 
 nydusify:
 	$(call build_golang,make -C contrib/nydusify)
+
+ctr-remote:
+	$(call build_golang,make -C contrib/ctr-remote)
+
 nydusify-static:
 	$(call build_golang,make -C contrib/nydusify static-release)
 
