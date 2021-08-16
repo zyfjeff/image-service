@@ -112,6 +112,7 @@ nydusify-static:
 
 nydus-snapshotter:
 	$(call build_golang,make -C contrib/nydus-snapshotter)
+
 nydus-snapshotter-static:
 	$(call build_golang,make -C contrib/nydus-snapshotter static-release)
 
