@@ -107,9 +107,6 @@ docker-smoke: docker-nydus-smoke docker-nydusify-smoke
 nydusify:
 	$(call build_golang,make -C contrib/nydusify)
 
-ctr-remote:
-	$(call build_golang,make -C contrib/ctr-remote)
-
 nydusify-static:
 	$(call build_golang,make -C contrib/nydusify static-release)
 
@@ -118,9 +115,15 @@ nydus-snapshotter:
 nydus-snapshotter-static:
 	$(call build_golang,make -C contrib/nydus-snapshotter static-release)
 
+ctr-remote:
+	$(call build_golang,make -C contrib/ctr-remote)
+
+ctr-remote-static:
+	$(call build_golang,make -C contrib/ctr-remote static-release)
+
 # Run integration smoke test in docker-in-docker container. It requires some special settings,
 # refer to `misc/example/README.md` for details.
-all-static-release: docker-static nydusify-static nydus-snapshotter-static
+all-static-release: docker-static nydusify-static nydus-snapshotter-static ctr-remote-static
 
 # https://www.gnu.org/software/make/manual/html_node/One-Shell.html
 .ONESHELL:
