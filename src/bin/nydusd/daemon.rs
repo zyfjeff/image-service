@@ -47,7 +47,6 @@ use crate::upgrade::{self, UpgradeManager, UpgradeMgrError};
 use crate::EVENT_MANAGER_RUN;
 
 #[allow(dead_code)]
-#[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Hash, PartialEq, Eq, Serialize)]
 pub enum DaemonState {
     INIT = 1,

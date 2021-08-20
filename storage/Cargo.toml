@@ -34,7 +34,7 @@ tokio = { version = "1.5.0", features = ["rt-multi-thread"] }
 fuse-backend-rs = { git = "https://github.com/cloud-hypervisor/fuse-backend-rs.git" }
 
 nydus-utils = { path = "../utils" }
-nydus-error = { path = "../error" }
+nydus-error = "0.1"
 
 [dev-dependencies]
 vmm-sys-util = "0.8"

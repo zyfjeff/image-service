@@ -21,7 +21,7 @@ nix = "0.17"
 epoll = "4.0"
 vmm-sys-util = "0.8"
 
-nydus-error = { path = "../error" }
+nydus-error = "0.1"
 
 [features]
 fusedev = ["fuse-backend-rs/fusedev"]

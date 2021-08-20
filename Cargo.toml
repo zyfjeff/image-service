@@ -41,8 +41,8 @@ versionize = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git",
 versionize_derive = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize_derive.git", branch = "master" }
 
 nydus-api = { path = "api" }
-nydus-app = { path = "app" }
-nydus-error = { path = "error" }
+nydus-app = "0.1"
+nydus-error = "0.1"
 nydus-utils = { path = "utils" }
 rafs = { path = "rafs", features = ["backend-registry", "backend-oss"] }
 upgrade-manager = { path = "upgrade" }

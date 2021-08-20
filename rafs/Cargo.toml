@@ -40,7 +40,7 @@ versionize = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize.git",
 versionize_derive = { git = "ssh://git@gitlab.alibaba-inc.com/rust-vmm/versionize_derive.git", branch = "master" }
 
 nydus-utils = { path = "../utils" }
-nydus-error = { path = "../error" }
+nydus-error = "0.1"
 
 [dev-dependencies]
 vmm-sys-util = "0.8"
