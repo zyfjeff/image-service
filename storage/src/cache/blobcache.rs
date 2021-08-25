@@ -40,7 +40,7 @@ use crate::{StorageError, RAFS_DEFAULT_BLOCK_SIZE};
 
 use nydus_utils::metrics::{BlobcacheMetrics, Metric};
 
-pub const SINGLE_INFLIGHT_WAIT_TIMEOUT: u64 = 8000;
+pub const SINGLE_INFLIGHT_WAIT_TIMEOUT: u64 = 2000;
 
 struct BlobCacheState {
     /// Index blob info by blob index, HashMap<blob_index, (blob_file, blob_size, Arc<ChunkMap>)>.
@@ -258,7 +258,6 @@ impl RequestRegion {
         use RequestRegionStatus::*;
 
         if self.status == Open && self.start + self.continuous_len as u64 != start {
-            // FIXME: Rollback segment part
             return Err(StorageError::NotContinuous);
         }
 
@@ -411,7 +410,7 @@ impl BlobCache {
 
             return Ok(0);
         }
-        let mut buffer_holder: Vec<Vec<u8>> = Vec::new();
+        let mut buffer_holder: Vec<Arc<DataBuffer>> = Vec::new();
         let mut total_read = 0;
 
         let blob_offset = region.start;
@@ -420,6 +419,8 @@ impl BlobCache {
         let continuous_chunks = &region.cki_set;
         let chunk_tags = &region.cki_tags;
         let blob_entry = &region.blob_entry;
+
+        debug!("total backend data {}", blob_size);
 
         if !continuous_chunks.is_empty() {
             let mut chunks =
@@ -430,34 +431,25 @@ impl BlobCache {
             // don't have to hold blobcache mutex when writing files.
             // But prefetch io is usually limited. So it is low priority.
             let mut cache_guard = self.cache.write().expect("Expect cache lock not poisoned");
-            let mut needed = vec![];
-            if let Ok((fd, _, chunk_map)) = cache_guard
-                .set(blob_entry)
-                .map_err(|_| error!("Set cache index error!"))
-            {
-                for (i, c) in continuous_chunks.iter().enumerate() {
-                    // FIXME: What if ready after backend IO completion?
-                    // FIXME: Share the memory buffer rather than copying it.
-                    self.delay_persist(
-                        fd,
-                        &chunk_map,
-                        c,
-                        Arc::new(DataBuffer::Allocated(chunks[i].clone())),
-                    );
+            let (fd, _, chunk_map) = cache_guard.set(blob_entry).map_err(|e| {
+                error!("Set chunk map error!");
+                e
+            })?;
 
-                    if chunk_tags[i] {
-                        needed.push(i);
-                    }
+            let len = continuous_chunks.len();
+            for (i, c) in continuous_chunks.iter().rev().enumerate() {
+                // FIXME: What if ready after backend IO completion?
+                let d = Arc::new(DataBuffer::Allocated(chunks.pop().unwrap()));
+                if chunk_tags[len - 1 - i] {
+                    buffer_holder.push(d.clone());
                 }
-
-                needed.reverse();
-                for n in needed {
-                    buffer_holder.push(chunks.remove(n));
-                }
-                buffer_holder.reverse();
+                self.delay_persist(fd, &chunk_map, c, d);
             }
 
-            let chunk_buffers: Vec<&[u8]> = buffer_holder.iter().map(|b| b.as_slice()).collect();
+            buffer_holder.reverse();
+
+            let chunk_buffers: Vec<&[u8]> =
+                buffer_holder.iter().map(|b| b.as_ref().slice()).collect();
 
             total_read = copyv(
                 &chunk_buffers,
@@ -500,7 +492,9 @@ impl BlobCache {
         let ck = chunk.as_ref();
         let bufs = mem_cursor.inner_slice();
 
-        let has_ready = chunk_map.has_ready(ck, false)?;
+        debug!("single bio, blob offset {}", chunk.compress_offset());
+
+        let has_ready = chunk_map.has_ready(ck, true)?;
         let buffer_holder;
 
         drop(cache_guard);
@@ -596,6 +590,8 @@ impl BlobCache {
         let mut region_type: RegionType;
         let mut previous_region_type = RegionType::Init;
 
+        debug!("bios {:?}", &sorted_bios);
+
         // Bios list might cover multiple layers of blobs, so split them into
         // several merged requests. But a single request may read blobcache and
         // backend at the same time. Some let `RequestRegion` to manage each batched
@@ -608,6 +604,7 @@ impl BlobCache {
 
         // Chunks are concatenated.
         for req in merged_requests {
+            debug!("A merged request {:?}", req);
             let blob = &req.blob_entry;
             let cache_guard = self.cache.read().unwrap();
             // FIXME: Don't open code below snippet.
@@ -657,7 +654,7 @@ impl BlobCache {
                                 IoInitiator::User(s.clone()),
                                 None,
                             )
-                            .unwrap();
+                            .map_err(|e| einval!(e))?;
                     }
                     previous_region_type = region_type;
                 } else if (self.compressor() != compress::Algorithm::GZip
@@ -697,7 +694,7 @@ impl BlobCache {
                                 IoInitiator::User(s.clone()),
                                 Some(chunk.clone()),
                             )
-                            .unwrap();
+                            .map_err(|e| einval!(e))?;
                     } else {
                         // On slow path, don't try to handle internal IO.
                         chunk_map.finish(chunk.as_ref());
@@ -724,11 +721,12 @@ impl BlobCache {
                         )
                     }
 
+                    // Safe since the region must be open.
                     let rgn = region.as_mut().unwrap();
                     let initiator = if let IoInitiator::User(ref s) = req.chunk_tags[i] {
                         IoInitiator::User(s.clone())
                     } else {
-                        IoInitiator::Internal
+                        IoInitiator::Internal(chunk.index(), chunk.compress_offset())
                     };
 
                     rgn.append(
@@ -737,7 +735,7 @@ impl BlobCache {
                         initiator,
                         Some(chunk.clone()),
                     )
-                    .unwrap();
+                    .map_err(|e| einval!(e))?;
 
                     previous_region_type = region_type;
                 }
@@ -1213,7 +1211,19 @@ impl RafsCache for BlobCache {
             }
         }
 
-        let size = self.read_iter(bios, bufs)?;
+        let size = if bios.len() > 1 {
+            self.read_iter(bios, bufs)?
+        } else {
+            let mut cursor = MemSliceCursor::new(bufs);
+            let b = &bios[0];
+            self.read_single_chunk(
+                &b.chunkinfo,
+                b.blob.as_ref(),
+                b.offset,
+                b.size as u32,
+                &mut cursor,
+            )?
+        };
         Ok(size)
     }
 
