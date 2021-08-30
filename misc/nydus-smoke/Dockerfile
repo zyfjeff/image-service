@@ -13,7 +13,7 @@ RUN echo '[source.crates-io] \n\
 ENV RUSTUP_DIST_SERVER=https://mirrors.ustc.edu.cn/rust-static
 
 # Below is a trick to replace rust tool-chain from base image which is always the newest version.
-RUN rustup toolchain install ${RUST_TOOLCHAIN} && rustup default ${RUST_TOOLCHAIN} && \
+RUN rustup toolchain install ${RUST_TOOLCHAIN}-${ARCH}-unknown-linux-gnu && rustup default ${RUST_TOOLCHAIN}-${ARCH}-unknown-linux-gnu && \
   rustup target add ${ARCH}-unknown-linux-musl && rustup component add clippy && rustup component add rustfmt
 
 RUN sed -i "s@http://deb.debian.org@http://mirrors.aliyun.com@g" /etc/apt/sources.list

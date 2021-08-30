@@ -56,7 +56,7 @@ ut:
 	RUST_BACKTRACE=1 cargo test --features=virtiofs --target-dir target-virtiofs --workspace -- --nocapture --test-threads=15 --skip integration
 
 docker-static:
-	docker build -t nydus-rs-static --build-arg ${ARCH} misc/musl-static
+	docker build -t nydus-rs-static --build-arg ARCH=${ARCH} misc/musl-static
 	docker run --rm \
 		-v ${current_dir}:/nydus-rs \
 		--workdir /nydus-rs \
@@ -76,7 +76,7 @@ static-test:
 	cargo test --target ${ARCH}-unknown-linux-musl --features=fusedev --release --target-dir target-fusedev --workspace -- --nocapture --test-threads=15
 
 docker-nydus-smoke: docker-static
-	docker build -t nydus-smoke --build-arg ${ARCH} misc/nydus-smoke
+	docker build -t nydus-smoke --build-arg ARCH=${ARCH} misc/nydus-smoke
 	docker run --rm --privileged \
 		-e TEST_WORKDIR_PREFIX=$(TEST_WORKDIR_PREFIX) \
 		-v $(TEST_WORKDIR_PREFIX) \
