@@ -1,4 +1,6 @@
-# Variables
+all: build
+
+
 TEST_WORKDIR_PREFIX ?= "/tmp"
 
 current_dir := $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -24,36 +26,43 @@ define build_golang
 	docker run --rm -v ${go_path}:/go -v ${current_dir}:/nydus-rs --workdir $(1) golang:1.15 $(2)
 endef
 
+# Build nydus respecting different features
+# $(1) is the specified feature. [fusedev, virtiofs]
+define build_nydus
+	cargo build --features=$(1) --target-dir target-$(1) $(CARGO_BUILD_FLAGS)
+endef
+
 define static_check
 	cargo clippy --features=$(1) --workspace --bins --tests --target-dir target-$(1) -- -Dclippy::all
 endef
 
-build: virtiofs fusedev
+.PHONY: all .release_version .format .musl_target build release static-release fusedev-release virtiofs-release virtiofs fusedev
+
+.release_version:
+	$(eval CARGO_BUILD_FLAGS += --release)
+
+.format:
 	cargo fmt -- --check
 
-release: build-virtiofs-release build-fusedev-release
-	cargo fmt -- --check
+.musl_target:
+	$(eval CARGO_BUILD_FLAGS += --${ARCH}-unknown-linux-musl)
+
+# Targets that are exposed to developers and users.
+build: .format fusedev virtiofs
+release: .format .release_version fusedev virtiofs
+static-release: .musl_target .format .release_version fusedev virtiofs
+fusedev-release: .format .release_version fusedev
+virtiofs-release: .format .release_version virtiofs
 
 virtiofs:
 	# TODO: switch to --out-dir when it moves to stable
 	# For now we build with separate target directories
-	cargo build --features=virtiofs --target-dir target-virtiofs
-	$(call static_check,$@, target-$@)
+	$(call build_nydus,$@,$@)
+	$(call static_check,$@,target-$@)
 
 fusedev:
-	cargo build --features=fusedev --target-dir target-fusedev
-	# cargo clippy --features=fusedev --tests --bins --workspace --target-dir target-fusedev  -- -Dclippy::all
-	$(call static_check,$@, target-$@)
-
-build-virtiofs-release:
-	cargo build --features=virtiofs --release --target-dir target-virtiofs
-
-build-fusedev-release:
-	cargo build --features=fusedev --release --target-dir target-fusedev
-
-static-release:
-	cargo build --target ${ARCH}-unknown-linux-musl --features=fusedev --release --target-dir target-fusedev
-	cargo build --target ${ARCH}-unknown-linux-musl --features=virtiofs --release --target-dir target-virtiofs
+	$(call build_nydus,$@,$@)
+	$(call static_check,$@,target-$@)
 
 ut:
 	RUST_BACKTRACE=1 cargo test --features=fusedev --target-dir target-fusedev --workspace -- --nocapture --test-threads=15 --skip integration
