@@ -17,29 +17,33 @@ dind_cache_mount := $(if $(DIND_CACHE_DIR),-v $(DIND_CACHE_DIR):/var/lib/docker,
 
 # Func: build golang target in docker
 # Args:
-#   $(1): target make command
+#   $(1): The path where go build a golang project
+#	$(2): How to build the golang project
 define build_golang
-	echo "Building target $@ by invoking: $(2) "
+	echo "Building target $@ by invoking: $(2)"
 	docker run --rm -v ${go_path}:/go -v ${current_dir}:/nydus-rs --workdir $(1) golang:1.15 $(2)
 endef
 
-# Targets
+define static_check
+	cargo clippy --features=$(1) --workspace --bins --tests --target-dir target-$(1) -- -Dclippy::all
+endef
 
-build: build-virtiofs build-fusedev
+build: virtiofs fusedev
 	cargo fmt -- --check
 
 release: build-virtiofs-release build-fusedev-release
 	cargo fmt -- --check
 
-build-virtiofs:
+virtiofs:
 	# TODO: switch to --out-dir when it moves to stable
 	# For now we build with separate target directories
 	cargo build --features=virtiofs --target-dir target-virtiofs
-	cargo clippy --features=virtiofs --tests --bins --workspace --target-dir target-virtiofs  -- -Dclippy::all
+	$(call static_check,$@, target-$@)
 
-build-fusedev:
+fusedev:
 	cargo build --features=fusedev --target-dir target-fusedev
-	cargo clippy --features=fusedev --tests --bins --workspace --target-dir target-fusedev  -- -Dclippy::all
+	# cargo clippy --features=fusedev --tests --bins --workspace --target-dir target-fusedev  -- -Dclippy::all
+	$(call static_check,$@, target-$@)
 
 build-virtiofs-release:
 	cargo build --features=virtiofs --release --target-dir target-virtiofs
@@ -69,7 +73,7 @@ docker-static:
 # Nydus binaries should already be prepared.
 static-test:
 	# No clippy for virtiofs for now since it has much less updates.
-	cargo clippy --features=fusedev --tests --bins --workspace --target-dir target-fusedev  -- -Dclippy::all
+	$(call static_check,fusedev, target-fusedev)
 	# For virtiofs target UT
 	cargo test --target ${ARCH}-unknown-linux-musl --features=virtiofs --release --target-dir target-virtiofs --workspace -- --nocapture --test-threads=15 --skip integration
 	# For fusedev target UT & integration
