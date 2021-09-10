@@ -19,8 +19,8 @@ dind_cache_mount := $(if $(DIND_CACHE_DIR),-v $(DIND_CACHE_DIR):/var/lib/docker,
 # Args:
 #   $(1): target make command
 define build_golang
-	@echo "Building golang: $(1)"
-	docker run --rm -v ${go_path}:/go -v ${current_dir}:/nydus-rs --workdir /nydus-rs golang:1.14 $(1)
+	echo "Building target $@ by invoking: $(2) "
+	docker run --rm -v ${go_path}:/go -v ${current_dir}:/nydus-rs --workdir $(1) golang:1.15 $(2)
 endef
 
 # Targets
@@ -86,8 +86,10 @@ docker-nydus-smoke: docker-static
 		-v ~/.cargo/registry:/root/.cargo/registry \
 		nydus-smoke
 
+
+NYDUSIFY_PATH = /nydus-rs/contrib/nydusify
 docker-nydusify-smoke: docker-static
-	$(call build_golang,make -C contrib/nydusify build-smoke)
+	$(call build_golang,$(NYDUSIFY_PATH),make build-smoke)
 	docker build -t nydusify-smoke misc/nydusify-smoke
 	docker run --rm --privileged \
 		-e BACKEND_TYPE=$(BACKEND_TYPE) \
@@ -102,25 +104,27 @@ docker-nydusify-image-test: docker-static
 		-e BACKEND_CONFIG=$(BACKEND_CONFIG) \
 		-v $(current_dir):/nydus-rs $(dind_cache_mount) nydusify-smoke TestDockerHubImage
 
-docker-smoke: docker-nydus-smoke docker-nydusify-smoke
+docker-smoke: docker-nydus-smoke docker-nydusify-smoke nydus-snapshotter
 
 nydusify:
-	$(call build_golang,make -C contrib/nydusify)
+	$(call build_golang,${NYDUSIFY_PATH},make build-smoke)
 
 nydusify-static:
-	$(call build_golang,make -C contrib/nydusify static-release)
+	$(call build_golang,${NYDUSIFY_PATH},make static-release)
 
+SNAPSHOTTER_PATH = /nydus-rs/contrib/nydus-snapshotter
 nydus-snapshotter:
-	$(call build_golang,make -C contrib/nydus-snapshotter)
+	$(call build_golang,${SNAPSHOTTER_PATH},make static-release build test)
 
 nydus-snapshotter-static:
-	$(call build_golang,make -C contrib/nydus-snapshotter static-release)
+	$(call build_golang,${SNAPSHOTTER_PATH},make static-release)
 
+CTR-REMOTE_PATH = /nydus-rs/contrib/ctr-remote
 ctr-remote:
-	$(call build_golang,make -C contrib/ctr-remote)
+	$(call build_golang,${REMOTE_PATH},make)
 
 ctr-remote-static:
-	$(call build_golang,make -C contrib/ctr-remote static-release)
+	$(call build_golang,${REMOTE_PATH},make static-release)
 
 # Run integration smoke test in docker-in-docker container. It requires some special settings,
 # refer to `misc/example/README.md` for details.
