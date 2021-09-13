@@ -45,7 +45,7 @@ endef
 	cargo fmt -- --check
 
 .musl_target:
-	$(eval CARGO_BUILD_FLAGS += --${ARCH}-unknown-linux-musl)
+	$(eval CARGO_BUILD_FLAGS += --target ${ARCH}-unknown-linux-musl)
 
 # Targets that are exposed to developers and users.
 build: .format fusedev virtiofs
