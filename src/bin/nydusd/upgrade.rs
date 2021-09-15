@@ -156,6 +156,8 @@ pub mod fusedev_upgrade {
         mgr.vm.add_version("1.4.0");
         mgr.vm.add_version("1.5.0");
         mgr.vm.add_version("1.6.0");
+        mgr.vm.add_version("1.6.1");
+        mgr.vm.add_version("1.6.2");
         mgr.vm.add_version("latest");
 
         // add version mapper between nydusd and fuse-backend-rs
@@ -166,6 +168,8 @@ pub mod fusedev_upgrade {
             .add("1.4.0", "0.2.0")
             .add("1.5.0", "0.3.0")
             .add("1.6.0", "0.3.0")
+            .add("1.6.1", "0.3.0")
+            .add("1.6.2", "0.3.0")
             .add("latest", "latest");
         mgr.vm
             .add_sub_manager(version_mapper, get_version_manager());
@@ -177,21 +181,37 @@ pub mod fusedev_upgrade {
         mgr.vm.add_migratable_version("1.3.0", "1.4.0");
         mgr.vm.add_migratable_version("1.3.0", "1.5.0");
         mgr.vm.add_migratable_version("1.3.0", "1.6.0");
+        mgr.vm.add_migratable_version("1.3.0", "1.6.1");
+        mgr.vm.add_migratable_version("1.3.0", "1.6.2");
         mgr.vm.add_migratable_version("1.3.0", "latest");
         // Base version 1.3.1
         mgr.vm.add_migratable_version("1.3.1", "1.4.0");
         mgr.vm.add_migratable_version("1.3.1", "1.5.0");
         mgr.vm.add_migratable_version("1.3.1", "1.6.0");
+        mgr.vm.add_migratable_version("1.3.1", "1.6.1");
+        mgr.vm.add_migratable_version("1.3.1", "1.6.2");
         mgr.vm.add_migratable_version("1.3.1", "latest");
         // Base version 1.4.0
         mgr.vm.add_migratable_version("1.4.0", "1.5.0");
         mgr.vm.add_migratable_version("1.4.0", "1.6.0");
+        mgr.vm.add_migratable_version("1.4.0", "1.6.1");
+        mgr.vm.add_migratable_version("1.4.0", "1.6.2");
         mgr.vm.add_migratable_version("1.4.0", "latest");
         // Base version 1.5.0
         mgr.vm.add_migratable_version("1.5.0", "1.6.0");
+        mgr.vm.add_migratable_version("1.5.0", "1.6.1");
+        mgr.vm.add_migratable_version("1.5.0", "1.6.2");
         mgr.vm.add_migratable_version("1.5.0", "latest");
         // Base version 1.6.0
+        mgr.vm.add_migratable_version("1.6.0", "1.6.1");
+        mgr.vm.add_migratable_version("1.6.0", "1.6.2");
         mgr.vm.add_migratable_version("1.6.0", "latest");
+        // Base version 1.6.1
+        mgr.vm.add_migratable_version("1.6.1", "1.6.2");
+        mgr.vm.add_migratable_version("1.6.1", "latest");
+
+        // Base version 1.6.2
+        mgr.vm.add_migratable_version("1.6.2", "latest");
 
         // cache version map
         mgr.vm.make_version_map();
