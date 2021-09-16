@@ -46,6 +46,7 @@ struct BlobCacheState {
     /// Index blob info by blob index, HashMap<blob_index, (blob_file, blob_size, Arc<ChunkMap>)>.
     blob_map: HashMap<u32, (File, u64, Arc<dyn ChunkMap + Sync + Send>)>,
     work_dir: String,
+    disable_indexed_map: bool,
     backend_size_valid: bool,
     metrics: Arc<BlobcacheMetrics>,
     backend: Arc<dyn BlobBackend + Sync + Send>,
@@ -85,7 +86,7 @@ impl BlobCacheState {
         // The builder now records the number of chunks in the blob table, so we can
         // use IndexedChunkMap as a chunk map, but for the old Nydus bootstrap, we
         // need downgrade to use DigestedChunkMap as a compatible solution.
-        let chunk_map = if blob.with_extended_blob_table() {
+        let chunk_map = if blob.with_extended_blob_table() && !self.disable_indexed_map {
             Arc::new(BlobChunkMap::from(IndexedChunkMap::new(
                 &blob_file_path,
                 blob.chunk_count,
@@ -851,10 +852,12 @@ impl RafsCache for BlobCache {
     }
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 struct BlobCacheConfig {
     #[serde(default = "default_work_dir")]
     work_dir: String,
+    #[serde(default)]
+    disable_indexed_map: bool,
 }
 
 fn default_work_dir() -> String {
@@ -924,6 +927,7 @@ pub fn new(
         cache: Arc::new(RwLock::new(BlobCacheState {
             blob_map: HashMap::new(),
             work_dir: work_dir.to_string(),
+            disable_indexed_map: blob_config.disable_indexed_map,
             backend_size_valid: compressor == compress::Algorithm::GZip,
             metrics: metrics.clone(),
             backend: backend.clone(),
