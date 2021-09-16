@@ -412,13 +412,11 @@ pub fn create_nydus_daemon(
     let session = FuseSession::new(Path::new(mountpoint), "rafs", "")?;
 
     // Create upgrade manager
-    let upgrade_mgr = if let Some(s) = &supervisor {
+    let upgrade_mgr = supervisor.as_ref().map(|s| {
         let mut mgr = UpgradeManager::new(s.to_string().into());
         crate::upgrade::fusedev_upgrade::init_fusedev_upgrade_mgr(&mut mgr);
-        Some(Mutex::new(mgr))
-    } else {
-        None
-    };
+        Mutex::new(mgr)
+    });
 
     let (tx, rx) = channel::<JoinHandle<Result<()>>>();
     let (result_sender, result_receiver) = channel::<DaemonResult<()>>();
