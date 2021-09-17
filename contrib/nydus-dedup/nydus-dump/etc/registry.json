@@ -1,0 +1,14 @@
+{
+  "device": {
+    "backend": {
+      "type": "localfs",
+      "config": {
+        "dir": "./tmp/blobs/",
+        "readahead": true,
+        "readahead_sec": 10
+      }
+    },
+    "digest_validate": false
+  },
+  "mode": "cached"
+}

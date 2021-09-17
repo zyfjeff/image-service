@@ -1,0 +1,7 @@
+eci-nydus-registry.cn-shanghai.cr.aliyuncs.com/nydus/accl-pk-do-not-touch:python-flask
+eci-nydus-registry.cn-shanghai.cr.aliyuncs.com/nydus/accl-pk-do-not-touch:puppeteer-pdf
+eci-nydus-registry.cn-shanghai.cr.aliyuncs.com/nydus/accl-pk-do-not-touch:ai-cat-or-dog-tensorflow
+eci-nydus-registry.cn-shanghai.cr.aliyuncs.com/nydus/accl-pk-do-not-touch:cypress-chrome
+eci-nydus-registry.cn-shanghai.cr.aliyuncs.com/nydus/accl-pk-do-not-touch:ml-small-import
+eci-nydus-registry.cn-shanghai.cr.aliyuncs.com/nydus/accl-pk-do-not-touch:ml-large-import
+eci-nydus-registry.cn-shanghai.cr.aliyuncs.com/nydus/accl-pk-do-not-touch:nodejs
