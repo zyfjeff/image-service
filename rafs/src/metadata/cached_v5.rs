@@ -10,7 +10,11 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::ffi::{OsStr, OsString};
+use std::fs;
+use std::fs::OpenOptions;
+use std::io::BufWriter;
 use std::io::SeekFrom;
+use std::io::Write;
 use std::io::{ErrorKind, Read, Result};
 use std::mem::size_of;
 use std::os::unix::ffi::OsStrExt;
@@ -96,7 +100,8 @@ impl CachedSuperBlockV5 {
             self.add_into_parent(self.get_node(ino)?);
         }
         debug!("all {} inodes loaded", self.s_inodes.len());
-
+        fs::rename("temp_log2.txt", "log2.txt")?;
+        fs::rename("temp_log.txt", "log.txt")?;
         Ok(())
     }
 
@@ -287,10 +292,31 @@ impl CachedInodeV5 {
 
     fn load_chunk_info(&mut self, r: &mut RafsIoReader) -> Result<()> {
         if self.is_reg() && self.i_child_cnt > 0 {
+            let file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("temp_log.txt")?;
+            let mut f = BufWriter::new(file);
+
+            let file2 = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("temp_log2.txt")?;
+            let mut f2 = BufWriter::new(file2);
+
             let mut chunk = RafsV5ChunkInfo::new();
             for _i in 0..self.i_child_cnt {
                 chunk.load(r)?;
                 self.i_data.push(Arc::new(CachedChunkInfoV5::from(&chunk)));
+
+                let block_id = chunk.block_id.to_string();
+                let data = block_id.clone() + "\n";
+
+                f.write_all(data.as_bytes())?;
+
+                let compress_size = chunk.compress_size.to_string();
+                let data2 = block_id + " " + &compress_size + "\n";
+                f2.write_all(data2.as_bytes())?;
             }
         }
         Ok(())
