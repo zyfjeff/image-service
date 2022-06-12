@@ -838,6 +838,7 @@ pub struct BuildContext {
 
     /// Storage writing blob to single file or a directory.
     pub blob_storage: Option<ArtifactStorage>,
+    pub blob_meta_storage: Option<ArtifactStorage>,
     pub inline_bootstrap: bool,
     pub has_xattr: bool,
 }
@@ -856,6 +857,7 @@ impl BuildContext {
         source_path: PathBuf,
         prefetch: Prefetch,
         blob_storage: Option<ArtifactStorage>,
+        blob_meta_storage: Option<ArtifactStorage>,
         inline_bootstrap: bool,
     ) -> Self {
         BuildContext {
@@ -875,6 +877,7 @@ impl BuildContext {
 
             prefetch,
             blob_storage,
+            blob_meta_storage,
             inline_bootstrap,
             has_xattr: false,
         }
@@ -908,6 +911,7 @@ impl Default for BuildContext {
 
             prefetch: Prefetch::default(),
             blob_storage: None,
+            blob_meta_storage: None,
             has_xattr: true,
             inline_bootstrap: false,
         }
