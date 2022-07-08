@@ -18,6 +18,15 @@ func testBasicConvert(t *testing.T, fsVersion string) {
 	nydusify.Check(t)
 }
 
+func testRepeatedBuild(t *testing.T, fsVersion string) {
+	registry := NewRegistry(t)
+	registry.Build(t, "image-basic")
+	nydusify := NewNydusify(registry, "image-basic", "image-basic-nydus", "", "", fsVersion)
+	nydusify.Convert(t)
+	nydusify.Check(t)
+	registry.Destroy(t)
+}
+
 func testConvertWithCache(t *testing.T, fsVersion string) {
 	registry := NewRegistry(t)
 	defer registry.Destroy(t)
