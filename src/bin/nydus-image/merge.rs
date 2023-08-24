@@ -32,6 +32,16 @@ use crate::core::tree::{MetadataTreeBuilder, Tree};
 pub struct Merger {}
 
 impl Merger {
+    fn get_blob_id_from_list(blob_ids: &Option<Vec<String>>, idx: usize) -> Result<Option<String>> {
+        Ok(if let Some(blob_id) = &blob_ids {
+            let digest = blob_id
+                .get(idx)
+                .ok_or_else(|| anyhow!("unmatched blob index {}", idx))?;
+            Some(digest.clone())
+        } else {
+            None
+        })
+    }
     fn get_digest_from_list(digests: &Option<Vec<String>>, idx: usize) -> Result<Option<[u8; 32]>> {
         Ok(if let Some(digests) = &digests {
             let digest = digests
@@ -65,6 +75,7 @@ impl Merger {
         parent_bootstrap_path: Option<String>,
         sources: Vec<PathBuf>,
         blob_digests: Option<Vec<String>>,
+        blob_ids: Option<Vec<String>>,
         blob_sizes: Option<Vec<u64>>,
         blob_toc_digests: Option<Vec<String>>,
         blob_toc_sizes: Option<Vec<u64>>,
@@ -80,6 +91,14 @@ impl Merger {
                 digests.len() == sources.len(),
                 "number of blob digest entries {} doesn't match number of sources {}",
                 digests.len(),
+                sources.len(),
+            );
+        }
+        if let Some(blob_ids) = blob_ids.as_ref() {
+            ensure!(
+                blob_ids.len() == sources.len(),
+                "number of blob ids entries {} doesn't match number of sources {}",
+                blob_ids.len(),
                 sources.len(),
             );
         }
@@ -186,7 +205,12 @@ impl Merger {
                     } else {
                         // The blob id (blob sha256 hash) in parent bootstrap is invalid for nydusd
                         // runtime, should change it to the hash of whole tar blob.
-                        blob_ctx.blob_id = BlobInfo::get_blob_id_from_meta_path(bootstrap_path)?;
+                        if let Some(blob_id) = Self::get_blob_id_from_list(&blob_ids, layer_idx)? {
+                            blob_ctx.blob_id = blob_id;
+                        } else {
+                            blob_ctx.blob_id =
+                                BlobInfo::get_blob_id_from_meta_path(bootstrap_path)?;
+                        }
                     }
                     if let Some(digest) = Self::get_digest_from_list(&blob_digests, layer_idx)? {
                         if blob.has_feature(BlobFeatures::SEPARATE) {
